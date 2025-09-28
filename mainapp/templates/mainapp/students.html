@@ -1,0 +1,68 @@
+{% extends "mainapp/home.html" %}
+
+{% block title %}
+Student Profile
+{% endblock title %}
+
+{% block content %}
+<div style="max-width: 700px; margin: 0 auto; font-family: Arial, sans-serif;">
+    <h1 style="text-align:center;">Student Profile</h1>
+    <div style="margin-bottom: 30px; border: 1px solid #ccc; padding: 20px; border-radius: 8px;">
+        <p style="font-size: 1.1em; color: #555; margin-bottom: 8px;"><strong>School Year:</strong> 2025-2026</p>
+        <h2>{{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}</h2>
+        <p><strong>Student ID:</strong> {{ student.StudentID }}</p>
+        <p><strong>Course Type:</strong> IB</p>
+        <p><strong>Section:</strong> 2b</p>
+        <p><strong>Email:</strong> {{ student.Email }}</p>
+        <p><strong>Date of Birth:</strong> <!-- Add date of birth field here --></p>
+        <button
+            style="display:inline-block; padding:8px 16px; background:#007bff; color:#fff; border-radius:4px; border:none; cursor:pointer;">
+            Edit Profile
+        </button>
+    </div>
+
+    <h3>Grades</h3>
+    <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+        <thead style="background:#f2f2f2;">
+            <tr>
+                <th>Subject</th>
+                <th>Grade</th>
+                <th>Teacher</th>
+                <th>Trimester</th>
+                <th>Comments</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Example static rows, replace with dynamic data -->
+            <tr>
+                <td>Mathematics</td>
+                <td>8.5</td>
+                <td>Mr. Smith</td>
+                <td>1</td>
+                <td>Excellent progress</td>
+            </tr>
+            <tr>
+                <td>Biology</td>
+                <td>9.0</td>
+                <td>Ms. Johnson</td>
+                <td>1</td>
+                <td>Great participation</td>
+            </tr>
+            <tr>
+                <td>Physics</td>
+                <td>7.8</td>
+                <td>Mr. Brown</td>
+                <td>2</td>
+                <td>Needs improvement in labs</td>
+            </tr>
+            <tr>
+                <td>English</td>
+                <td>8.9</td>
+                <td>Ms. Green</td>
+                <td>2</td>
+                <td>Very creative writing</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{% endblock content %}
