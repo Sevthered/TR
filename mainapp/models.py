@@ -11,9 +11,6 @@ class Students(models.Model):
     Last_Surname = models.CharField(max_length=50)
     Email = models.EmailField(max_length=254)
 
-    def __str__(self):
-        return f"{self.StudentID} {self.Email}"
-
 
 class Course(models.Model):
     COURSE_TYPE_CHOICES = [
