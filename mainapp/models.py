@@ -8,8 +8,6 @@ class Students(models.Model):
     First_Surname = models.CharField(max_length=50)
     Last_Surname = models.CharField(max_length=50)
     Email = models.EmailField(max_length=254)
-    # Optionally, add a user link if you want direct access from Students to User
-    # user = models.OneToOneField(User, null=True, blank=True, on_delete=models.SET_NULL)
 
     def __str__(self):
         return f"{self.Name} {self.First_Surname} {self.Last_Surname}"
@@ -23,10 +21,8 @@ class Profile(models.Model):
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     role = models.CharField(max_length=20, choices=USER_ROLES)
-    # For students: link to their Students record
     student = models.OneToOneField(
         'Students', null=True, blank=True, on_delete=models.SET_NULL)
-    # For tutors: link to all their children (students)
     children = models.ManyToManyField(
         'Students', related_name='tutors', blank=True)
 
@@ -71,17 +67,29 @@ class Trimester(models.Model):
     def __str__(self):
         return self.Name
 
-# Example: You can add a Grades model to link students, subjects, teachers, and trimesters
-
 
 class Grade(models.Model):
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
-    trimester = models.ForeignKey(
-        Trimester, on_delete=models.SET_NULL, null=True)
-    grade = models.DecimalField(max_digits=4, decimal_places=2)
+    trimester = models.ForeignKey(Trimester)
+    grade = models.DecimalField(max_digits=2, decimal_places=2)
     comments = models.TextField(blank=True)
 
     def __str__(self):
         return f"{self.student} - {self.subject}: {self.grade}"
+
+
+class Ausencias(models.Model):
+
+    AUSENCIAS_TYPE_CHOICES = [
+        ("Ausencia", "Ausencia"),
+        ("Retraso", "Retraso"),
+    ]
+
+    student = models.ForeignKey(Students, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
+    trimester = models.ForeignKey(Trimester)
+    teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
+    Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
+    models.DateTimeField(auto_now=False, auto_now_add=False)
