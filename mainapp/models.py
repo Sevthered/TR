@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class Students(models.Model):
@@ -15,9 +16,9 @@ class Students(models.Model):
 
 class Profile(models.Model):
     USER_ROLES = [
-        ('professor', 'Professor'),
-        ('student', 'Student'),
-        ('tutor', 'Legal Tutor'),
+        ('professor', 'professor'),
+        ('student', 'student'),
+        ('tutor', 'legal_tutor'),
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     role = models.CharField(max_length=20, choices=USER_ROLES)
@@ -72,12 +73,14 @@ class Grade(models.Model):
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
-    trimester = models.ForeignKey(Trimester)
-    grade = models.DecimalField(max_digits=2, decimal_places=2)
+    trimester = models.ForeignKey(
+        Trimester, on_delete=models.SET_NULL, null=True)
+    grade = models.DecimalField(max_digits=4, decimal_places=2, validators=[
+                                MinValueValidator(0), MaxValueValidator(10)])
     comments = models.TextField(blank=True)
 
     def __str__(self):
-        return f"{self.student} - {self.subject}: {self.grade}"
+        return f"{self.student} - {self.subject} - {self.grade}"
 
 
 class Ausencias(models.Model):
@@ -89,7 +92,11 @@ class Ausencias(models.Model):
 
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
-    trimester = models.ForeignKey(Trimester)
+    trimester = models.ForeignKey(
+        Trimester, on_delete=models.SET_NULL, null=True)
     teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
     Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
     models.DateTimeField(auto_now=False, auto_now_add=False)
+
+    def __str__(self):
+        return self.Tipo
