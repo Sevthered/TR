@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
 
 
 class Students(models.Model):
@@ -96,7 +97,7 @@ class Ausencias(models.Model):
         Trimester, on_delete=models.SET_NULL, null=True)
     teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
     Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
-    models.DateTimeField(auto_now=False, auto_now_add=False)
+    date_time = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
-        return self.Tipo
+        return f"{self.Tipo} - {self.date_time.strftime('%Y-%m-%d %H:%M')} - {self.student.Name} {self.student.First_Surname} {self.student.Last_Surname}"

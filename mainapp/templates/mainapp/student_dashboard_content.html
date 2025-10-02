@@ -1,0 +1,48 @@
+<div style="border:1px solid #ccc; border-radius:8px; padding:20px; margin-top:20px;">
+    <h2>{{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}</h2>
+    <p><strong>Email:</strong> {{ student.Email }}</p>
+
+    <h3>Grades</h3>
+    <table border="1" cellpadding="8" cellspacing="0" style="width:100%; margin-bottom: 20px;">
+        <thead style="background:#f2f2f2;">
+            <tr>
+                <th>Subject</th>
+                <th>Grade</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for grade in grades %}
+            <tr>
+                <td>{{ grade.subject.Name }}</td>
+                <td>{{ grade.grade }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="2">No grades available.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Absences</h3>
+    <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+        <thead style="background:#f2f2f2;">
+            <tr>
+                <th>Date</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ausencia in ausencias %}
+            <tr>
+                <td>{{ ausencia.date_time }}</td>
+                <td>{{ ausencia.Tipo }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="2">No absences recorded.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

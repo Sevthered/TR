@@ -1,0 +1,37 @@
+{% if user.is_authenticated %}
+  <p>Logged in as: {{ user.username }}</p>
+{% else %}
+  <p>Not logged in.</p>
+{% endif %}
+
+<!-- Debug: Show context variables -->
+<p>
+  <strong>is_tutor:</strong> {{ is_tutor }}<br>
+  <strong>student:</strong> {{ student|default:"None" }}
+</p>
+
+{% if children_info %}
+  <!-- Tutor view: Dropdown to select child -->
+  <form method="get" id="child-select-form">
+    <label for="child-select">Select child:</label>
+    <select id="child-select" name="child" onchange="document.getElementById('child-select-form').submit();">
+      {% for child in children_info %}
+        <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
+          {{ child.student.Name }} {{ child.student.First_Surname }}
+        </option>
+      {% endfor %}
+    </select>
+  </form>
+  {% if selected_child_obj %}
+    <!-- Display selected child's data -->
+    {% include "mainapp/student_dashboard_content.html" with student=selected_child_obj.student grades=selected_child_obj.grades ausencias=selected_child_obj.ausensias %}
+  {% endif %}
+{% else %}
+  {% if is_tutor %}
+    <!-- Tutor view: No children assigned -->
+    <p>No children assigned to your account.</p>
+  {% else %}
+    <!-- Student view: Display own data -->
+    {% include "mainapp/student_dashboard_content.html" with student=student grades=grades ausencias=ausencias %}
+  {% endif %}
+{% endif %}
