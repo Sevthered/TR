@@ -5,11 +5,15 @@
 {% endif %}
 
 <!-- Debug: Show context variables -->
-<p>
-  <strong>is_tutor:</strong> {{ is_tutor }}<br>
-  <strong>student:</strong> {{ student|default:"None" }}
-</p>
-
+<strong>Debug Info:</strong>
+{% if user.profile.role == 'tutor'%}
+<li>is_tutor: {{ is_tutor }}</li>
+<li>children_info: {{ children_info|length }} children</li>
+<li>selected_child: {{ selected_child_obj.student }}</li>
+{% elif user.profile.role == 'student' %}
+<li>Student: {{student}}</li>
+<li>Email: {{student.Email}}</li>
+{% endif %}
 {% if children_info %}
   <!-- Tutor view: Dropdown to select child -->
   <form method="get" id="child-select-form">
