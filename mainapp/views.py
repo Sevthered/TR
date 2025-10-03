@@ -1,6 +1,6 @@
-from mainapp.models import Grade
-from mainapp.models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester
-from django.shortcuts import render, get_object_or_404
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
+from django.shortcuts import render, get_object_or_404, redirect
 from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
@@ -8,11 +8,42 @@ import csv
 # Create your views here.
 
 
+def loginPage(request):
+    if request.method == "POST":
+        username = request.POST.get("username")
+        password = request.POST.get("password")
+        try:
+            User.objects.get(username=username)
+        except:
+            return render(request, "mainapp/login.html", {"error": "User does not exist"})
+
+        user = authenticate(request, username=username, password=password)
+
+        if user is not None:
+            login(request, user)
+            profile = request.user.profile
+            if profile.role == 'student' and profile.student:
+                return redirect('student_dashboard')
+            elif profile.role == 'tutor' and profile.role:
+                return redirect('tutor_dashboard')
+            elif profile.role == 'professor' and profile.professor:
+                return teacher_dashboard(request)
+            else:
+                return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    return render(request, "mainapp/login.html")
+
+
+def logoutUser(request):
+    logout(request)
+    return redirect('login')
+
+
 @login_required
 def student_detail(request):
     profile = request.user.profile
     if profile.role != 'student' or not profile.student:
-        return render(request, "mainapp/forbidden.html", {"user": request.user, "profile": profile})
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     student = profile.student
     grades = Grade.objects.filter(student=student)
@@ -31,7 +62,7 @@ def student_detail(request):
 def teacher_dashboard(request):
     profile = request.user.profile
     if profile.role != 'professor' or not profile.professor:
-        return render(request, "mainapp/forbidden.html")
+        return render(request, "forbidden.html")
 
     all_students = Students.objects.all()
     all_grades = Grade.objects.all()
@@ -44,7 +75,7 @@ def tutor_dashboard(request):
     if profile.role != 'tutor' or not profile.role:
         return render(
             request,
-            "mainapp/forbidden.html",
+            "forbidden.html",
             {"user": request.user, "profile": profile}
         )
 
@@ -95,7 +126,7 @@ def grades_csv(request):
         grades = Grade.objects.all()
         filename = "all_grades.csv"
     else:
-        return render('mainapp/forbidden.html', {"user": request.user, "profile": profile})
+        return render('forbidden.html', {"user": request.user, "profile": profile})
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)

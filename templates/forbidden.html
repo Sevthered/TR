@@ -1,10 +1,14 @@
-<h2>Access Forbidden</h2>
-<a href='{% url "student_csv" %}'>Students csv</a>
+{%extends "base.html" %}
+{% block page_title %}
+
+{% endblock page_title %}
+{% block content %}
+<h1>Acceso prohibido</h1>
 {% if user and profile %}
     <div>
         <strong>User:</strong> {{ user.username }}<br>
         <strong>Email:</strong> {{ user.email }}<br>
         <strong>Profile Role:</strong> {{ profile.role }}<br>
-        <!-- Add more profile fields as needed -->
     </div>
 {% endif %}
+{% endblock content %}

@@ -1,4 +1,6 @@
-<div style="border:1px solid #ccc; border-radius:8px; padding:20px; margin-top:20px;">
+{% extends "base.html" %}
+{% block content %}
+<div style="border:2px solid #ccc; border-radius:15px; padding:20px; margin-top:20px;">
     <h2>{{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}</h2>
     <p><strong>Email:</strong> {{ student.Email }}</p>
 
@@ -6,15 +8,21 @@
     <table border="1" cellpadding="8" cellspacing="0" style="width:100%; margin-bottom: 20px;">
         <thead style="background:#f2f2f2;">
             <tr>
-                <th>Subject</th>
-                <th>Grade</th>
+                <th>Trimestre</th>
+                <th>Nota</th>
+                <th>Asignatura</th>
+                <th>Profesor</th>
+                <th>Comentario</th>
             </tr>
         </thead>
         <tbody>
             {% for grade in grades %}
             <tr>
-                <td>{{ grade.subject.Name }}</td>
+                <td>{{ grade.trimester.Name }}</td>
                 <td>{{ grade.grade }}</td>
+                <td>{{ grade.subject.Name }}</td>
+                <td>{{ grade.teacher.Name }}</td>
+                <td style="max-width:250px; word-break:break-word;">{{ grade.comments|default:"No hay comentario" }}</td>
             </tr>
             {% empty %}
             <tr>
@@ -46,3 +54,4 @@
         </tbody>
     </table>
 </div>
+{% endblock content %}
