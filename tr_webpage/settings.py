@@ -79,13 +79,13 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
 
-        'NAME': 'trmaindb',
+        'NAME': 'my_database',
 
-        'USER': 'postgres',
+        'USER': 'admin',
 
-        'PASSWORD': '12345',
+        'PASSWORD': 'admin',
 
-        'HOST': 'localhost',
+        'HOST': '127.0.0.1',
 
         'PORT': '5432',
     }
