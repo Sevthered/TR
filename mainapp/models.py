@@ -65,6 +65,7 @@ class Subjects(models.Model):
 class Trimester(models.Model):
     TrimesterID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=20)
+    school_year = models.CharField(max_length=9)  # e.g., "2023-2024"
 
     def __str__(self):
         return self.Name
