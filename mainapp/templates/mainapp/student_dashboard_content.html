@@ -1,4 +1,6 @@
-{% extends "base.html" %} {% block content %}
+{% extends "base.html" %} 
+
+{% block content %}
 <div
   style="
     border: 2px solid #ccc;
@@ -13,6 +15,23 @@
   <p><strong>Email:</strong> {{ student.Email }}</p>
 
   <h3>Grades</h3>
+  
+  <a 
+    href="{% url 'grade_new' %}?student_id={{ student.pk }}" 
+    style="
+      display: inline-block;
+      padding: 10px 15px;
+      margin-bottom: 10px;
+      background-color: #007bff; 
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      font-weight: bold;
+    "
+  >
+    ➕ Crear Nueva Nota
+  </a>
+
   <table
     border="1"
     cellpadding="8"
@@ -26,7 +45,7 @@
         <th>Asignatura</th>
         <th>Profesor</th>
         <th>Comentario</th>
-      </tr>
+        <th style="width: 100px;">Acciones</th> </tr>
     </thead>
     <tbody>
       {% for grade in grades %}
@@ -42,11 +61,26 @@
         <td style="max-width: 250px; word-break: break-word">
           {{ grade.comments|default:"No hay comentario" }}
         </td>
-      </tr>
+        
+        <td>
+          <a 
+            href="{% url 'grade_edit' grade_id=grade.pk %}"
+            style="
+              background-color: #28a745; 
+              color: white; 
+              padding: 5px 10px; 
+              text-decoration: none; 
+              border-radius: 3px;
+              font-size: 0.9em;
+            "
+          >
+            Modificar
+          </a>
+        </td>
+        </tr>
       {% empty %}
       <tr>
-        <td colspan="2">No grades available.</td>
-      </tr>
+        <td colspan="6" style="text-align: center;">No grades available.</td> </tr>
       {% endfor %}
     </tbody>
   </table>
@@ -75,7 +109,7 @@
       </tr>
       {% empty %}
       <tr>
-        <td colspan="2">No absences recorded.</td>
+        <td colspan="4" style="text-align: center;">No absences recorded.</td>
       </tr>
       {% endfor %}
     </tbody>

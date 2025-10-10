@@ -5,6 +5,8 @@ from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausenc
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
 import csv
+from django.contrib import messages
+from .forms import GradeForm
 # Create your views here.
 
 
@@ -141,3 +143,30 @@ def grades_csv(request):
              grade.grade,
              grade.comments])
     return response
+
+
+@login_required
+def create_edit_grade(request, grade_id=None):
+    profile = request.user.profile
+    if profile.role != 'professor' or not profile.professor:
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    else:
+        if grade_id:
+            grade_instance = get_object_or_404(Grade, id=grade_id)
+        else:
+            grade_instance = None
+
+    if request.method == "POST":
+        form = GradeForm(request.POST, instance=grade_instance)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Grade saved successfully.")
+            return redirect('student_dashboard')
+    else:
+        form = GradeForm(instance=grade_instance)
+
+    context = {
+        "form": form,
+        "is_edit": grade_instance is not None,
+    }
+    return render(request, "mainapp/grade_form.html", context)
