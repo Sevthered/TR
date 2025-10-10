@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block page_title %}
+Teacher Dashboard
+{% endblock page_title %}
+{% block content %}
+{% include "navbar.html" %}
+<h2>Teacher Dashboard</h2>
+<div>
+    <h3>All Students</h3>
+    <ul>
+        {% for student in students%}
+        <li><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}</a></li>
+        {% endfor %}
+    </ul>
+</div>
+<div>
+    <h3>All Grades</h3>
+    <ul>
+        {% for grade in grades %}
+        <li>{{ grade.student.Name }} - {{ grade.subject.Name }}: {{ grade.grade }}</li>
+        {% endfor %}
+    </ul>
+</div>
+<div>
+    <h3>All Ausencias</h3>
+    <ul>
+        {% for ausencia in ausencias %}
+        <li>{{ ausencia.student.Name }} - {{ ausencia.date_time }}: {{ ausencia.reason }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

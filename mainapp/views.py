@@ -5,6 +5,8 @@ from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausenc
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
 import csv
+from django.contrib import messages
+from .forms import GradeForm
 # Create your views here.
 
 
@@ -26,7 +28,7 @@ def loginPage(request):
                 return redirect('student_dashboard')
             elif profile.role == 'tutor' and profile.role:
                 return redirect('tutor_dashboard')
-            elif profile.role == 'professor' and profile.professor:
+            elif profile.role == 'professor' and profile.role:
                 return teacher_dashboard(request)
             else:
                 return render(request, "forbidden.html", {"user": request.user, "profile": profile})
@@ -61,12 +63,38 @@ def student_detail(request):
 @login_required
 def teacher_dashboard(request):
     profile = request.user.profile
-    if profile.role != 'professor' or not profile.professor:
+    if profile.role != 'professor' or not profile.role:
         return render(request, "forbidden.html")
+    else:
+        all_students = Students.objects.all().order_by('Name')
+        all_grades = Grade.objects.all()
+        all_ausencias = Ausencias.objects.all()
 
-    all_students = Students.objects.all()
-    all_grades = Grade.objects.all()
-    all_ausencias = Ausencias.objects.all()
+        context = {
+            "students": all_students,
+            "grades": all_grades,
+            "ausencias": all_ausencias,
+        }
+        return render(request, "mainapp/teacher_dashboard.html", context)
+
+
+@login_required
+def student_dashboard_content(request, student_id):
+    profile = request.user.profile
+    if profile.role != 'professor' or not profile.role:
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    student = get_object_or_404(Students, StudentID=student_id)
+    grades = Grade.objects.filter(student=student)
+    ausensias = Ausencias.objects.filter(
+        student=student).order_by('-date_time')
+    context = {
+        "student": student,
+        "grades": grades,
+        "ausencias": ausensias,
+        "is_tutor": False,
+    }
+    return render(request, "mainapp/student_dashboard_content.html", context)
 
 
 @login_required
@@ -141,3 +169,30 @@ def grades_csv(request):
              grade.grade,
              grade.comments])
     return response
+
+
+@login_required
+def create_edit_grade(request, grade_id=None):
+    profile = request.user.profile
+    if profile.role != 'professor' or not profile.professor:
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    else:
+        if grade_id:
+            grade_instance = get_object_or_404(Grade, id=grade_id)
+        else:
+            grade_instance = None
+
+    if request.method == "POST":
+        form = GradeForm(request.POST, instance=grade_instance)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Grade saved successfully.")
+            return redirect('student_dashboard')
+    else:
+        form = GradeForm(instance=grade_instance)
+
+    context = {
+        "form": form,
+        "is_edit": grade_instance is not None,
+    }
+    return render(request, "mainapp/grade_form.html", context)

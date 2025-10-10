@@ -1,7 +1,14 @@
-# Byte-compiled / optimized / DLL files
+# Python Bytecode Files
+*.pyc
 __pycache__/
-*.py[codz]
-*$py.class
+
+# Common Django/IDE Files
+*.sqlite3
+.DS_Store
+.venv/
+venv/
+/htmlcov/
+*.log
 
 # C extensions
 *.so
@@ -50,7 +57,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-
 # Translations
 *.mo
 *.pot
