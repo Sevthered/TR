@@ -53,6 +53,8 @@ class Migration(migrations.Migration):
                 ('TrimesterID', models.AutoField(
                     primary_key=True, serialize=False)),
                 ('Name', models.CharField(max_length=20)),
+                ('school_year', models.CharField(
+                    help_text='School year like 2023-2024', max_length=9)),
             ],
         ),
         migrations.CreateModel(

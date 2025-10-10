@@ -65,10 +65,11 @@ class Subjects(models.Model):
 class Trimester(models.Model):
     TrimesterID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=20)
-    school_year = models.CharField(max_length=9)  # e.g., "2023-2024"
+    school_year = models.CharField(
+        max_length=9, help_text="School year like 2023-2024")
 
     def __str__(self):
-        return self.Name
+        return f"{self.Name} ({self.school_year})"
 
 
 class Grade(models.Model):
@@ -91,7 +92,6 @@ class Ausencias(models.Model):
         ("Ausencia", "Ausencia"),
         ("Retraso", "Retraso"),
     ]
-
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     trimester = models.ForeignKey(
