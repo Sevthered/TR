@@ -29,7 +29,7 @@ def loginPage(request):
             elif profile.role == 'tutor' and profile.role:
                 return redirect('tutor_dashboard')
             elif profile.role == 'professor' and profile.role:
-                return teacher_dashboard(request)
+                return redirect('teacher_dashboard')
             else:
                 return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
@@ -60,6 +60,15 @@ def student_detail(request):
     return render(request, "mainapp/student_file.html", context)
 
 
+def sort_key_section(course):
+
+    section = course.Section
+    number_part = int(section[0])
+    letter_part = section[1]
+
+    return (number_part, letter_part)
+
+
 @login_required
 def teacher_dashboard(request):
     profile = request.user.profile
@@ -69,13 +78,53 @@ def teacher_dashboard(request):
         all_students = Students.objects.all().order_by('Name')
         all_grades = Grade.objects.all()
         all_ausencias = Ausencias.objects.all()
+        all_courses = Course.objects.all()
+
+    # 2. Sort the list in Python
+        sorted_courses = sorted(all_courses, key=sort_key_section)
+
+    # 3. Create separate lists for each 'Tipo'
+        eso_courses = []
+        bachillerato_courses = []
+        ib_courses = []
+
+        for course in sorted_courses:
+            if course.Tipo == "Eso":
+                eso_courses.append(course)
+            elif course.Tipo == "Bachillerato":
+                bachillerato_courses.append(course)
+            elif course.Tipo == "IB":
+                ib_courses.append(course)
 
         context = {
             "students": all_students,
             "grades": all_grades,
             "ausencias": all_ausencias,
+            "courses": all_courses,
+            'eso_courses': eso_courses,
+            'bachillerato_courses': bachillerato_courses,
+            'ib_courses': ib_courses,
         }
         return render(request, "mainapp/teacher_dashboard.html", context)
+
+
+@login_required
+def class_dashboard(request, course_id):
+    profile = request.user.profile
+    if profile.role != 'professor' or not profile.role:
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    course = get_object_or_404(Course, CourseID=course_id)
+    subjects_courses = course.subjects_courses_set.all()
+    students = Students.objects.filter(
+        subjects_courses__course=course).distinct().order_by('Name')
+
+    context = {
+        "course": course,
+        "subjects_courses": subjects_courses,
+        "students": students,
+    }
+    return render(request, "mainapp/class_dashboard.html", context)
 
 
 @login_required

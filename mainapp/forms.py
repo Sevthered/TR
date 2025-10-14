@@ -9,7 +9,7 @@ class CSVImportForm(forms.Form):
 class GradeForm(forms.ModelForm):
     class Meta:
         model = Grade
-        fields = ['student', 'subject', 'teacher',
+        fields = ['student', 'subject', 'grade_type_number', 'grade_type',
                   'trimester', 'grade', 'comments']
         widgets = {
             'comments': forms.Textarea(attrs={'rows': 3}),

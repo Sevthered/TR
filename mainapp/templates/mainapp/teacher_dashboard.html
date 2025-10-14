@@ -3,31 +3,104 @@
 {% block page_title %}
 Teacher Dashboard
 {% endblock page_title %}
+{% block styles %}
+<style>
+        /* CSS for the 3-column layout using Flexbox */
+        .container {
+            display: flex; /* Enables flex context for children */
+            gap: 20px; /* Space between columns */
+            padding: 20px;
+        }
+
+        .column {
+            flex: 1; /* Makes each column grow equally to fill the space */
+            min-width: 300px; /* Minimum width to prevent crushing on small screens */
+        }
+
+        /* Basic table styling */
+        .course-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .course-table th, .course-table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .course-table th {
+            background-color: #f2f2f2;
+        }
+        
+        /* Media query to stack columns on very small screens */
+        @media (max-width: 1000px) {
+            .container {
+                flex-direction: column; /* Stack columns vertically */
+            }
+        }
+    </style>
+{% endblock styles %}
 {% block content %}
 {% include "navbar.html" %}
-<h2>Teacher Dashboard</h2>
-<div>
-    <h3>All Students</h3>
-    <ul>
-        {% for student in students%}
-        <li><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}</a></li>
-        {% endfor %}
-    </ul>
-</div>
-<div>
-    <h3>All Grades</h3>
-    <ul>
-        {% for grade in grades %}
-        <li>{{ grade.student.Name }} - {{ grade.subject.Name }}: {{ grade.grade }}</li>
-        {% endfor %}
-    </ul>
-</div>
-<div>
-    <h3>All Ausencias</h3>
-    <ul>
-        {% for ausencia in ausencias %}
-        <li>{{ ausencia.student.Name }} - {{ ausencia.date_time }}: {{ ausencia.reason }}</li>
-        {% endfor %}
-    </ul>
-</div>
+<h1 style="text-align: center;">Listado de Cursos por Tipo</h1>
+    
+    <div class="container">
+
+        <div class="column">
+            <h2>ESO</h2>
+            <table class="course-table">
+                <thead>
+                    <tr><th>Sección</th></tr>
+                </thead>
+                <tbody>
+                    {% for course in eso_courses %}
+                    <tr>
+                        <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2">No hay cursos de ESO.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="column">
+            <h2>Bachillerato</h2>
+            <table class="course-table">
+                <thead>
+                    <tr><th>Sección</th></tr>
+                </thead>
+                <tbody>
+                    {% for course in bachillerato_courses %}
+                    <tr>
+                        <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2">No hay cursos de Bachillerato.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="column">
+            <h2>IB</h2>
+            <table class="course-table">
+                <thead>
+                    <tr><th>Sección</th></tr>
+                </thead>
+                <tbody>
+                    {% for course in ib_courses %}
+                    <tr>
+                        <td>{{ course.Section }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2">No hay cursos IB.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+    </div>
 {% endblock %}

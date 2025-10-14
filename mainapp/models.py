@@ -39,6 +39,8 @@ class Course(models.Model):
     CourseID = models.AutoField(primary_key=True)
     Tipo = models.CharField(max_length=20, choices=COURSE_TYPE_CHOICES)
     Section = models.CharField(max_length=2)
+    school_year = models.CharField(
+        max_length=9, help_text="Año escolar: '2023-2024'")
 
     def __str__(self):
         return f"{self.Tipo} {self.Section}"
@@ -52,6 +54,17 @@ class Teachers(models.Model):
         return self.Name
 
 
+class Subjects_Courses(models.Model):
+    subject = models.ForeignKey('Subjects', on_delete=models.CASCADE)
+    teacher = models.ForeignKey('Teachers', on_delete=models.CASCADE)
+    course = models.ForeignKey('Course', on_delete=models.CASCADE)
+    trimester = models.ForeignKey('Trimester', on_delete=models.CASCADE)
+    students = models.ManyToManyField('Students')
+
+    def __str__(self):
+        return f"{self.subject} - {self.teacher} ({self.course})"
+
+
 class Subjects(models.Model):
     SubjectID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=50)
@@ -61,8 +74,13 @@ class Subjects(models.Model):
 
 
 class Trimester(models.Model):
+    NAME_CHOICES = [
+        (1, "First"),
+        (2, "Second"),
+        (3, "Third"),
+    ]
     TrimesterID = models.AutoField(primary_key=True)
-    Name = models.CharField(max_length=20)
+    Name = models.IntegerField(choices=NAME_CHOICES)
     school_year = models.CharField(
         max_length=9, help_text="Año escolar: '2023-2024'")
 
@@ -81,7 +99,6 @@ class Grade(models.Model):
 
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
-    teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
     trimester = models.ForeignKey(Trimester, on_delete=models.CASCADE)
     grade = models.DecimalField(max_digits=4, decimal_places=2, validators=[
                                 MinValueValidator(0), MaxValueValidator(10)])
@@ -107,7 +124,6 @@ class Ausencias(models.Model):
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     trimester = models.ForeignKey(
         Trimester, on_delete=models.CASCADE)
-    teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
     Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
     date_time = models.DateTimeField(default=timezone.now)
 
