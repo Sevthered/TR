@@ -21,7 +21,7 @@ Class Dashboard
     <tbody>
       {% for student in students %}
       <tr>
-        <td>{{ student.Name }}</td>
+        <td><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }}</a></td>
         <td>{{ student.Email }}</td>
       </tr>
       {% empty %}
