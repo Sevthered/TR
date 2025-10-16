@@ -1,106 +1,162 @@
 {% extends "base.html" %}
+{% load static %}
+
 
 {% block page_title %}
 Teacher Dashboard
 {% endblock page_title %}
+
 {% block styles %}
+<link rel="stylesheet" href="{% static 'css/site-pages.css' %}">
 <style>
-        /* CSS for the 3-column layout using Flexbox */
-        .container {
-            display: flex; /* Enables flex context for children */
-            gap: 20px; /* Space between columns */
-            padding: 20px;
-        }
+  /* Page-specific spacing that complements site-pages.css */
+  .page-content {
+    padding: 0; /* outer padding handled by .page-root */
+  }
 
-        .column {
-            flex: 1; /* Makes each column grow equally to fill the space */
-            min-width: 300px; /* Minimum width to prevent crushing on small screens */
-        }
+  /* Keep original 3-column layout but rely on global tokens */
+  .container {
+    display: flex;
+    gap: 20px;
+    padding: 0;
+    box-sizing: border-box;
+  }
 
-        /* Basic table styling */
-        .course-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
+  .column {
+    flex: 1;
+    min-width: 300px;
+    box-sizing: border-box;
+  }
 
-        .course-table th, .course-table td {
-            border: 1px solid #ccc;
-            padding: 8px;
-            text-align: left;
-        }
+  /* Map old .course-table to global .table styles */
+  .course-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+  }
+  .course-table th,
+  .course-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: inherit;
+    font-size: 0.95rem;
+  }
+  .course-table thead tr th {
+    background: rgba(255,255,255,0.02);
+    font-weight: 700;
+    text-align: center; /* centered headers as requested */
+    border-bottom: 2px solid rgba(255,255,255,0.04);
+  }
+  .course-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.01); }
+  .course-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+  .course-table td a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .course-table td a:hover { color: var(--accent-600); text-decoration: underline; }
 
-        .course-table th {
-            background-color: #f2f2f2;
-        }
-        
-        /* Media query to stack columns on very small screens */
-        @media (max-width: 1000px) {
-            .container {
-                flex-direction: column; /* Stack columns vertically */
-            }
-        }
-    </style>
+  /* Center the main page title */
+  .page-title { text-align: center; margin: 0 0 16px 0; font-weight: 700; line-height: 1.12; }
+
+  @media (max-width: 1000px) {
+    .container { flex-direction: column; }
+    .course-table th, .course-table td { text-align: left; } /* improve readability on narrow screens */
+  }
+  /* Increase top padding inside panels so content sits lower */
+:root {
+  --surface-padding-vertical: 24px; /* change this to taste (e.g., 32px for more space) */
+  --surface-padding-horizontal: 12px;
+}
+
+.page-surface,
+.card,
+.panel,
+.content-panel {
+  padding-top: var(--surface-padding-vertical);
+  padding-bottom: var(--surface-padding-vertical);
+  padding-left: var(--surface-padding-horizontal);
+  padding-right: var(--surface-padding-horizontal);
+  box-sizing: border-box;
+}
+
+/* Page-specific override for that template if you prefer a larger top gap only there */
+.page-content .page-surface {
+  padding-top: 32px; /* larger top spacing for this page */
+}
+
+/* Keep mobile spacing reasonable */
+@media (max-width: 480px) {
+  :root { --surface-padding-vertical: 16px; --surface-padding-horizontal: 12px; }
+  .page-content .page-surface { padding-top: 20px; }
+}
+
+</style>
 {% endblock styles %}
+
 {% block content %}
-{% include "navbar.html" %}
-<h1 style="text-align: center;">Listado de Cursos por Tipo</h1>
-    
+<!-- Wrap content so the global stylesheet applies page surfaces and spacing -->
+<div class="page-root">
+  <div class="page-surface page-content" role="main" aria-labelledby="page-title">
+    <h1 id="page-title" class="page-title">Listado de Cursos por Tipo</h1>
+
     <div class="container">
-
-        <div class="column">
-            <h2>ESO</h2>
-            <table class="course-table">
-                <thead>
-                    <tr><th>Sección</th></tr>
-                </thead>
-                <tbody>
-                    {% for course in eso_courses %}
-                    <tr>
-                        <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="2">No hay cursos de ESO.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+      <div class="column">
+        <h2 class="title-center">ESO</h2>
+        <div class="table-wrap" role="region" aria-label="Cursos ESO">
+          <table class="course-table" aria-describedby="eso-note">
+            <thead>
+              <tr><th>Sección</th></tr>
+            </thead>
+            <tbody>
+              {% for course in eso_courses %}
+              <tr>
+                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="1" id="eso-note">No hay cursos de ESO.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="column">
-            <h2>Bachillerato</h2>
-            <table class="course-table">
-                <thead>
-                    <tr><th>Sección</th></tr>
-                </thead>
-                <tbody>
-                    {% for course in bachillerato_courses %}
-                    <tr>
-                        <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="2">No hay cursos de Bachillerato.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+      <div class="column">
+        <h2 class="title-center">Bachillerato</h2>
+        <div class="table-wrap" role="region" aria-label="Cursos Bachillerato">
+          <table class="course-table" aria-describedby="bach-note">
+            <thead>
+              <tr><th>Sección</th></tr>
+            </thead>
+            <tbody>
+              {% for course in bachillerato_courses %}
+              <tr>
+                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="1" id="bach-note">No hay cursos de Bachillerato.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="column">
-            <h2>IB</h2>
-            <table class="course-table">
-                <thead>
-                    <tr><th>Sección</th></tr>
-                </thead>
-                <tbody>
-                    {% for course in ib_courses %}
-                    <tr>
-                        <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="2">No hay cursos IB.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+      <div class="column">
+        <h2 class="title-center">IB</h2>
+        <div class="table-wrap" role="region" aria-label="Cursos IB">
+          <table class="course-table" aria-describedby="ib-note">
+            <thead>
+              <tr><th>Sección</th></tr>
+            </thead>
+            <tbody>
+              {% for course in ib_courses %}
+              <tr>
+                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="1" id="ib-note">No hay cursos IB.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-
+      </div>
     </div>
+  </div>
+</div>
 {% endblock %}

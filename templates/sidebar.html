@@ -1,0 +1,60 @@
+<!-- templates/includes/sidebar.html -->
+<aside class="sidebar" id="sidebar" aria-label="Main sidebar">
+  <nav class="sidebar-inner">
+    <section class="section" data-id="nav">
+      <button class="section-header" aria-expanded="false" aria-controls="body-nav">
+        <span class="section-title">Navegación</span>
+        <span class="chev" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </span>
+      </button>
+
+      <div id="body-nav" class="section-body" role="region" aria-labelledby="body-nav">
+        <div class="section-content">
+          <a class="item" href="#">Inicio</a>
+          <a class="item" href="#">Dashboard</a>
+          <a class="item" href="#">Informes</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-id="behavior">
+      <button class="section-header" aria-expanded="false" aria-controls="body-behavior">
+        <span class="section-title">Comportamiento</span>
+        <span class="chev" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </span>
+      </button>
+
+      <div id="body-behavior" class="section-body" role="region">
+        <div class="section-content">
+          <a class="item" href="#">Reglas</a>
+          <a class="item" href="#">Alertas</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-id="students">
+      <button class="section-header" aria-expanded="true" aria-controls="body-students">
+        <span class="section-title">Alumnos</span>
+        <span class="chev" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </span>
+      </button>
+
+      <div id="body-students" class="section-body" role="region">
+        <div class="section-content">
+          <div class="empty">No hay datos de alumnos para este curso</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="sidebar-footer">Tip: haz clic en los títulos para abrir las secciones</div>
+  </nav>
+</aside>
