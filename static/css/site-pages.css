@@ -1,0 +1,267 @@
+/* static/css/site-pages.css
+   Global page stylesheet inspired by SvelteKit:
+   - clean, modern tones with a warm accent
+   - readable typography and system-first font stack
+   - polished tables, forms, buttons, and layout utilities
+   - include this file on all regular pages (not on login/navbar/sidebar partials if you prefer)
+*/
+
+/* -------------------------
+   Theme tokens (easy to tweak)
+   ------------------------- */
+:root{
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 16px;
+  --space-lg: 24px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  --base-font-size: 16px;
+  --line-height: 1.5;
+
+  /* Svelte-like warm accent */
+  --accent: #ff3e00;
+  --accent-600: #ff5a25;
+  --accent-muted: rgba(255,62,0,0.08);
+  --focus: rgba(255,90,40,0.18);
+
+  /* Neutrals for a dark-ish UI (tweak for light theme if needed) */
+  --bg: #0f1720;            /* page background */
+  --surface: #111519;       /* panels/cards */
+  --muted-surface: #0d1114;
+  --text: #e6eef6;
+  --muted-text: #9aa6b3;
+  --border: rgba(255,255,255,0.04);
+
+  /* Tables */
+  --table-head-bg: rgba(255,255,255,0.02);
+  --table-row-alt: rgba(255,255,255,0.01);
+
+  /* shadows */
+  --shadow-md: 0 6px 18px rgba(0,0,0,0.48);
+}
+
+/* -------------------------
+   Reset + base
+   ------------------------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--base-font-size);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg);
+  color: var(--text);
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  line-height: var(--line-height);
+  min-height: 100%;
+  -webkit-font-feature-settings: "liga" 1;
+  font-feature-settings: "liga" 1;
+}
+
+/* Page wrapper to apply surface and spacing (add .page-root on pages) */
+.page-root {
+  background: linear-gradient(180deg, rgba(255,255,255,0.006), rgba(255,255,255,0.002));
+  background-color: var(--surface);
+  padding: var(--space-lg);
+  min-height: calc(100vh - 0px);
+  color: var(--text);
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+/* -------------------------
+   Typographic scale
+   ------------------------- */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0 0 var(--space-sm) 0;
+  color: var(--text);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.05rem; }
+
+.title-center { text-align: center; }
+
+/* Paragraphs and muted text */
+p, li {
+  color: var(--text);
+  margin: 0 0 var(--space-sm) 0;
+  font-size: 0.98rem;
+}
+.muted { color: var(--muted-text); }
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+a:hover { color: var(--accent-600); text-decoration: underline; }
+
+/* -------------------------
+   Surfaces and cards
+   ------------------------- */
+.card, .panel, .page-surface, .content-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,0.006), rgba(255,255,255,0.002));
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  box-shadow: var(--shadow-md);
+  color: inherit;
+}
+
+.card-compact { padding: var(--space-sm); border-radius: var(--radius-sm); }
+
+.separator {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  margin: var(--space-md) 0;
+  border-radius: 1px;
+}
+
+/* -------------------------
+   Buttons and form controls
+   ------------------------- */
+.button {
+  display: inline-grid;
+  place-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.03);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+.button.primary {
+  background: linear-gradient(180deg, var(--accent), var(--accent-600));
+  color: white;
+  border: none;
+  box-shadow: 0 6px 18px rgba(255,90,40,0.12);
+}
+.button:hover { transform: translateY(-2px); }
+.button:active { transform: translateY(0); }
+
+/* Inputs */
+input[type="text"], input[type="search"], textarea, select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.01);
+  color: var(--text);
+  outline: none;
+  font: inherit;
+  box-sizing: border-box;
+}
+input:focus, textarea:focus, select:focus {
+  box-shadow: 0 0 0 6px var(--focus);
+  border-color: rgba(255,255,255,0.08);
+}
+
+/* -------------------------
+   Tables (polished)
+   ------------------------- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: transparent;
+  overflow: hidden;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.table th,
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text);
+  font-size: 0.95rem;
+  vertical-align: middle;
+}
+
+/* Center header text and make it distinct */
+.table thead tr th {
+  background: var(--table-head-bg);
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 2px solid rgba(255,255,255,0.04);
+  text-align: center;
+}
+
+/* Alternate row background and hover */
+.table tbody tr:nth-child(even) { background: var(--table-row-alt); }
+.table tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+/* Table links */
+.table td a { color: var(--accent); font-weight: 700; text-decoration: none; }
+.table td a:hover { color: var(--accent-600); text-decoration: underline; }
+
+/* Compact variants */
+.table-compact th, .table-compact td { padding: 6px 8px; font-size: 0.9rem; }
+
+/* Responsive wrapper */
+.table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
+
+/* -------------------------
+   Layout utilities
+   ------------------------- */
+.container {
+  display: flex;
+  gap: var(--space-lg);
+  align-items: flex-start;
+  box-sizing: border-box;
+}
+.column { flex: 1 1 0; min-width: 220px; box-sizing: border-box; }
+
+.center { display:flex; justify-content:center; align-items:center; }
+.right { display:flex; justify-content:flex-end; align-items:center; }
+
+.mt-sm { margin-top: var(--space-sm); }
+.mt-md { margin-top: var(--space-md); }
+
+/* -------------------------
+   Responsive behavior
+   ------------------------- */
+@media (max-width: 1000px) {
+  .container { flex-direction: column; gap: var(--space-md); }
+  .title-center { text-align: center; }
+  /* keep table header left-aligned for readability on small screens */
+  .table thead tr th, .table tbody td { text-align: left; }
+}
+
+@media (max-width: 480px) {
+  :root { --space-sm: 8px; --space-md: 12px; }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1.05rem; }
+  .table thead tr th { font-size: 0.95rem; }
+}
+
+/* -------------------------
+   Accessibility touches
+   ------------------------- */
+:focus { outline: none; }
+[tabindex]:focus, a:focus, button:focus, input:focus {
+  box-shadow: 0 0 0 6px rgba(255,90,40,0.14);
+  border-radius: 6px;
+}

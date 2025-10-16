@@ -1,84 +1,132 @@
-{% extends "base.html" %} {% block content %}
-<div
-  style="
-    border: 2px solid #ccc;
+{% extends "base.html" %}
+{% load static %}
+
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/site-pages.css' %}">
+<style>
+  /* Page-specific spacing to lower content inside the surface box */
+  :root {
+    --surface-padding-vertical: 28px;
+    --surface-padding-horizontal: 20px;
+  }
+  .page-surface { padding-top: var(--surface-padding-vertical); padding-bottom: var(--surface-padding-vertical); padding-left: var(--surface-padding-horizontal); padding-right: var(--surface-padding-horizontal); }
+
+  /* Preserve rounded border look similar to original but using site tokens */
+  .inline-surface {
+    border: 2px solid rgba(255,255,255,0.06);
     border-radius: 15px;
-    padding: 20px;
-    margin-top: 20px;
-  "
->
-  <h2>
-    {{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}
-  </h2>
-  <p><strong>Email:</strong> {{ student.Email }}</p>
+    box-sizing: border-box;
+  }
 
-  <h3>Grades</h3>
-  <table
-    border="1"
-    cellpadding="8"
-    cellspacing="0"
-    style="width: 100%; margin-bottom: 20px"
-  >
-    <thead style="background: #f2f2f2">
-      <tr>
-        <th>Trimestre</th>
-        <th>Nota</th>
-        <th>Asignatura</th>
-        <th>Profesor</th>
-        <th>Comentario</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for grade in grades %}
-      <tr>
-        <td>{{ grade.trimester.Name }}</td>
-        <td
-          style="{% if grade.grade < 5 %}background-color: #ff6b6b; color: white;{% endif %}"
-        >
-          {{ grade.grade }}
-        </td>
-        <td>{{ grade.subject.Name }}</td>
-        <td>{{ grade.teacher.Name }}</td>
-        <td style="max-width: 250px; word-break: break-word">
-          {{ grade.comments|default:"No hay comentario" }}
-        </td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="2">No grades available.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  /* Tables mapped to global table styles but maintain original spacing */
+  .course-table, .student-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+  }
 
-  <h3>Absences</h3>
-  <table border="1" cellpadding="8" cellspacing="0" style="width: 100%">
-    <thead style="background: #f2f2f2">
-      <tr>
-        <th>Fecha</th>
-        <th>Materia</th>
-        <th>Profesor</th>
-        <th>Tipo</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for ausencia in ausencias %}
-      <tr>
-        <td>{{ ausencia.date_time }}</td>
-        <td>{{ ausencia.subject }}</td>
-        <td>{{ ausencia.teacher }}</td>
-        <td
-          style="{% if ausencia.Tipo == 'Retraso' %}background-color: #ff6b6b; color: white;{% elif ausencia.Tipo == 'Ausencia' %}background-color: #ffa726; color: white;{% endif %}"
-        >
-          {{ ausencia.Tipo }}
-        </td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="2">No absences recorded.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  .student-table th, .student-table td {
+    padding: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: inherit;
+    vertical-align: middle;
+  }
+
+  .student-table thead {
+    background: var(--table-head-bg);
+  }
+
+  .student-table tbody tr:nth-child(even) { background: var(--table-row-alt); }
+  .student-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+  /* Marking failing grades and warning absence types */
+  .grade-fail { background-color: #ff6b6b; color: white; font-weight: 700; }
+  .absence-delay { background-color: #ff6b6b; color: white; font-weight: 700; }
+  .absence-absence { background-color: #ffa726; color: white; font-weight: 700; }
+
+  /* Keep long comments readable */
+  .comment-cell { max-width: 250px; word-break: break-word; }
+
+  /* Small screens: tighten paddings */
+  @media (max-width: 480px) {
+    :root { --surface-padding-vertical: 16px; --surface-padding-horizontal: 12px; }
+    .student-table th, .student-table td { padding: 6px; font-size: 14px; }
+  }
+</style>
+{% endblock styles %}
+
+{% block content %}
+<div class="page-root">
+  <div class="page-surface inline-surface" role="main" aria-labelledby="student-name">
+    <h2 id="student-name">
+      {{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}
+    </h2>
+    <p><strong>Email:</strong> {{ student.Email }}</p>
+
+    <h3>Grades</h3>
+    <div class="table-wrap">
+      <table class="student-table" aria-describedby="grades-note">
+        <thead>
+          <tr>
+            <th>Trimestre</th>
+            <th>Nota</th>
+            <th>Asignatura</th>
+            <th>Profesor</th>
+            <th>Comentario</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for grade in grades %}
+          <tr>
+            <td>{{ grade.trimester.Name }}</td>
+            <td class="{% if grade.grade < 5 %}grade-fail{% endif %}">
+              {{ grade.grade }}
+            </td>
+            <td>{{ grade.subject.Name }}</td>
+            <td>{{ grade.teacher.Name }}</td>
+            <td class="comment-cell">
+              {{ grade.comments|default:"No hay comentario" }}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5" id="grades-note">No grades available.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Absences</h3>
+    <div class="table-wrap">
+      <table class="student-table" aria-describedby="absences-note">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Materia</th>
+            <th>Profesor</th>
+            <th>Tipo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ausencia in ausencias %}
+          <tr>
+            <td>{{ ausencia.date_time }}</td>
+            <td>{{ ausencia.subject }}</td>
+            <td>{{ ausencia.teacher }}</td>
+            <td class="{% if ausencia.Tipo == 'Retraso' %}absence-delay{% elif ausencia.Tipo == 'Ausencia' %}absence-absence{% endif %}">
+              {{ ausencia.Tipo }}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="4" id="absences-note">No absences recorded.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% endblock content %}

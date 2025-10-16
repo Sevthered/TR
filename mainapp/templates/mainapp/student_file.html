@@ -8,7 +8,6 @@
 {%endif%}
 {% endblock page_title %}
 {% block content %}
-{% include "navbar.html" %}
 <!-- Authentication -->
 {% if user.is_authenticated %}
   <p>Logged in as: {{ user.username }}</p>

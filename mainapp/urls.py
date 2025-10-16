@@ -7,4 +7,16 @@ urlpatterns = [
     path('student/', views.student_detail, name='student_dashboard'),
     path('student_csv/', views.grades_csv, name='student_csv'),
     path('tutor/', views.tutor_dashboard, name='tutor_dashboard'),
+    path('grades/new/', views.create_edit_grade, name='grade_new'),
+    path('student/edit/<int:grade_id>/',
+         views.create_edit_grade, name='grade_edit'),
+    path('student/', views.student_detail, name='grade_list'),
+    path('teacher/', views.teacher_dashboard, name='teacher_dashboard'),
+    path(
+        'students/<int:student_id>/dashboard/',
+        views.student_dashboard_content,
+        name='student_dashboard_content'
+    ),
+    path('class/<int:course_id>/dashboard/',
+         views.class_dashboard, name='class_dashboard'),
 ]

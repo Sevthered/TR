@@ -1,0 +1,131 @@
+/* static/css/login.css
+   Centered login card + prevent page scroll; card scrolls if necessary.
+*/
+
+:root{
+  --bg-1: #0f1418;
+  --bg-2: #0b0e11;
+  --card-bg: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.006));
+  --accent: #7c5cff;
+  --muted: #9aa6b3;
+  --text: #eaf1ff;
+  --radius: 12px;
+  --ease: cubic-bezier(.2,.9,.2,1);
+}
+
+/* ensure viewport-based layout and no page scroll */
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(900px 400px at 10% 10%, rgba(124,92,255,0.03), transparent),
+    linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  color: var(--text);
+  overflow: hidden; /* prevent page-level scrolling */
+}
+
+/* center the content horizontally and vertically */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+/* card: centered, with internal scrolling if needed */
+.login-card{
+  width: 100%;
+  max-width: 420px;
+  max-height: calc(100vh - 48px); /* keep inside viewport */
+  overflow: auto; /* allow card to scroll instead of whole page */
+  background: var(--card-bg);
+  border: 1px solid rgba(255,255,255,0.03);
+  border-radius: var(--radius);
+  padding: 26px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.48);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transform: translateY(16px);
+  opacity: 0;
+  animation: cardIn 520ms var(--ease) forwards;
+  box-sizing: border-box;
+}
+
+/* entrance animation */
+@keyframes cardIn {
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* header */
+.login-header h1{ margin:0; font-size:20px; text-align:center; }
+.login-sub{ margin:6px 0 0 0; color:var(--muted); font-weight:700; font-size:13px; text-align:center; }
+
+/* form layout centered */
+.login-form{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  margin-top:8px;
+  align-items: stretch; /* inputs take full card width */
+}
+.login-form label {
+  color:var(--muted);
+  font-weight:700;
+  font-size:13px;
+  display:block;
+}
+.login-form input[type="text"],
+.login-form input[type="password"]{
+  width:100%;
+  padding:10px 12px;
+  border-radius:10px;
+  background:transparent;
+  border:1px solid rgba(255,255,255,0.03);
+  color:var(--text);
+  font-weight:700;
+  font-size:14px;
+  outline:none;
+  transition: box-shadow 180ms var(--ease), transform 180ms var(--ease), border-color 180ms linear;
+  box-sizing: border-box;
+}
+.login-form input::placeholder{ color: rgba(154,166,179,0.45); font-weight:600; }
+
+.login-form input:focus{
+  box-shadow: 0 10px 30px rgba(124,92,255,0.08);
+  border-color: rgba(124,92,255,0.16);
+  transform: translateY(-2px);
+}
+
+/* submit centered and full width */
+.btn-submit{
+  margin-top:4px;
+  padding:12px 14px;
+  border-radius:10px;
+  background: linear-gradient(180deg, var(--accent), #5e3fe6);
+  border:none;
+  color:white;
+  font-weight:800;
+  font-size:15px;
+  cursor:pointer;
+  box-shadow: 0 8px 22px rgba(124,92,255,0.18);
+  transition: transform 180ms var(--ease), box-shadow 200ms var(--ease);
+  width: 100%;
+  align-self: stretch;
+}
+.btn-submit:hover{ transform: translateY(-3px); box-shadow: 0 14px 36px rgba(124,92,255,0.22); }
+.btn-submit:active { transform: translateY(-1px) scale(0.996); }
+
+/* error */
+.error-msg{ color:#ff6b6b; margin-top:6px; font-weight:700; text-align:center; }
+
+/* small screens: reduce padding and keep card inside viewport */
+@media (max-width:520px){
+  .login-page { padding: 18px; }
+  .login-card { padding: 18px; border-radius: 10px; max-width: 100%; }
+}

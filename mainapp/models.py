@@ -7,12 +7,10 @@ from django.utils import timezone
 class Students(models.Model):
     StudentID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=50)
-    First_Surname = models.CharField(max_length=50)
-    Last_Surname = models.CharField(max_length=50)
     Email = models.EmailField(max_length=254)
 
     def __str__(self):
-        return f"{self.Name} {self.First_Surname} {self.Last_Surname}"
+        return f"{self.Name} {self.Email}"
 
 
 class Profile(models.Model):
@@ -41,6 +39,8 @@ class Course(models.Model):
     CourseID = models.AutoField(primary_key=True)
     Tipo = models.CharField(max_length=20, choices=COURSE_TYPE_CHOICES)
     Section = models.CharField(max_length=2)
+    school_year = models.CharField(
+        max_length=9, help_text="Año escolar: '2023-2024'")
 
     def __str__(self):
         return f"{self.Tipo} {self.Section}"
@@ -54,6 +54,17 @@ class Teachers(models.Model):
         return self.Name
 
 
+class Subjects_Courses(models.Model):
+    subject = models.ForeignKey('Subjects', on_delete=models.CASCADE)
+    teacher = models.ForeignKey('Teachers', on_delete=models.CASCADE)
+    course = models.ForeignKey('Course', on_delete=models.CASCADE)
+    trimester = models.ForeignKey('Trimester', on_delete=models.CASCADE)
+    students = models.ManyToManyField('Students')
+
+    def __str__(self):
+        return f"{self.subject} - {self.teacher} ({self.course})"
+
+
 class Subjects(models.Model):
     SubjectID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=50)
@@ -63,31 +74,48 @@ class Subjects(models.Model):
 
 
 class Trimester(models.Model):
+    NAME_CHOICES = [
+        (1, "First"),
+        (2, "Second"),
+        (3, "Third"),
+    ]
     TrimesterID = models.AutoField(primary_key=True)
-    Name = models.CharField(max_length=20)
+    Name = models.IntegerField(choices=NAME_CHOICES)
     school_year = models.CharField(
-        max_length=9, help_text="School year like 2023-2024")
+        max_length=9, help_text="Año escolar: '2023-2024'")
 
     def __str__(self):
         return f"{self.Name} ({self.school_year})"
 
 
 class Grade(models.Model):
+    GRADE_TYPE_CHOICES = [
+        ("examen", "examen"),
+        ("parcial", "parcial"),
+        ("trimestral", "trimestral"),
+        ("final", "final"),
+        ("otros", "otros")
+    ]
+
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
-    teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
-    trimester = models.ForeignKey(
-        Trimester, on_delete=models.SET_NULL, null=True)
+    trimester = models.ForeignKey(Trimester, on_delete=models.CASCADE)
     grade = models.DecimalField(max_digits=4, decimal_places=2, validators=[
                                 MinValueValidator(0), MaxValueValidator(10)])
+    grade_type = models.CharField(
+        max_length=15, blank=False, choices=GRADE_TYPE_CHOICES)
+    grade_type_number = models.PositiveIntegerField(blank=True, default=0)
     comments = models.TextField(blank=True)
 
+    class Meta:
+        unique_together = ('student', 'subject', 'trimester',
+                           'grade_type', 'grade_type_number')
+
     def __str__(self):
-        return f"{self.student} - {self.subject} - {self.grade}"
+        return f"{self.student} - {self.subject} ({self.grade_type})"
 
 
 class Ausencias(models.Model):
-
     AUSENCIAS_TYPE_CHOICES = [
         ("Ausencia", "Ausencia"),
         ("Retraso", "Retraso"),
@@ -95,10 +123,12 @@ class Ausencias(models.Model):
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     trimester = models.ForeignKey(
-        Trimester, on_delete=models.SET_NULL, null=True)
-    teacher = models.ForeignKey(Teachers, on_delete=models.SET_NULL, null=True)
+        Trimester, on_delete=models.CASCADE)
     Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
     date_time = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        unique_together = ('student', 'subject', 'trimester', 'date_time')
+
     def __str__(self):
-        return f"{self.Tipo} - {self.date_time.strftime('%Y-%m-%d %H:%M')} - {self.student.Name} {self.student.First_Surname} {self.student.Last_Surname}"
+        return f"{self.student} - {self.subject} ({self.date_time})"
