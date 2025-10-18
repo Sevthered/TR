@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{#
+  Template: search_results.html
+  Purpose: display student search results returned by the search_students view.
+  Notes:
+  - Shows the search query and list of matching students.
+  - If a course_id was provided, indicates the search was limited to that class.
+#}
+
+{% block page_title %}Resultados de búsqueda{% endblock %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h1>Resultados de búsqueda</h1>
+    <p>Consulta: "{{ query }}" {% if course_id %}(limitada a la clase {{ course_id }}){% endif %}</p>
+
+    {% if results %}
+      <ul class="search-results">
+        {% for item in results %}
+          <li>
+            <a href="{% url 'student_dashboard_content' item.student.StudentID %}?course={{ course_id }}">
+              {{ item.student.Name }} — {{ item.student.Email }}{% if item.courses %} — {{ item.courses|join:", " }}{% endif %}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="empty">No se encontraron estudiantes para la búsqueda.</div>
+    {% endif %}
+  </div>
+{% endblock %}

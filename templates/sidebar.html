@@ -1,0 +1,33 @@
+<!-- Simplified sidebar template with accessible collapsible sections -->
+<aside class="sidebar" id="sidebar" aria-label="Main sidebar">
+  <nav class="sidebar-inner" role="navigation">
+    <section class="section" data-id="courses">
+      <button class="section-header" aria-expanded="true" aria-controls="body-courses">
+        <span class="section-title">Cursos</span>
+        <span class="chev" aria-hidden="true">▸</span>
+      </button>
+      <div id="body-courses" class="section-body" role="region">
+        <div class="section-content">
+          <a class="item" href="{% url 'teacher_dashboard' %}">Todos</a>
+          <a class="item" href="{% url 'section_courses' 'eso' %}">Eso</a>
+          <a class="item" href="{% url 'section_courses' 'bachillerato' %}">Bachillerato</a>
+          <a class="item" href="{% url 'section_courses' 'ib' %}">IB</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-id="students">
+      <button class="section-header" aria-expanded="false" aria-controls="body-students">
+        <span class="section-title">Alumnos</span>
+        <span class="chev" aria-hidden="true">▸</span>
+      </button>
+      <div id="body-students" class="section-body" role="region">
+        <div class="section-content">
+          <div class="empty">No hay datos de alumnos</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="sidebar-footer">Tip: haz clic en los títulos para abrir las secciones</div>
+  </nav>
+</aside>

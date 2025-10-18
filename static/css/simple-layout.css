@@ -1,0 +1,82 @@
+/* simple-layout.css
+   Three-block layout: top navbar, below a left sidebar (thin) and main content to the right.
+   No JS required. Adjust variables to change sizes.
+*/
+
+:root{
+  --sidebar-width: 180px;   /* thin sidebar width */
+  --gap: 18px;              /* horizontal gap between sidebar and main */
+  --navbar-height: auto;    /* leave navbar height to its content */
+  --sidebar-radius: 10px;   /* slight rounding for visual polish */
+  --page-padding: 18px;
+}
+
+/* Reset box-sizing for predictable sizing */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* Top block spans full width and sits above the rest */
+.top-block {
+  width: 100%;
+  /* optional visual separation — remove if your navbar provides its own background */
+  background: transparent;
+  padding: 12px 16px;
+}
+
+/* Bottom block lays out sidebar + main side-by-side */
+.bottom-block {
+  display: flex;
+  gap: var(--gap);
+  align-items: flex-start;
+  padding: 12px 16px 32px 16px; /* space around the content area */
+  min-height: calc(100vh - 0px); /* allow full-page height; navbar height is intrinsic */
+}
+
+/* Sidebar column — thin and visually separated */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  border-radius: var(--sidebar-radius);
+  padding: 10px;
+  /* subtle background and border; remove or change to match your app style */
+  background: #0f1418;
+  color: #eaf1ff;
+  border: 1px solid rgba(255,255,255,0.04);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+  overflow: auto;
+}
+
+/* Ensure included sidebar content uses scoped selectors (e.g., .sidebar .section ...) */
+
+/* Main content area */
+.main {
+  flex: 1 1 auto;
+  padding: var(--page-padding);
+  background: transparent; /* main visuals controlled by app styles */
+  color: inherit;
+  min-height: 200px;
+}
+
+/* Page header inside main */
+.page-header {
+  margin-bottom: 12px;
+}
+.page-header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+/* Minor responsive behaviour: stack on narrow screens */
+@media (max-width: 720px) {
+  .bottom-block {
+    flex-direction: column;
+    padding: 8px;
+  }
+  .sidebar {
+    width: 100%;
+    min-width: auto;
+    border-radius: 8px;
+  }
+  .main {
+    padding: 12px 8px;
+  }
+}
