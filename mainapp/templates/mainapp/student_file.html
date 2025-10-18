@@ -1,52 +1,55 @@
-{% extends "base.html" %}
-<!-- Title -->
+{% load static %}
 {% block page_title %}
-{%if user.profile.role == 'tutor'%}
-  Estudiante {{ selected_child_obj.student.Name }} {{ selected_child_obj.student.First_Surname }}
-{%else%}
+{% if user.profile.role == 'tutor' %}
+  Estudiante {{ selected_child_obj.student.Name }}
+{% else %}
   Estudiante {{ student.Name }} {{ student.First_Surname }}
-{%endif%}
+{% endif %}
 {% endblock page_title %}
+
 {% block content %}
-<!-- Authentication -->
-{% if user.is_authenticated %}
-  <p>Logged in as: {{ user.username }}</p>
-{% else %}
-  <p>Not logged in.</p>
-{% endif %}
-<!-- Debug -->
-<strong>Debug Info:</strong>
-{% if user.profile.role == 'tutor'%}
-<li>is_tutor: {{ is_tutor }}</li>
-<li>children_info: {{ children_info|length }} children</li>
-<li>selected_child: {{ selected_child_obj.student }}</li>
-{% elif user.profile.role == 'student' %}
-<li>Student: {{student}}</li>
-<li>Email: {{student.Email}}</li>
-{% endif %}
-{% if children_info %}
-  <!-- Tutor view: Dropdown to select child -->
-  <form method="get" id="child-select-form">
-    <label for="child-select">Select child:</label>
-    <select id="child-select" name="child" onchange="document.getElementById('child-select-form').submit();">
-      {% for child in children_info %}
-        <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
-          {{ child.student.Name }} {{ child.student.First_Surname }}
-        </option>
-      {% endfor %}
-    </select>
-  </form>
-  {% if selected_child_obj %}
-    <!-- Display selected child's data -->
-    {% include "mainapp/student_dashboard_content.html" with student=selected_child_obj.student grades=selected_child_obj.grades ausencias=selected_child_obj.ausensias %}
-  {% endif %}
-{% else %}
-  {% if is_tutor %}
-    <!-- Tutor view: No children assigned -->
-    <p>No children assigned to your account.</p>
-  {% else %}
-    <!-- Student view: Display own data -->
-    {% include "mainapp/student_dashboard_content.html" with student=student grades=grades ausencias=ausencias %}
-  {% endif %}
-{% endif %}
+<div class="page-content-wrap">
+    {% if user.is_authenticated %}
+        <p>Logged in as: {{ user.username }}</p>
+    {% else %}
+        <p>Not logged in.</p>
+    {% endif %}
+    
+    <strong>Debug Info:</strong>
+    {% if user.profile.role == 'tutor' %}
+        <ul>
+            <li>is_tutor: {{ is_tutor }}</li>
+            <li>children_info: {{ children_info|length }} children</li>
+            <li>selected_child: {{ selected_child_obj.student }}</li>
+        </ul>
+    {% elif user.profile.role == 'student' %}
+        <ul>
+            <li>Student: {{student}}</li>
+            <li>Email: {{student.Email}}</li>
+        </ul>
+    {% endif %}
+    
+    {% if children_info %}
+        <form method="get" id="child-select-form">
+            <label for="child-select">Select child:</label>
+            <select id="child-select" name="child" onchange="document.getElementById('child-select-form').submit();">
+                {% for child in children_info %}
+                <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
+                    {{ child.student.Name }} {{ child.student.First_Surname }}
+                </option>
+                {% endfor %}
+            </select>
+        </form>
+        
+        {% if selected_child_obj %}
+            {% include "mainapp/student_dashboard_content.html" with student=selected_child_obj.student grades=selected_child_obj.grades ausencias=selected_child_obj.ausencias %}
+        {% endif %}
+    {% else %}
+        {% if is_tutor %}
+            <p>No children assigned to your account.</p>
+        {% else %}
+            {% include "mainapp/student_dashboard_content.html" with student=student grades=grades ausencias=ausencias %}
+        {% endif %}
+    {% endif %}
+</div>
 {% endblock content %}

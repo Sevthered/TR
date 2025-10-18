@@ -17,7 +17,8 @@
 
   {% block styles %}{% endblock styles %}
 </head>
-<body>
+{% comment %} Add a class to the body when the logged in user is a tutor so we can target CSS behavior {% endcomment %}
+<body {% if user.is_authenticated and user.profile.role == 'tutor' %}class="no-sidebar-scroll"{% endif %}>
   <!-- Top block: navbar -->
   <div class="top-block">
     {% include "navbar.html" %}

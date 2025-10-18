@@ -1,3 +1,48 @@
+/* Clean sidebar stylesheet that works with fixed navbar and supports collapsible sections */
+
+:root{
+  --sidebar-width: 240px;
+  --sidebar-bg: linear-gradient(180deg,#0f1418,#0b0e11);
+  --sidebar-border: rgba(255,255,255,0.03);
+  --sidebar-muted: #9aa6b3;
+  --sidebar-accent: #7c5cff;
+  --gutter: 16px;
+}
+
+.bottom-block { display:flex; gap: var(--gutter); align-items:flex-start; }
+
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  box-sizing: border-box;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  color: #eaf1ff;
+  padding: 12px;
+  position: sticky;
+  top: calc(var(--navbar-height) + 12px);
+  max-height: calc(100vh - var(--navbar-height) - 24px);
+  overflow-y: auto;
+}
+
+.sidebar-inner { display:flex; flex-direction:column; gap:10px }
+.section { border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.02); background: rgba(255,255,255,0.01) }
+.section-header { width:100%; display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:transparent; border:none; color:inherit; cursor:pointer; font-weight:700 }
+.section-title { font-size:13px }
+.chev { color:var(--sidebar-muted); transition: transform 180ms ease }
+.section.open .chev { transform: rotate(90deg) }
+.section-body { height:0; overflow:hidden; transition: height 220ms ease }
+.section.open .section-body { height:auto }
+.section-content { padding:8px; display:flex; flex-direction:column; gap:6px }
+.item { color:var(--sidebar-muted); text-decoration:none; padding:8px 10px; border-radius:8px; font-weight:700 }
+.item:hover{ background: rgba(255,255,255,0.02); color: #fff }
+.empty { color:var(--sidebar-muted); padding:8px 10px }
+.sidebar-footer { padding-top:8px; border-top:1px solid rgba(255,255,255,0.02); text-align:center; color:var(--sidebar-muted); font-size:12px }
+
+@media (max-width:880px){
+  .bottom-block{ flex-direction:column }
+  .sidebar{ width:100%; min-width:0; position:relative; top:0; max-height:none }
+}
 /* static/css/sidebar.css
    Full sidebar stylesheet with a root variable to control how close the sidebar sits to the navbar.
    Change --sidebar-top-gap to move the sidebar closer or farther from the navbar (values in px, rem, etc).
@@ -27,7 +72,7 @@ html, body {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  overflow: hidden; /* prevent page-level vertical scrolling */
+  /* allow page-level scrolling (removed overflow:hidden which prevented scrolling) */
 }
 
 /* Container that holds sidebar + main must fit the viewport minus navbar */
@@ -151,18 +196,16 @@ html, body {
   .section { max-width: 100%; margin: 6px 0; }
   .main { height: auto; min-height: auto; padding: 12px; margin-top: 8px; }
 }
+/* Consolidated root variables (keep only one authoritative :root at top) */
 :root{
   --navbar-height: 80px;           /* actual navbar height */
   --sidebar-top-gap: 12px;         /* distance between navbar bottom and sidebar top */
   --sidebar-bottom-gap: 12px;      /* breathing room above viewport bottom */
-  --sidebar-max-height: 0px;     /* set to none or a large value to disable cap */
+  --sidebar-max-height: 700px;     /* reasonable cap to avoid extremely tall sidebars */
   --sidebar-width: 220px;
   --sidebar-padding: 16px;
   --sidebar-bg: linear-gradient(180deg,#0f1418,#0b0e11);
 }
-
-/* Layout container must be full-height elsewhere (body padding accounts for fixed navbar) */
-html,body{height:100%;margin:0;padding:0;box-sizing:border-box;}
 
 /* Sidebar layout */
 .sidebar{
@@ -178,12 +221,16 @@ html,body{height:100%;margin:0;padding:0;box-sizing:border-box;}
   overflow-y: auto;
   overflow-x: hidden;
   /* precise height calculation: available space from below navbar to viewport bottom */
-  /* primary rule (modern browsers): use clamp to choose between available and max cap */
-  max-height: clamp(
-    0px,
+  max-height: min(
     calc(100vh - (var(--navbar-height) + var(--sidebar-top-gap) + var(--sidebar-bottom-gap))),
     var(--sidebar-max-height)
   );
+}
+
+/* When the body has .no-sidebar-scroll (e.g. tutors) disable the sidebar's internal scrolling
+   so the whole page scrolls instead and the sidebar remains static visually. */
+body.no-sidebar-scroll .sidebar {
+  overflow-y: visible; /* allow the page main scroll to handle overflow */
 }
 
 /* If you prefer explicit height rather than max-height, uncomment this line:

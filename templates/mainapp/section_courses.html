@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block page_title %}Cursos - {{ section_label }}{% endblock %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container page-root">
+    <div class="page-surface" role="main">
+      <header class="page-header">
+        <h1>Cursos - {{ section_label }}</h1>
+        {% if user.is_authenticated and user.profile.role == 'professor' %}
+          <a class="btn btn-secondary" href="javascript:history.back()">Volver</a>
+        {% endif %}
+      </header>
+
+      {% if courses %}
+        <table class="course-table">
+          <thead><tr><th>Sección</th></tr></thead>
+          <tbody>
+            {% for course in courses %}
+            <tr>
+              <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty">No hay cursos en esta sección.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

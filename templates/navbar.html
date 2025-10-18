@@ -3,12 +3,12 @@
   <div class="nav-inner">
     <div class="nav-left">
       <div class="user-line">
-        <span class="user-name">Bienvenido, {{ user.username }}</span>
+        <span class="user-name">{{ user.username }}</span>
         <a class="logout" href="{% url 'logout' %}">Logout</a>
       </div>
     </div>
 
-    <div class="nav-center" aria-hidden="false">
+    <div class="nav-center">
       <form class="nav-search" role="search" action="#" method="get">
         <input class="nav-search-input" name="q" type="search" placeholder="Buscar..." aria-label="Buscar">
         <button class="nav-search-btn" type="submit" aria-label="Buscar">
@@ -20,6 +20,8 @@
       </form>
     </div>
 
-    <div class="nav-right" aria-hidden="true"></div>
+    <div class="nav-right">
+      <!-- optional right-side controls -->
+    </div>
   </div>
 </header>

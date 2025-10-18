@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 import csv
 from django.contrib import messages
 from .forms import GradeForm
+from django.utils import timezone
 # Create your views here.
 
 
@@ -24,11 +25,12 @@ def loginPage(request):
         if user is not None:
             login(request, user)
             profile = request.user.profile
+            # Use role string checks consistently
             if profile.role == 'student' and profile.student:
                 return redirect('student_dashboard')
-            elif profile.role == 'tutor' and profile.role:
+            elif profile.role == 'tutor':
                 return redirect('tutor_dashboard')
-            elif profile.role == 'professor' and profile.role:
+            elif profile.role == 'professor':
                 return redirect('teacher_dashboard')
             else:
                 return render(request, "forbidden.html", {"user": request.user, "profile": profile})
@@ -72,8 +74,8 @@ def sort_key_section(course):
 @login_required
 def teacher_dashboard(request):
     profile = request.user.profile
-    if profile.role != 'professor' or not profile.role:
-        return render(request, "forbidden.html")
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
     else:
         all_students = Students.objects.all().order_by('Name')
         all_grades = Grade.objects.all()
@@ -109,9 +111,49 @@ def teacher_dashboard(request):
 
 
 @login_required
+def section_courses(request, section):
+    """Display courses for a given section (Eso, Bachillerato, IB) or all courses (Todos).
+
+    The view is restricted to professors. 'section' is case-insensitive and accepts
+    values: 'eso', 'bachillerato', 'ib', 'todos'."""
+    profile = request.user.profile
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    # normalize the incoming section
+    sec = (section or '').strip().lower()
+    mapping = {
+        'eso': 'Eso',
+        'bachillerato': 'Bachillerato',
+        'ib': 'IB',
+        'todos': None,
+        'all': None,
+    }
+    target = mapping.get(sec)
+    if sec not in mapping:
+        # invalid section - return teacher dashboard to be forgiving
+        return redirect('teacher_dashboard')
+
+    if target is None:
+        courses_qs = Course.objects.all()
+    else:
+        courses_qs = Course.objects.filter(Tipo=target)
+
+    # reuse the sort helper from above (works even if Section format varies)
+    sorted_courses = sorted(list(courses_qs), key=sort_key_section)
+
+    context = {
+        'section_label': section.capitalize(),
+        'courses': sorted_courses,
+        'is_professor': True,
+    }
+    return render(request, 'mainapp/section_courses.html', context)
+
+
+@login_required
 def class_dashboard(request, course_id):
     profile = request.user.profile
-    if profile.role != 'professor' or not profile.role:
+    if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     course = get_object_or_404(Course, CourseID=course_id)
@@ -130,18 +172,21 @@ def class_dashboard(request, course_id):
 @login_required
 def student_dashboard_content(request, student_id):
     profile = request.user.profile
-    if profile.role != 'professor' or not profile.role:
+    if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     student = get_object_or_404(Students, StudentID=student_id)
     grades = Grade.objects.filter(student=student)
     ausensias = Ausencias.objects.filter(
         student=student).order_by('-date_time')
+    # support returning to the class dashboard by passing the course id as a GET param ?course=ID
+    return_course = request.GET.get('course')
     context = {
         "student": student,
         "grades": grades,
         "ausencias": ausensias,
         "is_tutor": False,
+        "return_course": return_course,
     }
     return render(request, "mainapp/student_dashboard_content.html", context)
 
@@ -149,12 +194,8 @@ def student_dashboard_content(request, student_id):
 @login_required
 def tutor_dashboard(request):
     profile = request.user.profile
-    if profile.role != 'tutor' or not profile.role:
-        return render(
-            request,
-            "forbidden.html",
-            {"user": request.user, "profile": profile}
-        )
+    if profile.role != 'tutor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     children = profile.children.all()
     children_info = []
@@ -167,7 +208,11 @@ def tutor_dashboard(request):
             "grades": grades,
             "ausensias": ausensias,
         })
-    selected_child = int(request.GET.get("child", 0))
+    # safely parse selected child index
+    try:
+        selected_child = int(request.GET.get("child", 0))
+    except (TypeError, ValueError):
+        selected_child = 0
     selected_child_obj = children_info[selected_child] if children_info and 0 <= selected_child < len(
         children_info) else None
     context = {
@@ -203,27 +248,31 @@ def grades_csv(request):
         grades = Grade.objects.all()
         filename = "all_grades.csv"
     else:
-        return render('forbidden.html', {"user": request.user, "profile": profile})
+        return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
     writer.writerow(
         ['Estudiante', 'Asignatura', 'Profesor', 'Trimestre', 'Nota', 'Comentario'])
     for grade in grades:
-        writer.writerow(
-            [f"{grade.student.Name} {grade.student.First_Surname} {grade.student.Last_Surname}",
-             grade.subject.Name,
-             grade.teacher.Name if grade.teacher else "N/A",
-             grade.trimester.Name if grade.trimester else "N/A",
-             grade.grade,
-             grade.comments])
+        student = grade.student
+        student_name = " ".join(filter(None, [getattr(student, 'Name', ''), getattr(
+            student, 'First_Surname', ''), getattr(student, 'Last_Surname', '')])).strip()
+        if not student_name:
+            student_name = getattr(student, 'Email', 'Unknown')
+        subject_name = getattr(grade.subject, 'Name', 'N/A')
+        teacher_name = getattr(getattr(grade, 'teacher', None), 'Name', 'N/A')
+        trimester_name = getattr(
+            getattr(grade, 'trimester', None), 'Name', 'N/A')
+        writer.writerow([student_name, subject_name, teacher_name,
+                        trimester_name, grade.grade, grade.comments])
     return response
 
 
 @login_required
 def create_edit_grade(request, grade_id=None):
     profile = request.user.profile
-    if profile.role != 'professor' or not profile.professor:
+    if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
     else:
         if grade_id:
@@ -234,9 +283,13 @@ def create_edit_grade(request, grade_id=None):
     if request.method == "POST":
         form = GradeForm(request.POST, instance=grade_instance)
         if form.is_valid():
-            form.save()
+            g = form.save(commit=False)
+            # set date_assigned if not provided
+            if not getattr(g, 'date_assigned', None):
+                g.date_assigned = timezone.now()
+            g.save()
             messages.success(request, "Grade saved successfully.")
-            return redirect('student_dashboard')
+            return redirect('teacher_dashboard')
     else:
         form = GradeForm(instance=grade_instance)
 

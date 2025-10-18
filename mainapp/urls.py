@@ -10,7 +10,7 @@ urlpatterns = [
     path('grades/new/', views.create_edit_grade, name='grade_new'),
     path('student/edit/<int:grade_id>/',
          views.create_edit_grade, name='grade_edit'),
-    path('student/', views.student_detail, name='grade_list'),
+    # removed duplicate 'student/' mapping which conflicted with 'student_dashboard'
     path('teacher/', views.teacher_dashboard, name='teacher_dashboard'),
     path(
         'students/<int:student_id>/dashboard/',
@@ -19,4 +19,7 @@ urlpatterns = [
     ),
     path('class/<int:course_id>/dashboard/',
          views.class_dashboard, name='class_dashboard'),
+    path('section/<str:section>/courses/',
+         views.section_courses, name='section_courses'),
+
 ]

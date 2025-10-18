@@ -1,56 +1,29 @@
-<!-- templates/includes/sidebar.html -->
+<!-- Simplified sidebar template with accessible collapsible sections -->
 <aside class="sidebar" id="sidebar" aria-label="Main sidebar">
-  <nav class="sidebar-inner">
-    <section class="section" data-id="nav">
-      <button class="section-header" aria-expanded="false" aria-controls="body-nav">
-        <span class="section-title">Navegación</span>
-        <span class="chev" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
-        </span>
+  <nav class="sidebar-inner" role="navigation">
+    <section class="section" data-id="courses">
+      <button class="section-header" aria-expanded="true" aria-controls="body-courses">
+        <span class="section-title">Cursos</span>
+        <span class="chev" aria-hidden="true">▸</span>
       </button>
-
-      <div id="body-nav" class="section-body" role="region" aria-labelledby="body-nav">
+      <div id="body-courses" class="section-body" role="region">
         <div class="section-content">
-          <a class="item" href="#">Inicio</a>
-          <a class="item" href="#">Dashboard</a>
-          <a class="item" href="#">Informes</a>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" data-id="behavior">
-      <button class="section-header" aria-expanded="false" aria-controls="body-behavior">
-        <span class="section-title">Comportamiento</span>
-        <span class="chev" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
-        </span>
-      </button>
-
-      <div id="body-behavior" class="section-body" role="region">
-        <div class="section-content">
-          <a class="item" href="#">Reglas</a>
-          <a class="item" href="#">Alertas</a>
+          <a class="item" href="{% url 'teacher_dashboard' %}">Todos</a>
+          <a class="item" href="{% url 'section_courses' 'eso' %}">Eso</a>
+          <a class="item" href="{% url 'section_courses' 'bachillerato' %}">Bachillerato</a>
+          <a class="item" href="{% url 'section_courses' 'ib' %}">IB</a>
         </div>
       </div>
     </section>
 
     <section class="section" data-id="students">
-      <button class="section-header" aria-expanded="true" aria-controls="body-students">
+      <button class="section-header" aria-expanded="false" aria-controls="body-students">
         <span class="section-title">Alumnos</span>
-        <span class="chev" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
-        </span>
+        <span class="chev" aria-hidden="true">▸</span>
       </button>
-
       <div id="body-students" class="section-body" role="region">
         <div class="section-content">
-          <div class="empty">No hay datos de alumnos para este curso</div>
+          <div class="empty">No hay datos de alumnos</div>
         </div>
       </div>
     </section>

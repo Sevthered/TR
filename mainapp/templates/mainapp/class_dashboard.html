@@ -1,34 +1,37 @@
 {% extends "base.html" %}
+{% load static %}
 {% block page_title %}
 Class Dashboard
 {% endblock page_title %}
-{% block styles %}
-{% endblock styles %}
-{% block content %}
-<table
-    border="1"
-    cellpadding="8"
-    cellspacing="0"
-    style="width: 100%; margin-bottom: 20px"
-  >
-    <thead style="background: #f2f2f2">
-      <tr>
-        <th>Alumn@s</th>
-        <th>Email</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for student in students %}
-      <tr>
-        <td><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }}</a></td>
-        <td>{{ student.Email }}</td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="2">No hay estudiantes disponibles.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
 
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock styles %}
+
+{% block content %}
+<div class="page-content-wrap container">
+    {% if user.is_authenticated and user.profile.role == 'professor' %}
+    <p><button type="button" class="btn-back" onclick="window.history.back()">← Back to all sections</button></p>
+    {% endif %}
+    <table class="student-table">
+        <thead>
+            <tr>
+                <th>Alumn@s</th>
+                <th>Email</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for student in students %}
+                <tr>
+                    <td><a href="{% url 'student_dashboard_content' student.StudentID %}?course={{ course.CourseID }}">{{ student.Name }}</a></td>
+                    <td>{{ student.Email }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="2">No hay estudiantes disponibles.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock content %}

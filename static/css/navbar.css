@@ -1,3 +1,64 @@
+/* Clean navbar stylesheet - minimal and consistent with dark theme */
+
+:root{
+  --navbar-height: 72px;
+  --navbar-bg-1: #0f1418;
+  --navbar-bg-2: #0b0e11;
+  --nav-text: #eaf1ff;
+  --nav-muted: #9aa6b3;
+  --accent: #7c5cff;
+  --gutter: 16px;
+}
+
+/* Reserve space for the fixed navbar so content doesn't overlap */
+body {
+  margin: 0;
+  padding-top: var(--navbar-height);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+  color: var(--nav-text);
+}
+
+.app-navbar {
+  position: fixed;
+  inset: 0 0 auto 0; /* top, right, bottom, left */
+  height: var(--navbar-height);
+  display: flex;
+  align-items: center;
+  background: linear-gradient(180deg, var(--navbar-bg-1), var(--navbar-bg-2));
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  z-index: 9999;
+}
+
+.nav-inner {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.nav-left, .nav-center, .nav-right { display: flex; align-items: center; gap: 12px; }
+
+.brand-link { color: var(--accent); font-weight: 800; text-decoration: none; font-size: 18px; }
+.user-line { display:flex; gap:8px; align-items:center; color:var(--nav-muted); font-weight:700 }
+.user-name { color:var(--nav-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.logout { color:var(--nav-muted); text-decoration:none; padding:6px 8px; border-radius:8px }
+.logout:hover{ background: rgba(255,255,255,0.02); color:var(--nav-text) }
+
+.nav-center { flex: 1 1 auto; justify-content: center }
+.nav-search { display:flex; gap:8px; width:100%; max-width:560px; }
+.nav-search-input{ flex:1; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03); background:transparent; color:var(--nav-text); font-weight:700 }
+.nav-search-btn{ padding:8px 10px; border-radius:8px; background:transparent; border:none; color:var(--nav-muted) }
+
+@media (max-width: 880px){
+  .nav-center { justify-content: flex-start; }
+  .nav-search { max-width: 100%; }
+}
 /* static/css/navbar.css
    Fixed navbar that does not let page content overlap it.
    Replaces previous broken rules. Change the root vars to tune distances.
@@ -33,12 +94,13 @@ html, body {
   left: 0;
   right: 0;
   height: var(--navbar-height);
-  display: block;
+  display: flex;
+  align-items: center;
   background: linear-gradient(180deg, var(--nav-bg-1), var(--nav-bg-2));
   border: 1px solid rgba(255,255,255,0.03);
-  border-radius: var(--radius);
+  border-radius: 0; /* full-width fixed navbar shouldn't be rounded */
   box-shadow: 0 8px 28px rgba(0,0,0,0.28);
-  padding: 10px 16px;
+  padding: 0 16px; /* keep inner spacing but align vertically by height */
   box-sizing: border-box;
   z-index: 9999;      /* high z-index ensures navbar sits above sidebar/main */
   overflow: hidden;
@@ -56,7 +118,9 @@ html, body {
   gap: 16px;
   position: relative;
   min-height: 48px;
+  height: 100%; /* make nav-inner fill the navbar's height for perfect centering */
   box-sizing: border-box;
+  line-height: 1; /* prevent inline elements from shifting vertical layout */
 }
 
 /* Pinned left area: positioned absolutely inside nav-inner */
@@ -83,6 +147,7 @@ html, body {
   border-radius: 10px;
   transition: transform 160ms var(--ease), background 160ms var(--ease);
   background: transparent;
+  line-height: 1; /* ensure vertical centering with SVG/text icons */
 }
 .user-name {
   color: var(--nav-text);
@@ -173,6 +238,10 @@ html, body {
   opacity: 0;
 }
 
+/* Make the top-block not add extra layout height since navbar is fixed.
+   This prevents doubled vertical spacing when other layout CSS is present. */
+.top-block { height: 0; }
+
 /* Accessibility */
 .app-navbar :focus { outline-offset: 3px; }
 
@@ -196,79 +265,16 @@ html, body {
   .nav-right { display: none; }
 }
 
+/* Ensure the main bottom block reserves the remaining viewport height (accounting for navbar) */
+.bottom-block {
+  min-height: calc(100vh - (var(--navbar-top-offset) + var(--navbar-height)));
+}
+
 /* Very small screens */
 @media (max-width: 480px) {
   .user-name { max-width: 140px; font-size: 13px; }
   .nav-search-input { font-size: 13px; padding: 8px 10px; }
 }
-/* Overlap fix: place after all other CSS so it overrides earlier rules */
-
-:root {
-  --navbar-top-offset: 8px;     /* change to move navbar down */
-  --navbar-height: 64px;        /* set to your actual navbar height */
-  --sidebar-top-gap: 4px;       /* gap between navbar and top of sidebar */
-}
-
-/* Make navbar fixed on top and above everything */
-.app-navbar {
-  position: fixed !important;
-  top: var(--navbar-top-offset) !important;
-  left: 0 !important;
-  right: 0 !important;
-  height: var(--navbar-height) !important;
-  z-index: 9999 !important;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
-}
-
-/* Reserve space under the navbar so content can't flow underneath */
-html, body {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
-body {
-  padding-top: calc(var(--navbar-top-offset) + var(--navbar-height)) !important;
-}
-
-/* Ensure main page container does not have negative margins or top offsets;
-   reset if someone else set them earlier */
-.bottom-block, .page-wrapper, .site-wrapper {
-  margin-top: 0 !important;
-  padding-top: 0 !important;
-  box-sizing: border-box;
-}
-
-/* Sidebar sticky top must be computed from navbar height + desired gap */
-.sidebar {
-  position: sticky !important;
-  top: calc(var(--navbar-top-offset) + var(--navbar-height) + var(--sidebar-top-gap)) !important;
-  z-index: 10; /* below navbar */
-  /* keep internal scrolling so it can't push page height */
-  max-height: calc(100vh - (var(--navbar-top-offset) + var(--navbar-height) + var(--sidebar-top-gap) + 12px)) !important;
-  overflow-y: auto !important;
-}
-
-/* Main content area must start below navbar and scroll internally */
-.main, .content, main {
-  position: relative; /* avoid absolute/fixed that ignores flow */
-  z-index: 1;
-  min-height: calc(100vh - (var(--navbar-top-offset) + var(--navbar-height))) !important;
-  box-sizing: border-box;
-  overflow-y: auto;
-}
-
-/* Remove accidental transforms on ancestors that change stacking contexts
-   (transforms can cause positioned children to overlap unexpectedly) */
-.app, .app-root, .page-root, .bottom-block {
-  transform: none !important;
-}
-
-/* Debug helpers (uncomment while debugging) */
-/*
-.app-navbar { outline: 2px solid rgba(124,92,255,0.18); }
-.sidebar { outline: 2px dashed rgba(92,200,255,0.12); }
-.main { outline: 2px dotted rgba(255,200,100,0.12); }
-*/
 /* Responsive safety for pinned left area vs centered search */
 
 /* Ensure nav-center always leaves room for the pinned left block */
