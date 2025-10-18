@@ -9,11 +9,15 @@ Class Dashboard
 {% endblock styles %}
 
 {% block content %}
-<div class="page-content-wrap container">
-    {% if user.is_authenticated and user.profile.role == 'professor' %}
-    <p><button type="button" class="btn-back" onclick="window.history.back()">← Back to all sections</button></p>
-    {% endif %}
-    <table class="student-table">
+{# Add data-course-id so the navbar's search form can limit searches to this class when present #}
+<div class="page-content-wrap container" data-course-id="{{ course.CourseID }}">
+        {% if user.is_authenticated and user.profile.role == 'professor' %}
+        <p><button type="button" class="btn-back" onclick="window.history.back()">← Volver</button></p>
+        {% endif %}
+
+        <div style="display:flex; gap:18px; align-items:flex-start;">
+            <div style="flex:1 1 0;">
+                <table class="student-table">
         <thead>
             <tr>
                 <th>Alumn@s</th>
@@ -32,6 +36,45 @@ Class Dashboard
                 </tr>
             {% endfor %}
         </tbody>
-    </table>
+                </table>
+            </div>
+
+            <aside class="side-panel" style="width:320px; min-width:260px;">
+                <div class="page-surface">
+                    <h3>Crear ausencia (clase)</h3>
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        {% if ausencia_form.non_field_errors %}
+                            <div class="error">{{ ausencia_form.non_field_errors }}</div>
+                        {% endif %}
+                                    <div>
+                                          <label for="id_students">Estudiante(s)</label>
+                                          <div class="muted" style="font-size:0.9rem; margin-bottom:6px">Mantén pulsada la tecla Ctrl/Cmd para seleccionar varios.</div>
+                                          {{ ausencia_form.students }}
+                                    </div>
+                        <div>
+                            <label for="id_subject">Materia</label>
+                            {{ ausencia_form.subject }}
+                        </div>
+                                    <div>
+                                        <label for="id_trimester">Trimestre</label>
+                                        {{ ausencia_form.trimester }}
+                                    </div>
+                                    <div>
+                                        <label for="id_date_time">Fecha y hora</label>
+                                        <div class="muted" style="font-size:0.9rem; margin-bottom:6px">Por defecto se usará la hora actual; puedes editarla.</div>
+                                        {{ ausencia_form.date_time }}
+                                    </div>
+                        <div>
+                            <label for="id_Tipo">Tipo</label>
+                            {{ ausencia_form.Tipo }}
+                        </div>
+                        <div style="margin-top:12px;">
+                            <button type="submit" class="button primary">Crear ausencia</button>
+                        </div>
+                    </form>
+                </div>
+            </aside>
+        </div>
 </div>
 {% endblock content %}

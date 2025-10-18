@@ -17,9 +17,9 @@
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <p>
             {% if return_course %}
-                <button type="button" class="btn-back" onclick="window.history.back()">← Back to class</button>
+                <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
             {% else %}
-                <button type="button" class="btn-back" onclick="window.history.back()">← Back</button>
+                <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
             {% endif %}
         </p>
         {% endif %}
@@ -28,8 +28,9 @@
         </h2>
         <p><strong>Email:</strong> {{ student.Email }}</p>
 
-        <h3>Grades</h3>
-        <table class="student-table" aria-describedby="grades-note">
+                <h3>Grades</h3>
+                <div class="table-wrap">
+                    <table class="table student-table" aria-describedby="grades-note">
             <thead>
                 <tr>
                     <th>Trimestre</th>
@@ -58,10 +59,12 @@
                     </tr>
                 {% endfor %}
             </tbody>
-        </table>
+                    </table>
+                </div>
 
-        <h3>Absences</h3>
-        <table class="student-table" aria-describedby="absences-note">
+                <h3>Absences</h3>
+                <div class="table-wrap">
+                    <table class="table student-table" aria-describedby="absences-note">
             <thead>
                 <tr>
                     <th>Fecha</th>
@@ -86,7 +89,8 @@
                     </tr>
                 {% endfor %}
             </tbody>
-        </table>
+                    </table>
+                </div>
     </div>
 </div>
 

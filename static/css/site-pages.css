@@ -42,6 +42,8 @@
 
   /* shadows */
   --shadow-md: 0 6px 18px rgba(0,0,0,0.48);
+  /* control how far page content is inset from the left (useful with a sidebar) */
+  --page-content-indent: 28px;
 }
 
 /* -------------------------
@@ -81,6 +83,9 @@ body {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
+
+/* When page-root is used inside page-content-wrap, avoid double indents */
+.page-content-wrap > .page-root { padding-left: var(--space-lg); padding-right: var(--space-lg); }
 
 /* -------------------------
    Typographic scale
@@ -189,6 +194,8 @@ input:focus, textarea:focus, select:focus {
   overflow: hidden;
   border-radius: 8px;
   box-sizing: border-box;
+  /* Prefer automatic layout so cells expand naturally; allow wrapping inside cells */
+  table-layout: auto;
 }
 
 .table th,
@@ -198,6 +205,7 @@ input:focus, textarea:focus, select:focus {
   color: var(--text);
   font-size: 0.95rem;
   vertical-align: middle;
+  white-space: normal; /* allow long content to wrap instead of forcing horizontal scroll */
 }
 
 /* Center header text and make it distinct */
@@ -221,7 +229,10 @@ input:focus, textarea:focus, select:focus {
 .table-compact th, .table-compact td { padding: 6px 8px; font-size: 0.9rem; }
 
 /* Responsive wrapper */
-.table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
+.table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; -webkit-overflow-scrolling: touch; }
+
+/* Ensure small tables expand to use available space in narrow sidebars/main */
+.table.course-table, .table.student-table { min-width: 420px; }
 
 /* -------------------------
    Layout utilities
@@ -231,6 +242,18 @@ input:focus, textarea:focus, select:focus {
   gap: var(--space-lg);
   align-items: flex-start;
   box-sizing: border-box;
+}
+
+/* Wrapper used by page templates to add a consistent left indent from the viewport or sidebar */
+.page-content-wrap {
+  padding-left: var(--page-content-indent);
+  padding-right: var(--space-lg);
+  box-sizing: border-box;
+}
+
+@media (max-width: 880px) {
+  /* reduce indent on smaller screens so content remains readable */
+  :root { --page-content-indent: 12px; }
 }
 .column { flex: 1 1 0; min-width: 220px; box-sizing: border-box; }
 

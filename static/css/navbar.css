@@ -359,3 +359,22 @@ html, body {
   .logout .logout-text { display: none; } /* optional: hide textual logout, show icon only if available */
   .logout { padding: 6px; }
 }
+
+/* Fix: Ensure the page content is pushed below the fixed navbar.
+   Some files previously reset html/body padding and removed the reserved
+   space; put an authoritative rule here at the end so it takes effect.
+*/
+html, body {
+  /* preserve any existing horizontal padding/margins, only ensure vertical offset */
+  padding-top: var(--navbar-height) !important;
+}
+
+/* When there is no sidebar, main should take the full width available.
+   We define .main.full-width to override sidebar-driven layout.
+*/
+.main.full-width {
+  width: 100%;
+  padding-left: 18px;
+  padding-right: 18px;
+  box-sizing: border-box;
+}

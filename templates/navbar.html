@@ -9,8 +9,10 @@
     </div>
 
     <div class="nav-center">
-      <form class="nav-search" role="search" action="#" method="get">
+      {% if user.is_authenticated and user.profile.role == 'professor' %}
+      <form class="nav-search" role="search" action="{% url 'search_students' %}" method="get">
         <input class="nav-search-input" name="q" type="search" placeholder="Buscar..." aria-label="Buscar">
+        <input type="hidden" name="course" id="nav-search-course" value="">
         <button class="nav-search-btn" type="submit" aria-label="Buscar">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="7"></circle>
@@ -18,10 +20,15 @@
           </svg>
         </button>
       </form>
+      {% endif %}
     </div>
 
+    
+
+    
+
     <div class="nav-right">
-      <!-- optional right-side controls -->
+      {# optional right-side controls #}
     </div>
   </div>
 </header>

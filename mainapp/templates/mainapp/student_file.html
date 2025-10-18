@@ -1,34 +1,18 @@
 {% load static %}
-{% block page_title %}
-{% if user.profile.role == 'tutor' %}
-  Estudiante {{ selected_child_obj.student.Name }}
-{% else %}
-  Estudiante {{ student.Name }} {{ student.First_Surname }}
-{% endif %}
-{% endblock page_title %}
 
 {% block content %}
 <div class="page-content-wrap">
-    {% if user.is_authenticated %}
-        <p>Logged in as: {{ user.username }}</p>
-    {% else %}
-        <p>Not logged in.</p>
-    {% endif %}
-    
-    <strong>Debug Info:</strong>
     {% if user.profile.role == 'tutor' %}
-        <ul>
-            <li>is_tutor: {{ is_tutor }}</li>
-            <li>children_info: {{ children_info|length }} children</li>
-            <li>selected_child: {{ selected_child_obj.student }}</li>
-        </ul>
-    {% elif user.profile.role == 'student' %}
-        <ul>
-            <li>Student: {{student}}</li>
-            <li>Email: {{student.Email}}</li>
-        </ul>
+        <p>Estudiante {{ selected_child_obj.student.Name }} {{ selected_child_obj.student.First_Surname }}</p>
+    {% else %}
+        <p>Estudiante {{ student.Name }} {{ student.First_Surname }}</p>
     {% endif %}
-    
+    {% if user.is_authenticated %}
+        <p>Has iniciado sesión como {{ user.username }}</p>
+    {% else %}
+        <p>No has iniciado sesión.</p>
+    {% endif %}
+    <br>
     {% if children_info %}
         <form method="get" id="child-select-form">
             <label for="child-select">Select child:</label>

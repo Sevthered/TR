@@ -21,5 +21,7 @@ urlpatterns = [
          views.class_dashboard, name='class_dashboard'),
     path('section/<str:section>/courses/',
          views.section_courses, name='section_courses'),
+    # Search endpoint for student lookups (visible to professors only)
+    path('search/', views.search_students, name='search_students'),
 
 ]
