@@ -9,9 +9,9 @@
     
     <h2>
         {% if is_edit %}
-            Editar Nota
+            Editar Ausencia
         {% else %}
-            Crear Nueva Nota
+            Crear Nueva Ausencia
         {% endif %}
     </h2>
 
@@ -20,9 +20,10 @@
 
         <button type="submit" class="btn-edit">
             {% if is_edit %}
-                Actualizar Nota
+                Actualizar Ausencia
             {% else %}
-                Guardar Nota
+                Guardar Ausencia
             {% endif %}
+        </button>
     </form>
 {% endblock content %}

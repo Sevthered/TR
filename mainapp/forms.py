@@ -9,10 +9,19 @@ class CSVImportForm(forms.Form):
 class GradeForm(forms.ModelForm):
     class Meta:
         model = Grade
-        fields = ['student', 'subject', 'grade_type_number', 'grade_type',
-                  'trimester', 'grade', 'comments']
+        fields = ['subject',
+                  'trimester', 'grade_type', 'grade_type_number', 'grade', 'comments']
         widgets = {
             'comments': forms.Textarea(attrs={'rows': 3}),
+        }
+
+
+class AusenciaEditForm(forms.ModelForm):
+    class Meta:
+        model = Ausencias
+        fields = ['subject', 'trimester', 'Tipo', 'date_time']
+        widgets = {
+            'date_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
         }
 
 

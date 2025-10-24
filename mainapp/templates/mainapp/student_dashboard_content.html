@@ -27,8 +27,12 @@
             {{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}
         </h2>
         <p><strong>Email:</strong> {{ student.Email }}</p>
-
-                <h3>Grades</h3>
+                <h2>Notas</h2>
+                <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.pk %}'">
+                    Crear Notas
+                </button>
+                <br>
+                <br>
                 <div class="table-wrap">
                     <table class="table student-table" aria-describedby="grades-note">
             <thead>
@@ -36,8 +40,10 @@
                     <th>Trimestre</th>
                     <th>Nota</th>
                     <th>Asignatura</th>
-                    <th>Profesor</th>
                     <th>Comentario</th>
+                    {% if user.is_authenticated and user.profile.role == 'professor' %}
+                    <th>Acciones</th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -48,10 +54,14 @@
                                 {{ grade.grade }}
                             </td>
                             <td>{{ grade.subject.Name|default:"N/A" }}</td>
-                            <td>{{ grade.teacher.Name|default:"N/A" }}</td>
                             <td class="comment-cell">
                                 {{ grade.comments|default:"No hay comentario" }}
                             </td>
+                            {% if user.is_authenticated and user.profile.role == 'professor' %}
+                            <td>
+                                <button type="button" class="btn-edit" onclick="window.location.href='{% url 'grade_edit' grade_id=grade.id %}'">Edit</button>
+                            </td>
+                            {% endif %}    
                         </tr>
                 {% empty %}
                     <tr>
@@ -62,7 +72,12 @@
                     </table>
                 </div>
 
-                <h3>Absences</h3>
+                <h2>Ausencias</h2>
+                <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'ausencia_create' student_id=student.pk %}'">
+                    Crear Ausencia
+                </button>
+                <br>
+                <br>
                 <div class="table-wrap">
                     <table class="table student-table" aria-describedby="absences-note">
             <thead>
@@ -71,6 +86,9 @@
                     <th>Materia</th>
                     <th>Profesor</th>
                     <th>Tipo</th>
+                    {% if user.is_authenticated and user.profile.role == 'professor' %}
+                    <th>Acciones</th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -82,6 +100,11 @@
                         <td class="{% if ausencia.Tipo == 'Retraso' %}absence-delay{% elif ausencia.Tipo == 'Ausencia' %}absence-absence{% endif %}">
                             {{ ausencia.Tipo }}
                         </td>
+                        {% if user.is_authenticated and user.profile.role == 'professor' %}
+                        <td>
+                            <button type="button" class="btn-edit" onclick="window.location.href='{% url 'ausencia_edit' ausencia_id=ausencia.id %}'">Edit</button>
+                        </td>
+                        {% endif %}
                     </tr>
                 {% empty %}
                     <tr>

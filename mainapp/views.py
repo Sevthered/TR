@@ -1,3 +1,4 @@
+from urllib import request
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
@@ -8,7 +9,7 @@ import unicodedata
 from django.contrib.auth.decorators import login_required
 import csv
 from django.contrib import messages
-from .forms import GradeForm, AusenciaForm
+from .forms import GradeForm, AusenciaForm, AusenciaEditForm
 from django.utils import timezone
 # Create your views here.
 
@@ -333,41 +334,99 @@ def grades_csv(request):
 
 
 @login_required
-def create_edit_grade(request, grade_id=None):
+def create_edit_grade(request, grade_id=None, student_id=None):
     profile = request.user.profile
+
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-    else:
-        if grade_id:
-            grade_instance = get_object_or_404(Grade, id=grade_id)
-        else:
-            grade_instance = None
+
+    student_instance = None
+    grade_instance = None
+
+    if grade_id:
+        grade_instance = get_object_or_404(Grade, id=grade_id)
+        student_instance = grade_instance.student
+    elif student_id:
+        student_instance = get_object_or_404(Students, pk=student_id)
 
     if request.method == "POST":
         form = GradeForm(request.POST, instance=grade_instance)
+
         if form.is_valid():
+            # 1. Get the model instance without saving to the DB
             g = form.save(commit=False)
-            # set date_assigned if not provided
-            if not getattr(g, 'date_assigned', None):
-                g.date_assigned = timezone.now()
-            g.save()
-            messages.success(request, "Grade saved successfully.")
-            return redirect('teacher_dashboard')
+
+        # 2. Assign the student ONLY if it's a new grade
+        if not grade_id:
+            # 'g' is now defined and we can assign the student
+            g.student = student_instance
+
+        # 3. Save the final instance to the database
+        g.save()
+
+        messages.success(request, "Grade saved successfully.")
+        return redirect('student_dashboard_content', student_id=student_instance.pk)
     else:
         form = GradeForm(instance=grade_instance)
 
     context = {
         "form": form,
         "is_edit": grade_instance is not None,
+        "student": student_instance,
     }
     return render(request, "mainapp/grade_form.html", context)
 
+
+@login_required
+def create_edit_ausencia(request, ausencia_id=None, student_id=None):
+    profile = request.user.profile
+
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    student_instance = None
+    ausencia_instance = None
+
+    if ausencia_id:
+        ausencia_instance = get_object_or_404(Ausencias, id=ausencia_id)
+        student_instance = ausencia_instance.student
+    elif student_id:
+        student_instance = get_object_or_404(Students, pk=student_id)
+
+    if request.method == "POST":
+        form = AusenciaEditForm(request.POST, instance=ausencia_instance)
+
+        if form.is_valid():
+            # 1. Get the model instance without saving to the DB
+            ausencia = form.save(commit=False)
+
+        # 2. Assign the student ONLY if it's a new ausencia
+        if not ausencia_id:
+            # 'ausencia' is now defined and we can assign the student
+            ausencia.student = student_instance
+
+        # 3. Save the final instance to the database
+        ausencia.save()
+
+        messages.success(request, "Absence saved successfully.")
+        return redirect('student_dashboard_content', student_id=student_instance.pk)
+    else:
+        form = AusenciaEditForm(instance=ausencia_instance)
+
+    context = {
+        "form": form,
+        "is_edit": ausencia_instance is not None,
+        "student": student_instance,
+    }
+    return render(request, "mainapp/ausencia_form.html", context)
 
 # Search view: looks up students by name or email.
 # - Only available to users with Profile.role == 'professor'.
 # - If a GET parameter 'course' is provided (course ID), the search is limited
 #   to students enrolled in that course. This allows searching only within a class.
 # - Query parameter 'q' is the search term (case-insensitive, matches Name or Email).
+
+
 @login_required
 def search_students(request):
     profile = request.user.profile
