@@ -34,5 +34,8 @@ urlpatterns = [
          views.grades_csv, name='grades_csv_student'),
     path('class/<int:course_id>/grades/download/',
          views.class_grades_download, name='class_grades_download'),
+    path('import/grades/', views.import_grades, name='import_grades'),
+    path('import/grades/<int:course_id>/',
+         views.import_grades, name='import_grades_class'),
 
 ]
