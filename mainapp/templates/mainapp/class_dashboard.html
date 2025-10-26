@@ -37,6 +37,15 @@ Class Dashboard
             {% endfor %}
         </tbody>
                 </table>
+
+                {% if user.is_authenticated and user.profile.role == 'professor' %}
+                <div style="margin-top: 15px;">
+                    <a href="{% url 'download_class_list' subject_course_id=course.pk %}" class="button secondary">
+                        ⬇️ Descargar Lista de Alumnos
+                    </a>
+                </div>
+                {% endif %}
+
             </div>
 
             <aside class="side-panel" style="width:320px; min-width:260px;">

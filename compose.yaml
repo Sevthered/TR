@@ -2,11 +2,11 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:18
+    image: postgres:latest
     restart: always
     container_name: postgresql
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     environment:
       - DATABASE_HOST=127.0.0.1
       - POSTGRES_DB=my_database

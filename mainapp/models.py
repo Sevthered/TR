@@ -4,6 +4,15 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
 
+class School_year(models.Model):
+    SchoolYearID = models.AutoField(primary_key=True)
+    year = models.CharField(
+        max_length=9, help_text="Año escolar: '2023-2024'")
+
+    def __str__(self):
+        return self.year
+
+
 class Students(models.Model):
     StudentID = models.AutoField(primary_key=True)
     Name = models.CharField(max_length=50)
@@ -39,8 +48,7 @@ class Course(models.Model):
     CourseID = models.AutoField(primary_key=True)
     Tipo = models.CharField(max_length=20, choices=COURSE_TYPE_CHOICES)
     Section = models.CharField(max_length=2)
-    school_year = models.CharField(
-        max_length=9, help_text="Año escolar: '2023-2024'")
+    school_year = models.ForeignKey(School_year, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.Tipo} {self.Section}"
@@ -59,6 +67,7 @@ class Subjects_Courses(models.Model):
     teacher = models.ForeignKey('Teachers', on_delete=models.CASCADE)
     course = models.ForeignKey('Course', on_delete=models.CASCADE)
     trimester = models.ForeignKey('Trimester', on_delete=models.CASCADE)
+    school_year = models.ForeignKey('School_year', on_delete=models.CASCADE)
     students = models.ManyToManyField('Students')
 
     def __str__(self):
@@ -81,8 +90,7 @@ class Trimester(models.Model):
     ]
     TrimesterID = models.AutoField(primary_key=True)
     Name = models.IntegerField(choices=NAME_CHOICES)
-    school_year = models.CharField(
-        max_length=9, help_text="Año escolar: '2023-2024'")
+    school_year = models.ForeignKey(School_year, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.Name} ({self.school_year})"
@@ -100,6 +108,7 @@ class Grade(models.Model):
     student = models.ForeignKey(Students, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     trimester = models.ForeignKey(Trimester, on_delete=models.CASCADE)
+    school_year = models.ForeignKey(School_year, on_delete=models.CASCADE)
     grade = models.DecimalField(max_digits=4, decimal_places=2, validators=[
                                 MinValueValidator(0), MaxValueValidator(10)])
     grade_type = models.CharField(
@@ -124,6 +133,7 @@ class Ausencias(models.Model):
     subject = models.ForeignKey(Subjects, on_delete=models.CASCADE)
     trimester = models.ForeignKey(
         Trimester, on_delete=models.CASCADE)
+    school_year = models.ForeignKey(School_year, on_delete=models.CASCADE)
     Tipo = models.CharField(max_length=20, choices=AUSENCIAS_TYPE_CHOICES)
     date_time = models.DateTimeField(default=timezone.now)
 

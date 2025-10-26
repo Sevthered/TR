@@ -2,7 +2,7 @@ from urllib import request
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester
+from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses
 from django.http import JsonResponse, HttpResponse
 from django.db.models import Q
 import unicodedata
@@ -231,6 +231,44 @@ def class_dashboard(request, course_id):
         "ausencia_form": form,
     }
     return render(request, "mainapp/class_dashboard.html", context)
+
+
+@login_required
+def download_class_list(request, subject_course_id):
+    # 1. Authorization Check (Still important)
+    if request.user.profile.role != 'professor':
+        return HttpResponse("Acceso denegado.", status=403)
+
+    # The ID received from the template link is the Course ID.
+    course_id_received = subject_course_id
+
+    # 2. Find the Subjects_Courses instance using the Course ID.
+    # We use .filter() and .first() to prevent the MultipleObjectsReturned error
+    # if more than one Subjects_Courses exists for this Course ID.
+    # NOTE: This assumes you only need one class's student list per Course ID.
+    subject_course = Subjects_Courses.objects.filter(
+        course__CourseID=course_id_received
+    ).first()
+
+    if not subject_course:
+        return HttpResponse("No se encontró una clase asociada a este curso.", status=404)
+
+    # 3. Create the CSV response header
+    response = HttpResponse(content_type='text/csv')
+    filename = f"{subject_course.course.Tipo}{subject_course.course.Section}_alumnos.csv"
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+    # 4. Create CSV writer and write data
+    writer = csv.writer(response)
+    writer.writerow(['Nombre', 'Email'])
+
+    # Get the student list directly from the found Subjects_Courses object
+    students = subject_course.students.all().order_by('Name')
+
+    for student in students:
+        writer.writerow([student.Name, student.Email])
+
+    return response
 
 
 @login_required
