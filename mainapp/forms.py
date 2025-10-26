@@ -1,5 +1,5 @@
 from django import forms
-from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester
+from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 
 
 class CSVImportForm(forms.Form):
@@ -10,7 +10,7 @@ class GradeForm(forms.ModelForm):
     class Meta:
         model = Grade
         fields = ['subject',
-                  'trimester', 'grade_type', 'grade_type_number', 'grade', 'comments']
+                  'trimester', 'school_year', 'grade_type', 'grade_type_number', 'grade', 'comments']
         widgets = {
             'comments': forms.Textarea(attrs={'rows': 3}),
         }
@@ -19,7 +19,7 @@ class GradeForm(forms.ModelForm):
 class AusenciaEditForm(forms.ModelForm):
     class Meta:
         model = Ausencias
-        fields = ['subject', 'trimester', 'Tipo', 'date_time']
+        fields = ['subject', 'trimester', 'school_year', 'Tipo', 'date_time']
         widgets = {
             'date_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
         }
@@ -43,7 +43,7 @@ class AusenciaForm(forms.ModelForm):
     class Meta:
         model = Ausencias
         # exclude the FK 'student' from Meta fields; we handle multiple students
-        fields = ['subject', 'trimester', 'Tipo']
+        fields = ['subject', 'trimester', 'school_year', 'Tipo']
 
     def __init__(self, *args, course=None, **kwargs):
         # Allow caller to pass a Course instance (or course id) to limit

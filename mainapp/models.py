@@ -19,7 +19,7 @@ class Students(models.Model):
     Email = models.EmailField(max_length=254)
 
     def __str__(self):
-        return f"{self.Name} {self.Email}"
+        return f"{self.Name}"
 
 
 class Profile(models.Model):
@@ -117,7 +117,7 @@ class Grade(models.Model):
     comments = models.TextField(blank=True)
 
     class Meta:
-        unique_together = ('student', 'subject', 'trimester',
+        unique_together = ('student', 'subject', 'trimester', 'school_year',
                            'grade_type', 'grade_type_number')
 
     def __str__(self):

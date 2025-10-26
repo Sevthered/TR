@@ -2,7 +2,7 @@ from urllib import request
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses
+from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 from django.http import JsonResponse, HttpResponse
 from django.db.models import Q
 import unicodedata
@@ -192,6 +192,7 @@ def class_dashboard(request, course_id):
             # student is a QuerySet/list of Students (multiple selection)
             students_selected = form.cleaned_data.get('students')
             subject = form.cleaned_data.get('subject')
+            school_year = form.cleaned_data.get('school_year')
             trimester = form.cleaned_data.get('trimester')
             tipo = form.cleaned_data.get('Tipo')
             date_time = form.cleaned_data.get('date_time')
@@ -201,10 +202,10 @@ def class_dashboard(request, course_id):
                 # create Ausencias for each student
                 if date_time:
                     a = Ausencias(student=s, subject=subject,
-                                  trimester=trimester, Tipo=tipo, date_time=date_time)
+                                  trimester=trimester, Tipo=tipo, date_time=date_time, school_year=school_year)
                 else:
                     a = Ausencias(student=s, subject=subject,
-                                  trimester=trimester, Tipo=tipo)
+                                  trimester=trimester, Tipo=tipo, school_year=school_year)
                 try:
                     a.save()
                     created += 1
@@ -327,7 +328,7 @@ def tutor_dashboard(request):
 
 
 @login_required
-def grades_csv(request):
+def grades_csv(request, student_id=None):
     profile = request.user.profile
     grades = Grade.objects.none()
     filename = "student_data.csv"
@@ -336,39 +337,146 @@ def grades_csv(request):
         # Student: only their grades
         student = profile.student
         grades = Grade.objects.filter(student=student)
-        filename = f"{student.Name}_{student.First_Surname}_grades.csv"
+        filename = f"{student.Name}_notas.csv"
     elif profile.role == "tutor":
-        # Tutor: all their children's grades, grouped by child
+        # Tutor: all their children's grades
         children = list(profile.children.all())
-        grades = []
-        for child in children:
-            child_grades = Grade.objects.filter(student=child)
-            grades.extend(child_grades)
-        filename = f"{request.user.username}_children_grades.csv"
+        grades = Grade.objects.filter(student__in=children)
+        filename = f"{request.user.username}_notas.csv"
     elif profile.role == "professor":
-        # Professor: all grades
-        grades = Grade.objects.all()
-        filename = "all_grades.csv"
+        if student_id:
+            # Professor: specific student's grades
+            student = get_object_or_404(Students, pk=student_id)
+            grades = Grade.objects.filter(student=student)
+            filename = f"{student.Name}_notas.csv"
+        else:
+            # Professor: all grades
+            grades = Grade.objects.all()
+            filename = "all_grades.csv"
     else:
         return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
+
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
     writer.writerow(
-        ['Estudiante', 'Asignatura', 'Profesor', 'Trimestre', 'Nota', 'Comentario'])
+        ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Comentario'])
+
     for grade in grades:
         student = grade.student
-        student_name = " ".join(filter(None, [getattr(student, 'Name', ''), getattr(
-            student, 'First_Surname', ''), getattr(student, 'Last_Surname', '')])).strip()
-        if not student_name:
-            student_name = getattr(student, 'Email', 'Unknown')
-        subject_name = getattr(grade.subject, 'Name', 'N/A')
-        teacher_name = getattr(getattr(grade, 'teacher', None), 'Name', 'N/A')
-        trimester_name = getattr(
-            getattr(grade, 'trimester', None), 'Name', 'N/A')
-        writer.writerow([student_name, subject_name, teacher_name,
-                        trimester_name, grade.grade, grade.comments])
+        student_name = student.Name
+        student_email = student.Email
+        subject_name = grade.subject.Name
+        trimester_name = grade.trimester.Name
+        school_year = grade.school_year.year
+        writer.writerow([
+            student_name,
+            subject_name,
+            trimester_name,
+            school_year,
+            grade.grade,
+            grade.grade_type,
+            grade.comments
+        ])
     return response
+
+
+@login_required
+def class_grades_download(request, course_id):
+    profile = request.user.profile
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    course = get_object_or_404(Course, CourseID=course_id)
+
+    # Get all students in this course
+    students_in_course = Students.objects.filter(
+        subjects_courses__course=course).distinct()
+
+    # Get all subjects that have grades for students in this course
+    subjects_in_course = Subjects.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('Name')
+
+    # Get all trimesters and school years from grades of students in this course
+    trimesters = Trimester.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('Name')
+    school_years = School_year.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('year')
+
+    # Get all grade types from grades of students in this course
+    grade_types = Grade.objects.filter(
+        student__in=students_in_course).values_list('grade_type', flat=True).distinct().order_by('grade_type')
+
+    if request.method == 'POST':
+        # Process the filter form
+        selected_subject_id = request.POST.get('subject')
+        selected_trimester_id = request.POST.get('trimester')
+        selected_school_year_id = request.POST.get('school_year')
+        selected_grade_type = request.POST.get('grade_type')
+
+        # Start with grades from students in this course
+        grades = Grade.objects.filter(student__in=students_in_course)
+
+        # Apply filters
+        if selected_subject_id:
+            grades = grades.filter(subject_id=selected_subject_id)
+        if selected_trimester_id:
+            grades = grades.filter(trimester_id=selected_trimester_id)
+        if selected_school_year_id:
+            grades = grades.filter(school_year_id=selected_school_year_id)
+        if selected_grade_type:
+            grades = grades.filter(grade_type=selected_grade_type)
+
+        # Generate filename based on filters
+        filename_parts = [course.Tipo, course.Section]
+        if selected_subject_id:
+            subject = get_object_or_404(Subjects, pk=selected_subject_id)
+            filename_parts.append(subject.Name)
+        if selected_trimester_id:
+            trimester = get_object_or_404(Trimester, pk=selected_trimester_id)
+            filename_parts.append(f"Trimestre_{trimester.Name}")
+        if selected_school_year_id:
+            school_year = get_object_or_404(
+                School_year, pk=selected_school_year_id)
+            filename_parts.append(school_year.year)
+        if selected_grade_type:
+            filename_parts.append(f"Tipo_{selected_grade_type}")
+
+        filename = "_".join(filename_parts) + "_grades.csv"
+
+        # Generate CSV
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow(
+            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Comentario'])
+
+        for grade in grades:
+            student = grade.student
+            student_name = student.Name
+            subject_name = grade.subject.Name
+            trimester_name = grade.trimester.Name
+            school_year = grade.school_year.year
+            writer.writerow([
+                student_name,
+                subject_name,
+                trimester_name,
+                school_year,
+                grade.grade,
+                grade.grade_type,
+                grade.comments
+            ])
+        return response
+
+    # GET request - show the filter form
+    context = {
+        "course": course,
+        "subjects": subjects_in_course,
+        "trimesters": trimesters,
+        "school_years": school_years,
+        "grade_types": grade_types,
+    }
+    return render(request, "mainapp/class_grades_download.html", context)
 
 
 @login_required

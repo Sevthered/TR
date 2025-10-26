@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block page_title %}
+Descargar Notas de Clase
+{% endblock page_title %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock styles %}
+
+{% block content %}
+<div class="page-root">
+    <div class="page-surface" role="main" aria-labelledby="page-title">
+        <p>
+            <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
+        </p>
+        
+        <h1 id="page-title" class="page-title">Descargar Notas de {{ course.Tipo }} {{ course.Section }}</h1>
+        
+        <div class="page-content">
+            <p>Selecciona los filtros que deseas aplicar para descargar las notas de esta clase:</p>
+            
+            <form method="post" class="filter-form">
+                {% csrf_token %}
+                
+                <div class="form-group">
+                    <label for="subject">Asignatura:</label>
+                    <select id="subject" name="subject">
+                        <option value="">Todas las asignaturas</option>
+                        {% for subject in subjects %}
+                            <option value="{{ subject.SubjectID }}">{{ subject.Name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="trimester">Trimestre:</label>
+                    <select id="trimester" name="trimester">
+                        <option value="">Todos los trimestres</option>
+                        {% for trimester in trimesters %}
+                            <option value="{{ trimester.TrimesterID }}">Trimestre {{ trimester.Name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="school_year">Año Escolar:</label>
+                    <select id="school_year" name="school_year">
+                        <option value="">Todos los años escolares</option>
+                        {% for school_year in school_years %}
+                            <option value="{{ school_year.SchoolYearID }}">{{ school_year.year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="grade_type">Tipo de Nota:</label>
+                    <select id="grade_type" name="grade_type">
+                        <option value="">Todos los tipos de nota</option>
+                        {% for grade_type in grade_types %}
+                            <option value="{{ grade_type }}">{{ grade_type|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">
+                        Descargar Notas
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="window.history.back()">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+            
+        </div>
+    </div>
+</div>
+
+<style>
+.filter-form {
+    max-width: 500px;
+    margin: 20px 0;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+/* Ensure select elements work properly */
+.filter-form select {
+    width: 100%;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    color: var(--text-color) !important;
+    background-color: #1e1e1e !important;
+    border: 1px solid #444 !important;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 1rem;
+}
+
+.filter-form select option {
+    background-color: #1e1e1e !important;
+    color: var(--text-color) !important;
+}
+
+.form-actions {
+    margin-top: 30px;
+    display: flex;
+    gap: 10px;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #545b62;
+}
+</style>
+{% endblock content %}

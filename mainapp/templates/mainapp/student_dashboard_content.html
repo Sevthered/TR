@@ -24,15 +24,32 @@
         </p>
         {% endif %}
         <h2 id="student-name">
-            {{ student.Name }} {{ student.First_Surname }} {{ student.Last_Surname }}
+            {{ student.Name }}
         </h2>
         <p><strong>Email:</strong> {{ student.Email }}</p>
                 <h2>Notas</h2>
-                <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.pk %}'">
-                    Crear Notas
-                </button>
-                <br>
-                <br>
+                {% if user.is_authenticated and user.profile.role == 'professor' %}
+                <div style="margin-bottom: 15px;">
+                    <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.pk %}'">
+                        Crear Notas
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv_student' student_id=student.pk %}'" style="margin-left: 10px;">
+                        Descargar Notas CSV
+                    </button>
+                </div>
+                {% elif user.is_authenticated and user.profile.role == 'student' %}
+                <div style="margin-bottom: 15px;">
+                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
+                        Descargar Mis Notas CSV
+                    </button>
+                </div>
+                {% elif user.is_authenticated and user.profile.role == 'tutor' %}
+                <div style="margin-bottom: 15px;">
+                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
+                        Descargar Notas de Mis Hijos CSV
+                    </button>
+                </div>
+                {% endif %}
                 <div class="table-wrap">
                     <table class="table student-table" aria-describedby="grades-note">
             <thead>
@@ -73,11 +90,13 @@
                 </div>
 
                 <h2>Ausencias</h2>
+                {% if user.is_authenticated and user.profile.role == 'professor' %}
                 <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'ausencia_create' student_id=student.pk %}'">
                     Crear Ausencia
                 </button>
                 <br>
                 <br>
+                {% endif %}
                 <div class="table-wrap">
                     <table class="table student-table" aria-describedby="absences-note">
             <thead>
