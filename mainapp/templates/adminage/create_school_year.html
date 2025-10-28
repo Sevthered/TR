@@ -1,0 +1,23 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Crear Año Escolar</title>
+    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+</head>
+</head>
+<body>
+    <div class="form-container">
+        <h1>1. Crear Año Escolar</h1>
+        
+        {% if messages %}<ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>{% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">Crear Año Escolar y Continuar</button>
+        </form>
+    </div>
+</body>
+</html>

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .adminage-form-container { max-width: 900px; margin: 50px auto; padding: 30px; background: white; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+        h1, h2 { color: #333; }
+        .submit-button { background-color: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; }
+        .submit-button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .adminage-messages { list-style: none; padding: 10px; border-radius: 5px; margin-bottom: 20px;}
+        .adminage-messages li.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .adminage-messages li.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .adminage-messages li.warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        
+        /* Estilos para los selectores de curso */
+        .adminage-filter-box { display: flex; gap: 20px; margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9; align-items: flex-end; }
+        .select-group { display: flex; flex-direction: column; flex: 1; }
+        .select-group label { margin-bottom: 5px; font-weight: bold; }
+        .select-group select { padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+
+        /* Estilos para el formulario de asignación */
+        .assignment-form-fields { display: flex; gap: 20px; margin-top: 20px; }
+        .assignment-form-fields .form-group { flex: 1; }
+        .assignment-form-fields select { padding: 10px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+        
+        /* Información de la sección */
+        .section-info { padding: 10px; background-color: #e9ecef; border-radius: 5px; margin-bottom: 20px; }
+        
+        /* Estilos para la selección de estudiantes */
+        .student-list-container {
+            margin-top: 15px;
+            max-height: 300px; 
+            overflow-y: scroll; 
+            border: 1px solid #ccc; 
+            padding: 15px; 
+            border-radius: 5px;
+            background: #ffffff;
+        }
+        .student-item { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="adminage-form-container">
+        <h1>{{ title }}</h1>
+
+        {% if messages %}
+            <ul class="adminage-messages">
+                {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+            </ul>
+        {% endif %}
+
+        <h2>1. Seleccionar la Sección de Curso</h2>
+        <p>Utilice los selectores para encontrar la sección a la que desea asignar una asignatura y un profesor.</p>
+
+        <div class="adminage-filter-box">
+            <div class="select-group">
+                <label for="id_course_type">Tipo de Curso:</label>
+                <select id="id_course_type">
+                    <option value="">-- Seleccionar Tipo --</option>
+                    {% for key, name in course_types %}
+                        <option value="{{ key }}" {% if request.GET.course_type == key %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="select-group">
+                <label for="id_course_level">Nivel:</label>
+                <select id="id_course_level" disabled>
+                    <option value="">-- Seleccionar Nivel --</option>
+                </select>
+            </div>
+
+            <div class="select-group">
+                <label for="id_course_section">Sección Final:</label>
+                <select id="id_course_section" data-selected-id="{{ selected_course_id }}" disabled>
+                    <option value="">-- Seleccionar Sección --</option>
+                </select>
+            </div>
+        </div>
+
+        <form method="post" id="assignment-form">
+            {% csrf_token %}
+            
+            <input type="hidden" name="course_id" id="hidden_course_id" value="{{ selected_course_id|default:'' }}">
+            <input type="hidden" name="school_year_id" value="{{ school_year_id|default:'' }}">
+
+            <h2>2. Asignar Asignatura y Profesor</h2>
+
+            <div class="section-info">
+                Asignación para la sección: <span id="selected-section-name" style="font-weight: bold;">
+                    {% if target_course %}{{ target_course.Tipo }} {{ target_course.Section }}{% else %}(Ninguna Sección Seleccionada){% endif %}
+                </span>
+                {% if current_school_year %}
+                    <br>Año Escolar: **{{ current_school_year.year }}**
+                {% endif %}
+            </div>
+
+            <div class="assignment-form-fields">
+                <div class="form-group">
+                    {{ form.subject.label_tag }}
+                    {{ form.subject }}
+                    {{ form.subject.errors }}
+                </div>
+                <div class="form-group">
+                    {{ form.teacher.label_tag }}
+                    {{ form.teacher }}
+                    {{ form.teacher.errors }}
+                </div>
+            </div>
+
+            <div class="assignment-form-fields" style="margin-top: 15px;">
+                <div class="form-group" style="flex: none; width: 100%;">
+                    <label for="id_trimesters_selected">Trimestres a Asignar:</label>
+                    <select name="trimesters_selected" id="id_trimesters_selected" multiple="multiple" size="{{ trimesters|length }}" required>
+                        {% for trimester in trimesters %}
+                            <option value="{{ trimester.pk }}">{{ trimester.Name }} ({{ trimester.school_year.year }})</option>
+                        {% empty %}
+                            <option value="" disabled>No hay trimestres definidos para este año escolar.</option>
+                        {% endfor %}
+                    </select>
+                    <small style="display: block; margin-top: 5px;">Mantén presionada la tecla Ctrl/Cmd para seleccionar varios trimestres.</small>
+                </div>
+            </div>
+            <hr>
+
+            <h2>3. Seleccionar Estudiantes para la Asignatura</h2>
+
+            {% if course_students_links %}
+                <p>Marque la casilla de los estudiantes que cursarán **esta** asignatura:</p>
+                
+                <div class="student-list-container">
+                    <div style="margin-bottom: 10px;">
+                        <input type="checkbox" id="select-all-students" checked> 
+                        <label for="select-all-students" style="font-weight: bold;">Seleccionar/Deseleccionar todos</label>
+                    </div>
+                    {% for student_link in course_students_links %}
+                        <div class="student-item">
+                            <label>
+                                <input type="checkbox" 
+                                       name="student_links_selected" 
+                                       value="{{ student_link.pk }}" 
+                                       checked> 
+                                {{ student_link.student.Name }} 
+                                ({{ student_link.student.Email }})
+                            </label>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p>Seleccione una sección de curso válida (paso 1) para cargar la lista de estudiantes.</p>
+            {% endif %}
+
+            <button type="submit" class="submit-button" id="submit-assignment" {% if not selected_course_id %}disabled{% endif %}>
+                Asignar Asignatura y Profesor
+            </button>
+            
+            {{ form.non_field_errors }}
+        </form>
+
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            var $courseType = $('#id_course_type');
+            var $courseLevel = $('#id_course_level');
+            var $courseSection = $('#id_course_section');
+            var $hiddenCourseId = $('#hidden_course_id');
+            var $submitButton = $('#submit-assignment');
+            var $sectionNameDisplay = $('#selected-section-name');
+            var $selectAllStudents = $('#select-all-students');
+            
+            // Lógica para el botón Seleccionar/Deseleccionar todos
+            $selectAllStudents.change(function() {
+                var isChecked = $(this).prop('checked');
+                $('input[name="student_links_selected"]').prop('checked', isChecked);
+            });
+
+
+            // 🔑 Obtenemos el ID del año escolar y el ID del curso preseleccionado
+            var schoolYearId = '{{ school_year_id|default:"" }}'; 
+            var initialCourseId = $courseSection.data('selected-id'); 
+            var initialCourseType = $courseType.val();
+            
+            // --- Funciones AJAX y de Reset ---
+            
+            function resetDropdowns(levelReset, sectionReset) {
+                if (levelReset) {
+                    $courseLevel.empty().append('<option value="">-- Seleccionar Nivel --</option>').prop('disabled', true);
+                }
+                if (sectionReset) {
+                    $courseSection.empty().append('<option value="">-- Seleccionar Sección --</option>').prop('disabled', true);
+                }
+                $hiddenCourseId.val('');
+                $submitButton.prop('disabled', true);
+                $sectionNameDisplay.text('(Ninguna Sección Seleccionada)');
+            }
+            
+            function loadLevels(courseType, selectedLevel) {
+                resetDropdowns(true, true);
+                $courseLevel.empty().append('<option value="">Cargando niveles...</option>').prop('disabled', true);
+
+                $.ajax({
+                    url: "{% url 'load_course_sections' %}",
+                    data: {
+                        'school_year_id': schoolYearId, 
+                        'course_type': courseType
+                    },
+                    dataType: 'json',
+                    success: function(data) {
+                        $courseLevel.empty().append('<option value="">-- Seleccionar Nivel --</option>');
+                        
+                        if (data.mode === 'LEVELS' && data.data.length > 0) {
+                            $.each(data.data, function(index, item) {
+                                var option = $('<option>', {
+                                    value: item.value, 
+                                    text: item.text    
+                                });
+                                if (selectedLevel === item.value) {
+                                    option.attr('selected', 'selected');
+                                }
+                                $courseLevel.append(option);
+                            });
+                            $courseLevel.prop('disabled', false);
+                            
+                            if (selectedLevel) {
+                                loadSections(courseType, selectedLevel, initialCourseId);
+                            }
+                            
+                        } else {
+                            $courseLevel.append('<option value="">No hay niveles disponibles</option>');
+                        }
+                    }
+                });
+            }
+
+            function loadSections(courseType, level, selectedSectionId) {
+                resetDropdowns(false, true);
+                $courseSection.empty().append('<option value="">Cargando secciones...</option>').prop('disabled', true);
+
+                $.ajax({
+                    url: "{% url 'load_course_sections' %}",
+                    data: {
+                        'school_year_id': schoolYearId, 
+                        'course_type': courseType,
+                        'level': level 
+                    },
+                    dataType: 'json',
+                    success: function(data) {
+                        $courseSection.empty().append('<option value="">-- Seleccionar Sección --</option>');
+
+                        if (data.mode === 'SECTIONS' && data.data.length > 0) {
+                            var sectionFound = false;
+                            
+                            $.each(data.data, function(index, item) {
+                                var option = $('<option>', {
+                                    value: item.id,   
+                                    text: item.text   
+                                });
+                                if (selectedSectionId && selectedSectionId == item.id) {
+                                    option.attr('selected', 'selected');
+                                    sectionFound = true;
+                                }
+                                $courseSection.append(option);
+                            });
+                            $courseSection.prop('disabled', false);
+                            
+                            // Si la sección inicial fue encontrada, forzar la redirección para cargar estudiantes
+                            if (sectionFound) {
+                                window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId + "&course_id=" + selectedSectionId;
+                            }
+                        } else {
+                            $courseSection.append('<option value="">No hay secciones disponibles</option>');
+                        }
+                    }
+                });
+            }
+            
+            // --- Handlers ---
+            
+            // 1. Evento al cambiar el Tipo de Curso
+            $courseType.change(function() {
+                var courseType = $(this).val();
+                if (courseType && schoolYearId) {
+                    loadLevels(courseType, null);
+                } else {
+                    resetDropdowns(true, true);
+                }
+            });
+
+            // 2. Evento al cambiar el Nivel
+            $courseLevel.change(function() {
+                var courseType = $courseType.val();
+                var level = $(this).val();
+                if (level && schoolYearId) {
+                    loadSections(courseType, level, null);
+                } else {
+                    resetDropdowns(false, true);
+                }
+            });
+            
+            // 3. Evento al cambiar la Sección Final (CRÍTICO: Redirige para cargar la lista de estudiantes)
+            $courseSection.change(function() {
+                var courseId = $(this).val();
+                if (courseId) {
+                    // 💥 Redirección: Forzar un GET para que Django cargue la lista de estudiantes
+                    window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId + "&course_id=" + courseId;
+                } else {
+                    // Si se deselecciona, volvemos a la vista sin course_id
+                    window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId;
+                }
+            });
+
+            // 4. Lógica de precarga al inicio (si hay un course_id en el GET)
+            if (initialCourseId && schoolYearId && initialCourseType) {
+                // Hacemos una llamada AJAX para obtener el nivel de la sección seleccionada
+                $.ajax({
+                    url: "{% url 'load_course_sections' %}",
+                    data: {
+                        'school_year_id': schoolYearId,
+                        'course_id_lookup': initialCourseId 
+                    },
+                    dataType: 'json',
+                    success: function(data) {
+                        if (data.mode === 'LEVEL_LOOKUP' && data.level && data.course_type) {
+                            $courseType.val(data.course_type);
+                            loadLevels(data.course_type, data.level); 
+                        }
+                    }
+                });
+            } else if (initialCourseType) {
+                loadLevels(initialCourseType, null);
+            }
+        });
+    </script>
+</body>
+</html>

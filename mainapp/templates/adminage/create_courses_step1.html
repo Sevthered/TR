@@ -1,0 +1,25 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Crear Cursos - Paso 1</title>
+    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+</head>
+</head>
+<body>
+    <div class="form-container">
+        <h1>2. Seleccionar Tipo de Curso</h1>
+        <p>Año Escolar: <strong>{{ school_year }}</strong></p>
+        
+        {% if messages %}<ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>{% endif %}
+
+        <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="select_type">
+            {{ form.as_p }}
+            <button type="submit">Continuar y Definir Secciones</button>
+        </form>
+    </div>
+</body>
+</html>

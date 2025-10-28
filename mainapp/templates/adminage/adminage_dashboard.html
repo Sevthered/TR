@@ -1,0 +1,211 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel de Administración Escolar</title>
+    
+    <style>
+        :root {
+            --background-color: #121212;
+            --text-color: #e0e0e0;
+            --primary-color: #ff3e00;
+            --secondary-color: #ff9800;
+            --muted-color: #757575;
+            --font-primary: 'Inter', system-ui, sans-serif;
+            --config-button-color: #007bff;
+            --assign-button-color: #28a745;
+            --student-button-color: #ffc107; /* Color para crear/asignar estudiantes */
+            --logout-color: #dc3545;
+        }
+
+        body {
+            font-family: var(--font-primary);
+            color: var(--text-color);
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .main-layout {
+            display: flex; 
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            padding: 2rem;
+            flex-grow: 1;
+            margin: 0; 
+        }
+
+        .utility-nav {
+            flex-shrink: 0; 
+            width: 150px; 
+            padding: 2rem;
+            align-self: flex-start;
+            text-align: right;
+        }
+        
+        h1, h2, h3 {
+            color: var(--text-color);
+            margin: 0 0 1em 0;
+            font-weight: 700;
+        }
+
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        a:hover {
+            color: var(--secondary-color);
+        }
+
+        .messages {
+            list-style: none;
+            padding: 1rem;
+            background-color: #2e4d4d;
+            color: var(--text-color);
+            border-radius: 4px;
+            margin-bottom: 1.5rem;
+            border: 1px solid #4d8080;
+        }
+
+        .action-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 25px;
+            flex-wrap: wrap; 
+        }
+        
+        .action-button,
+        .assign-button,
+        .student-button { 
+            color: #333; /* Color de texto ajustado para student-button */
+            padding: 0.75em 1.5em;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background-color 0.3s ease;
+        }
+
+        .action-button {
+            background-color: var(--config-button-color);
+            color: #ffffff; /* Texto blanco para config */
+        }
+
+        .assign-button {
+            background-color: var(--assign-button-color);
+            color: #ffffff; /* Texto blanco para assign */
+        }
+        
+        .student-button {
+            background-color: var(--student-button-color); 
+            color: #333; 
+        }
+        
+        .action-button:hover {
+            background-color: #0056b3;
+        }
+        .assign-button:hover {
+            background-color: #1e7e34;
+        }
+        .student-button:hover {
+            background-color: #e0a800;
+        }
+
+
+        .logout {
+            color: var(--logout-color);
+            font-weight: 500;
+        }
+        .logout:hover {
+            color: var(--secondary-color);
+        }
+        
+        .section-list {
+            padding-top: 10px;
+            border-top: 1px solid #333;
+        }
+        .section-list ul {
+            list-style: disc;
+            padding-left: 20px;
+        }
+        .section-list li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body class="main-layout"> 
+    
+    <div class="container">
+        <h1>
+            Panel de Administración Escolar
+        </h1>
+
+        {% if messages %}
+            <ul class="messages">
+                {% for message in messages %}
+                <li class="{{ message.tags }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <h2>Configuración de Cursos y Asignaturas</h2>
+        
+        <div class="action-container">
+            
+            <a href="{% url 'create_school_year' %}" class="action-button">
+                Iniciar: Crear y Configurar Nuevo Año Escolar
+            </a>
+            
+            <a href="{% url 'create_and_assign_student' %}" class="student-button"> 
+                🧑‍🎓 Crear y Asignar Estudiante a Clase 
+            </a>
+
+            {% if school_years %}
+                {% with current_school_year_id=school_years.0.pk %}
+                    <a href="{% url 'assign_subjects' %}?school_year_id={{ current_school_year_id }}" class="assign-button">
+                        ✏️ Asignar Asignaturas a Cursos
+                    </a>
+                {% endwith %}
+            {% else %}
+                <button class="assign-button" disabled title="Crea un Año Escolar primero">
+                    ✏️ Asignar Asignaturas a Cursos
+                </button>
+            {% endif %}
+
+        </div>
+
+        <div class="section-list">
+            <h2>Años Escolares Existentes</h2>
+            {% if school_years %}
+                <p>El botón de Asignación utiliza el año más reciente: <strong>{{ school_years.0.year }}</strong>.</p>
+                <ul>
+                    {% for sy in school_years %}
+                        <li>
+                            {{ sy.year }} 
+                            - 
+                            <a href="{% url 'create_courses_sections' %}?school_year_id={{ sy.pk }}">Continuar Configuración</a> 
+                            | 
+                            <a href="{% url 'assign_subjects' %}?school_year_id={{ sy.pk }}">Asignar Asignaturas</a>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No hay años escolares creados.</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="utility-nav"> 
+        <a class="logout" href="{% url 'logout' %}">Cerrar Sesión</a>
+    </div>
+</body>
+</html>

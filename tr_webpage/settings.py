@@ -81,7 +81,7 @@ DATABASES = {
 
         'NAME': 'my_database',
 
-        'USER': 'postgres',
+        'USER': 'admin',
 
         'PASSWORD': 'admin',
 

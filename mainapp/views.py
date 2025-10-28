@@ -1,18 +1,22 @@
-from urllib import request
+from django.http import JsonResponse
+import profile
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
+from .models import Students, Profile, Course, Students_Courses, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 from django.http import JsonResponse, HttpResponse
 from django.db.models import Q
 import unicodedata
 from django.contrib.auth.decorators import login_required
 import csv
 from django.contrib import messages
-from .forms import GradeForm, AusenciaForm, AusenciaEditForm
+from .forms import GradeForm, AusenciaForm, AusenciaEditForm, SchoolYearForm, CourseCreationForm, CourseSectionForm, MAIN_COURSES, SubjectAssignmentForm, StudentCreationForm
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from django.forms import formset_factory
+from django.http import Http404
+from django.urls import reverse
 # Create your views here.
 
 
@@ -32,6 +36,8 @@ def loginPage(request):
             return redirect('tutor_dashboard')
         elif profile.role == 'professor':
             return redirect('teacher_dashboard')
+        elif profile.role == 'administrator':
+            return redirect('adminage_dashboard')
         else:
             return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
@@ -820,3 +826,493 @@ def import_grades(request, course_id=None):
         'course': course,
     }
     return render(request, 'mainapp/import_grades.html', context)
+
+
+@login_required
+def adminage_dashboard_view(request):
+    profile = request.user.profile
+    if profile.role != 'administrator':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    """
+    Dashboard principal con botones para iniciar los procesos de configuración.
+    """
+    context = {
+        'title': 'Panel de Administración Escolar',
+        # Obtener la lista de años escolares para la plantilla
+        'school_years': School_year.objects.all().order_by('-year')
+    }
+    return render(request, "adminage/adminage_dashboard.html", context)
+
+
+# =======================================================
+# --- VISTA 1: CREAR AÑO ESCOLAR ---
+# =======================================================
+@login_required
+def create_school_year_view(request):
+    profile = request.user.profile
+    if profile.role != 'administrator':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    if request.method == 'POST':
+        form = SchoolYearForm(request.POST)
+        if form.is_valid():
+            # 1. Crear el School_year
+            school_year_obj = form.save()
+
+            # 2. Crear automáticamente los 3 Trimestres asociados
+            trimestres_a_crear = [
+                Trimester(Name=1, school_year=school_year_obj),
+                Trimester(Name=2, school_year=school_year_obj),
+                Trimester(Name=3, school_year=school_year_obj),
+            ]
+            Trimester.objects.bulk_create(trimestres_a_crear)
+
+            messages.success(
+                request, f"Año Escolar {school_year_obj.year} creado. Se han generado 3 trimestres asociados.")
+
+            # 3. Redirige a la Vista 2 (creación de cursos)
+            url = reverse('create_courses_sections')
+            return redirect(f'{url}?school_year_id={school_year_obj.pk}')
+        else:
+            messages.error(
+                request, "Error al crear el Año Escolar. Por favor, corrija los errores.")
+    else:
+        form = SchoolYearForm()
+
+    context = {
+        'form': form,
+        'title': 'Crear Nuevo Año Escolar'
+    }
+    return render(request, "adminage/create_school_year.html", context)
+
+
+# =======================================================
+# --- VISTA 2: CREAR SECCIONES DE CURSO (Multi-Step) ---
+# =======================================================
+@login_required
+def create_courses_sections_view(request):
+    profile = request.user.profile
+    if profile.role != 'administrator':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    school_year_id = request.GET.get('school_year_id')
+
+    if not school_year_id:
+        messages.error(request, "Debe comenzar definiendo un Año Escolar.")
+        # Redirige al botón de inicio
+        return redirect('adminage_dashboard')
+
+    try:
+        school_year = School_year.objects.get(pk=school_year_id)
+    except School_year.DoesNotExist:
+        raise Http404("Año Escolar no encontrado.")
+
+    context = {'school_year': school_year}
+
+    # --- PASO 1 POST (Selección del Tipo) ---
+    if request.method == 'POST' and request.POST.get('step') == 'select_type':
+
+        form_main = CourseCreationForm(
+            request.POST,
+            initial_school_year_id=school_year_id,
+            course_type_initial=request.POST.get('course_tipo')
+        )
+
+        if not form_main.is_valid():
+            messages.error(
+                request, "Error de validación. Revise la selección inicial.")
+            context['form'] = form_main
+            return render(request, "adminage/create_courses_step1.html", context)
+
+        course_tipo = form_main.cleaned_data['course_tipo']
+
+        return _render_step2(request, course_tipo, school_year, form_main)
+
+    # --- PASO 2 POST (Guardado de Secciones) ---
+    elif request.method == 'POST' and request.POST.get('step') == 'confirm_sections':
+
+        course_tipo = request.POST.get('course_tipo')
+
+        form_main = CourseCreationForm(
+            request.POST,
+            initial_school_year_id=school_year_id,
+            course_type_initial=course_tipo
+        )
+
+        if not form_main.is_valid():
+            messages.error(request, "Error de validación. Vuelva a empezar.")
+            return redirect('adminage_dashboard')  # Redirige al inicio
+
+        CourseFormSet = formset_factory(CourseSectionForm, extra=0)
+        formset = CourseFormSet(request.POST)
+
+        if formset.is_valid():
+            num_created = 0
+
+            for form_section in formset:
+                if form_section.cleaned_data:
+                    main_course_name = form_section.cleaned_data['main_course_name']
+                    num_subsections = form_section.cleaned_data['num_subsections']
+                    subsection_letters = [chr(65 + i)
+                                          for i in range(num_subsections)]
+
+                    new_courses = []
+                    for letter in subsection_letters:
+                        new_courses.append(
+                            Course(
+                                Tipo=course_tipo,
+                                Section=f"{main_course_name}{letter}",
+                                school_year=school_year
+                            )
+                        )
+                    Course.objects.bulk_create(new_courses)
+                    num_created += len(new_courses)
+
+            messages.success(
+                request, f"{num_created} secciones de cursos ({course_tipo}) creadas exitosamente para {school_year}.")
+
+            # Redirige de vuelta al dashboard
+            return redirect('adminage_dashboard')
+
+        else:
+            messages.error(
+                request, "Por favor, corrige los errores en las secciones.")
+            return _render_step2(request, course_tipo, school_year, form_main, formset=formset)
+
+    # --- PASO 1 GET (Carga Inicial) ---
+    else:
+        form = CourseCreationForm(
+            initial_school_year_id=school_year_id,
+            initial={'school_year': school_year}
+        )
+        context['form'] = form
+        return render(request, "adminage/create_courses_step1.html", context)
+
+
+# Función auxiliar para renderizar el Paso 2
+def _render_step2(request, course_tipo, school_year, form_main, formset=None):
+    profile = request.user.profile
+    if profile.role != 'administrator':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    if not formset:
+        CourseFormSet = formset_factory(CourseSectionForm, extra=0)
+        initial_data = []
+        if course_tipo in MAIN_COURSES:
+            for main_course_num in MAIN_COURSES[course_tipo]:
+                initial_data.append({
+                    'main_course_name': str(main_course_num),
+                    'display_name': f"{main_course_num}º {course_tipo}"
+                })
+        formset = CourseFormSet(initial=initial_data)
+
+    context = {
+        'form_main': form_main,
+        'formset': formset,
+        'course_tipo': course_tipo,
+        'school_year': school_year,
+        'title': f"Definir Secciones para {course_tipo} ({school_year})"
+    }
+    return render(request, "adminage/create_courses_step2.html", context)
+
+
+@login_required
+def assign_subjects_view(request):
+    """
+    Permite asignar una asignatura y un profesor a múltiples trimestres, 
+    seleccionando qué estudiantes del curso serán asignados a esa materia.
+    """
+
+    course_types = Course.COURSE_TYPE_CHOICES
+
+    # 1. DEFINICIÓN E INICIALIZACIÓN DE VARIABLES
+    latest_school_year = School_year.objects.order_by(
+        '-year').only('pk').first()
+    school_year_id = request.GET.get('school_year_id') or (
+        str(latest_school_year.pk) if latest_school_year else '')
+
+    current_form = SubjectAssignmentForm()
+    selected_course_id = request.GET.get('course_id')
+    current_school_year = None
+    trimesters = []
+    course_students_links = None
+    target_course = None
+
+    if school_year_id:
+        try:
+            current_school_year = School_year.objects.get(pk=school_year_id)
+            trimesters = Trimester.objects.filter(
+                school_year=current_school_year).order_by('Name')
+
+            current_form.fields['subject'].queryset = Subjects.objects.all().order_by(
+                'Name')
+            current_form.fields['teacher'].queryset = Teachers.objects.all().order_by(
+                'Name')
+
+        except School_year.DoesNotExist:
+            messages.error(request, "Año escolar no válido.")
+            return redirect('assign_subjects')
+
+    # Obtener estudiantes del curso seleccionado (para el GET y re-renderizado)
+    if selected_course_id:
+        try:
+            target_course = Course.objects.get(pk=selected_course_id)
+            # Obtenemos los REGISTROS DE RELACIÓN (Students_Courses)
+            course_students_links = Students_Courses.objects.filter(
+                course_section=target_course
+            ).select_related('student').order_by('student__Name')
+        except Course.DoesNotExist:
+            messages.warning(
+                request, "El ID de curso seleccionado no es válido.")
+            selected_course_id = None
+
+    # 2. Manejo del POST (Asignación)
+    if request.method == 'POST':
+
+        # Recuperamos las variables del POST (campos ocultos)
+        selected_course_id = request.POST.get('course_id')
+        school_year_id_post = request.POST.get('school_year_id')
+        final_school_year_id = school_year_id_post or school_year_id
+
+        # Validaciones iniciales
+        if not selected_course_id or not final_school_year_id:
+            messages.error(
+                request, "Error: Debe seleccionar una sección de curso y un año escolar válido.")
+            return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
+
+        try:
+            target_course = Course.objects.get(pk=selected_course_id)
+        except Course.DoesNotExist:
+            messages.error(request, "Sección de curso no válida.")
+            return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
+
+        # Recargamos el formulario con los datos POST
+        form = SubjectAssignmentForm(request.POST)
+        form.fields['subject'].queryset = Subjects.objects.all().order_by(
+            'Name')
+        form.fields['teacher'].queryset = Teachers.objects.all().order_by(
+            'Name')
+
+        if form.is_valid():
+
+            # --- 🟢 LÓGICA DE TRIMESTRES ---
+            trimester_ids_selected = request.POST.getlist(
+                'trimesters_selected')
+
+            if not trimester_ids_selected:
+                messages.error(
+                    request, "Error: Debe seleccionar al menos un trimestre.")
+                current_form = form
+                return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
+
+            try:
+                # Obtenemos solo los objetos Trimester seleccionados y que pertenecen al año
+                selected_trimesters = Trimester.objects.filter(
+                    pk__in=trimester_ids_selected,
+                    school_year__pk=final_school_year_id
+                )
+            except ValueError:
+                messages.error(
+                    request, "Error de datos: IDs de trimestre no válidos.")
+                current_form = form
+                return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
+
+            # --- 🟢 LÓGICA DE ESTUDIANTES ---
+            assigned_students_courses_ids_selected = request.POST.getlist(
+                'student_links_selected')
+
+            try:
+                # Convertimos los IDs seleccionados (que son registros de Students_Courses) a enteros
+                assigned_students_courses_ids = [
+                    int(pk) for pk in assigned_students_courses_ids_selected if pk]
+            except ValueError:
+                messages.error(
+                    request, "Error de datos: Los IDs de estudiante seleccionados no son válidos.")
+                return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
+
+            student_count = len(assigned_students_courses_ids)
+
+            subject = form.cleaned_data['subject']
+            teacher = form.cleaned_data['teacher']
+            newly_created_objects = []
+
+            # 1. Crear/Obtener la asignación Subjects_Courses para cada TRIMESTRE SELECCIONADO
+            for trimester in selected_trimesters:
+                assignment, created = Subjects_Courses.objects.get_or_create(
+                    subject=subject,
+                    course=target_course,
+                    trimester=trimester,
+                    defaults={'teacher': teacher}
+                )
+                # Actualizamos profesor si ya existía
+                if not created and assignment.teacher != teacher:
+                    assignment.teacher = teacher
+                    assignment.save()
+
+                newly_created_objects.append(assignment)
+
+            # 2. Asignar los REGISTROS DE RELACIÓN (Estudiantes seleccionados) a CADA objeto Subjects_Courses
+            if student_count > 0:
+                for assignment in newly_created_objects:
+                    # Usamos el nombre del campo ajustado, ej. 'assigned_course_sections'
+                    assignment.assigned_course_sections.set(
+                        assigned_students_courses_ids)
+
+                messages.success(
+                    request, f"Asignación de {subject.Name} creada/actualizada para {len(newly_created_objects)} trimestre(s) y {student_count} estudiantes.")
+
+            else:
+                # Si no hay estudiantes seleccionados, limpiamos el campo ManyToMany
+                for assignment in newly_created_objects:
+                    assignment.assigned_course_sections.clear()
+                messages.warning(
+                    request, f"Asignación de {subject.Name} creada para {len(newly_created_objects)} trimestre(s), pero no se seleccionó ningún estudiante.")
+
+            # Redirigir al GET para limpiar el POST y mantener los filtros
+            return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
+
+        else:
+            # Si el formulario falla, re-renderizamos con el error
+            messages.error(
+                request, "Error en el formulario de asignación. Revise Asignatura y Profesor.")
+            current_form = form
+            # Nota: Recargar la lista de estudiantes si el POST falló
+            if selected_course_id and target_course:
+                course_students_links = Students_Courses.objects.filter(
+                    course_section=target_course
+                ).select_related('student').order_by('student__Name')
+
+    # 3. Manejo del GET y Contexto Final
+    context = {
+        'title': 'Asignar Asignaturas a Clases',
+        'form': current_form,
+        'course_types': course_types,
+        'school_year_id': school_year_id,
+        'selected_course_id': selected_course_id,
+        'current_school_year': current_school_year,
+        'trimesters': trimesters,
+        'course_students_links': course_students_links,
+    }
+    return render(request, "adminage/assign_subjects.html", context)
+# =======================================================
+# B. Endpoint AJAX para Carga Dinámica de Secciones
+# =======================================================
+
+
+@login_required
+def load_course_sections(request):
+    """
+    Endpoint AJAX para devolver los niveles o las secciones en cascada.
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    level = request.GET.get('level')
+
+    if not school_year_id or not course_type:
+        return JsonResponse({'data': []})
+
+    try:
+        sections_query = Course.objects.filter(
+            school_year__pk=school_year_id,
+            Tipo=course_type,
+        ).order_by('Section')
+
+        # --- MODO 1: Devolver NIVELES (al seleccionar Tipo) ---
+        if not level:
+            all_sections_names = sections_query.values_list(
+                'Section', flat=True).distinct()
+
+            main_levels = MAIN_COURSES.get(course_type, [])
+            available_levels = []
+
+            for lvl in main_levels:
+                lvl_str = str(lvl)
+                if any(s.startswith(lvl_str) for s in all_sections_names):
+                    available_levels.append({
+                        'value': lvl_str,
+                        'text': f'{lvl_str}º {course_type}'
+                    })
+
+            return JsonResponse({'mode': 'LEVELS', 'data': available_levels})
+
+        # --- MODO 2: Devolver SECCIONES FINALES (al seleccionar Nivel) ---
+        else:
+            final_sections = sections_query.filter(
+                Section__startswith=level
+            ).values('CourseID', 'Section')
+
+            sections_data = []
+            for s in final_sections:
+                sections_data.append({
+                    'id': s['CourseID'],
+                    'text': s['Section'],
+                })
+
+            return JsonResponse({'mode': 'SECTIONS', 'data': sections_data})
+
+    except Exception as e:
+        print(f"!!! ERROR FATAL EN load_course_sections (AJAX) !!!: {e}")
+        return JsonResponse({'error': f'Error interno del servidor: {str(e)}'}, status=500)
+
+
+# =======================================================
+# --- VISTA ÚNICA: CREAR ESTUDIANTE Y ASIGNAR CLASE ---
+# =======================================================
+@login_required
+def create_and_assign_student_view(request):
+    """
+    Crea un nuevo estudiante y luego crea el registro de relación
+    en Students_Courses para asignarlo a una sección de Course.
+    """
+
+    course_types = Course.COURSE_TYPE_CHOICES
+
+    latest_school_year = School_year.objects.order_by(
+        '-year').only('pk').first()
+    latest_school_year_id = str(
+        latest_school_year.pk) if latest_school_year else ''
+
+    current_form = StudentCreationForm()
+
+    if request.method == 'POST':
+        current_form = StudentCreationForm(request.POST)
+        course_id = request.POST.get('course_id')
+
+        if current_form.is_valid():
+
+            if not course_id:
+                messages.error(
+                    request, "Error: Debe seleccionar una sección de curso (Tipo, Nivel, Sección) para asignar al estudiante.")
+            else:
+                try:
+                    target_course = Course.objects.get(pk=course_id)
+                except Course.DoesNotExist:
+                    messages.error(
+                        request, "Error: La sección de curso seleccionada no es válida.")
+                else:
+                    # 1. CREAR ESTUDIANTE (Tabla Students)
+                    new_student = current_form.save()
+
+                    # 2. CREAR LA RELACIÓN (Tabla Students_Courses)
+                    # ✅ LÓGICA CLAVE: Usa el objeto Course y el estudiante recién creado.
+                    Students_Courses.objects.create(
+                        student=new_student,
+                        course_section=target_course
+                    )
+
+                    messages.success(
+                        request, f"Estudiante '{new_student.Name}' creado y asignado a {target_course.Section} exitosamente.")
+
+                    return redirect('create_and_assign_student')
+
+        else:
+            messages.error(
+                request, "Error en los datos del estudiante. Revise el Nombre y Email.")
+
+    context = {
+        'title': 'Crear Estudiante y Asignar Clase',
+        'form': current_form,
+        'course_types': course_types,
+        'current_school_year_id': latest_school_year_id,
+        'selected_course_id': request.POST.get('course_id', ''),
+    }
+    return render(request, "adminage/create_and_assign_student.html", context)

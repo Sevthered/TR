@@ -22,11 +22,31 @@ class Students(models.Model):
         return f"{self.Name}"
 
 
+class Students_Courses(models.Model):
+    student = models.ForeignKey(
+        'Students', on_delete=models.CASCADE)
+    course_section = models.ForeignKey(
+        'Course',
+        # Si el Course se elimina, el estudiante queda sin Course.
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Sección de Curso Asignada"
+    )
+
+    class Meta:
+        unique_together = ('student', 'course_section')
+
+    def __str__(self):
+        return f"{self.student.Name}"
+
+
 class Profile(models.Model):
     USER_ROLES = [
         ('professor', 'professor'),
         ('student', 'student'),
         ('tutor', 'legal_tutor'),
+        ('administrator', 'administrator'),
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     role = models.CharField(max_length=20, choices=USER_ROLES)
@@ -67,8 +87,7 @@ class Subjects_Courses(models.Model):
     teacher = models.ForeignKey('Teachers', on_delete=models.CASCADE)
     course = models.ForeignKey('Course', on_delete=models.CASCADE)
     trimester = models.ForeignKey('Trimester', on_delete=models.CASCADE)
-    school_year = models.ForeignKey('School_year', on_delete=models.CASCADE)
-    students = models.ManyToManyField('Students')
+    assigned_course_sections = models.ManyToManyField('Students_Courses')
 
     def __str__(self):
         return f"{self.subject} - {self.teacher} ({self.course})"
