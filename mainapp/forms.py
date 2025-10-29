@@ -8,16 +8,40 @@ class CSVImportForm(forms.Form):
 
 
 class GradeForm(forms.ModelForm):
-    # Formulario basado en el modelo Grade para crear o editar calificaciones.
     class Meta:
         model = Grade
-        # Define los campos del modelo Grade que se expondrán al usuario.
-        fields = ['subject',
-                  'trimester', 'school_year', 'grade_type', 'grade_type_number', 'grade', 'comments']
+        # Orden corregido: school_year debe ir antes de trimester
+        fields = ['student', 'school_year', 'trimester', 'subject',
+                  'grade_type', 'grade_type_number', 'grade', 'comments']
+
         widgets = {
-            # Personaliza el widget de comentarios como un área de texto de 3 filas.
+            'student': forms.HiddenInput(),
             'comments': forms.Textarea(attrs={'rows': 3}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # 1. Ordenar el año escolar (más reciente primero)
+        self.fields['school_year'].queryset = School_year.objects.all().order_by(
+            '-year')
+
+        # 2. VACIAR EL QUERYSET DEL TRIMESTRE EN MODO CREACIÓN
+        # Si NO estamos editando una instancia existente:
+        if not self.instance or not self.instance.pk:
+
+            # Fuerza el queryset del trimestre a estar vacío.
+            self.fields['trimester'].queryset = Trimester.objects.none()
+
+            # Etiqueta y deshabilitación visual.
+            self.fields['trimester'].empty_label = "Seleccione un año escolar"
+            self.fields['trimester'].widget.attrs['disabled'] = True
+
+        # 3. (Opcional) Limitar el queryset en Edición
+        elif self.instance.school_year:
+            self.fields['trimester'].queryset = Trimester.objects.filter(
+                school_year=self.instance.school_year
+            ).order_by('Name')
 
 
 class AusenciaEditForm(forms.ModelForm):
@@ -36,7 +60,7 @@ class AusenciaForm(forms.ModelForm):
 
     # Campo extra (no existe en el modelo Ausencias) para seleccionar varios estudiantes a la vez.
     students = forms.ModelMultipleChoiceField(
-        # Inicialmente vacío, se rellena en __init__.
+        # Inicialmente vacío, se rellena con el QuerySet correcto en __init__.
         queryset=Students.objects.none(),
         widget=forms.SelectMultiple(attrs={'size': 6}),
         required=True,
@@ -51,8 +75,7 @@ class AusenciaForm(forms.ModelForm):
 
     class Meta:
         model = Ausencias
-        # Se excluye el campo 'student' (clave foránea) porque se maneja el campo 'students' (plural)
-        # para aplicar la misma incidencia a varios estudiantes en la vista.
+        # Se excluye la clave foránea 'student' del modelo original.
         fields = ['subject', 'trimester', 'school_year', 'Tipo']
 
     def __init__(self, *args, course=None, **kwargs):
@@ -69,10 +92,13 @@ class AusenciaForm(forms.ModelForm):
                     course = None
 
         if course is not None:
-            # Filtra el QuerySet de estudiantes para mostrar solo los que pertenecen a este curso.
+            # CORRECCIÓN DEL FILTRO DE ESTUDIANTES:
+            # Se usa students_courses__course_section para ir de Students -> Students_Courses -> Course.
             self.fields['students'].queryset = Students.objects.filter(
-                subjects_courses__course=course).distinct().order_by('Name')
+                students_courses__course_section=course).distinct().order_by('Name')
+
             # Filtra las asignaturas para mostrar solo las que se imparten en este curso.
+            # Subjects.subjects_courses es la relación inversa de la FK 'subject' en Subjects_Courses.
             self.fields['subject'].queryset = Subjects.objects.filter(
                 subjects_courses__course=course).distinct()
 

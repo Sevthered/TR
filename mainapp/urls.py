@@ -3,13 +3,21 @@ from . import views
 from .views import create_school_year_view, create_courses_sections_view, adminage_dashboard_view, assign_subjects_view, load_course_sections, create_and_assign_student_view
 
 urlpatterns = [
+    path('reassign-students/', views.reassign_students, name='reassign_students'),
+
+    # Endpoints AJAX
+    path('ajax/get-course-numbers/', views.ajax_get_course_numbers,
+         name='ajax_get_course_numbers'),
+    path('ajax/get-course-sections/', views.ajax_get_course_sections,
+         name='ajax_get_course_sections'),
+    path('ajax/get-students/', views.ajax_get_students, name='ajax_get_students'),
+    path('ajax/get-destination-courses/', views.ajax_get_destination_courses,
+         name='ajax_get_destination_courses'),
     path('adminage/create-student-class/', create_and_assign_student_view,
          name='create_and_assign_student'),
 
     # Mantén la URL de AJAX
-
-    # Mantén la URL de AJAX
-    path('ajax/load-sections/', load_course_sections,
+    path('ajax/load-sections/', views.load_course_sections,
          name='load_course_sections'),
     path('adminage/assign-subjects/',
          assign_subjects_view, name='assign_subjects'),
@@ -30,13 +38,15 @@ urlpatterns = [
     path('', views.loginPage, name='login'),
     path('logout/', views.logoutUser, name='logout'),
     path('student/', views.student_detail, name='student_dashboard'),
-    path('class/<int:subject_course_id>/download/',
+    path('download/class-list/<int:course_id>/',
          views.download_class_list, name='download_class_list'),
     path('tutor/', views.tutor_dashboard, name='tutor_dashboard'),
     path('student/<int:student_id>/grade/new/',
          views.create_edit_grade, name='grade_create'),
     path('student/edit/grade/<int:grade_id>/',
          views.create_edit_grade, name='grade_edit'),
+    path('ajax/load-trimesters/', views.load_trimesters,
+         name='ajax_load_trimesters'),
     path('student/<int:student_id>/ausencia/new/',
          views.create_edit_ausencia, name='ausencia_create'),
     path('student/edit/ausencia/<int:ausencia_id>/',

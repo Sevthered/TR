@@ -1,5 +1,10 @@
+from .models import (
+    School_year, Course, Students, Students_Courses
+)
+from django.shortcuts import render, redirect
 from django.http import JsonResponse
 import profile
+from django.db import transaction
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
@@ -14,7 +19,7 @@ from .forms import GradeForm, AusenciaForm, AusenciaEditForm, SchoolYearForm, Co
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
-from django.forms import formset_factory
+from django.forms import formset_factory, ModelChoiceField
 from django.http import Http404
 from django.urls import reverse
 # Create your views here.
@@ -147,11 +152,33 @@ def teacher_dashboard(request):
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
     else:
-        # Recupera todos los datos necesarios para el dashboard: estudiantes, calificaciones, ausencias y cursos.
+        # Recupera todos los datos necesarios para el dashboard: estudiantes, calificaciones, ausencias.
         all_students = Students.objects.all().order_by('Name')
         all_grades = Grade.objects.all()
         all_ausencias = Ausencias.objects.all()
-        all_courses = Course.objects.all()
+
+        # Obtiene todos los años escolares disponibles, ordenados descendentemente.
+        all_school_years = School_year.objects.all().order_by('-year')
+
+        # Obtiene el año escolar seleccionado del GET parameter, o usa el más reciente por defecto.
+        selected_school_year = request.GET.get('school_year')
+
+        if selected_school_year:
+            try:
+                # Intenta obtener el año escolar específico
+                school_year = School_year.objects.get(
+                    SchoolYearID=selected_school_year)
+                all_courses = Course.objects.filter(school_year=school_year)
+            except School_year.DoesNotExist:
+                # Si no existe, usa el más reciente
+                school_year = all_school_years.first()
+                all_courses = Course.objects.filter(
+                    school_year=school_year) if school_year else Course.objects.none()
+        else:
+            # Por defecto, obtiene el año escolar más reciente
+            school_year = all_school_years.first()
+            all_courses = Course.objects.filter(
+                school_year=school_year) if school_year else Course.objects.none()
 
     # Ordena la lista de cursos en Python utilizando la función sort_key_section.
     sorted_courses = sorted(all_courses, key=sort_key_section)
@@ -170,7 +197,7 @@ def teacher_dashboard(request):
         elif course.Tipo == "IB":
             ib_courses.append(course)
 
-    # Prepara el contexto para la plantilla, incluyendo los cursos clasificados.
+    # Prepara el contexto para la plantilla, incluyendo los cursos clasificados y los años escolares.
     context = {
         "students": all_students,
         "grades": all_grades,
@@ -179,6 +206,8 @@ def teacher_dashboard(request):
         'eso_courses': eso_courses,
         'bachillerato_courses': bachillerato_courses,
         'ib_courses': ib_courses,
+        'school_years': all_school_years,
+        'selected_school_year': school_year,
     }
     # Renderiza la plantilla del panel de control del profesor.
     return render(request, "mainapp/teacher_dashboard.html", context)
@@ -237,30 +266,25 @@ def section_courses(request, section):
 
 @login_required
 def class_dashboard(request, course_id):
-    # Requiere que el usuario esté autenticado.
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede ver el dashboard de la clase.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Course usando el course_id de la URL; si no existe, devuelve 404.
     course = get_object_or_404(Course, CourseID=course_id)
 
     # Obtiene todas las instancias de Subjects_Courses relacionadas con este Course.
     subjects_courses = course.subjects_courses_set.all()
 
-    # Obtiene una lista distinta de todos los estudiantes inscritos en este curso, ordenados por nombre.
+    # CORRECCIÓN APLICADA AQUÍ:
+    # Filtra usando students_courses__course_section (Students -> Students_Courses -> Course).
     students = Students.objects.filter(
-        subjects_courses__course=course).distinct().order_by('Name')
+        students_courses__course_section=course).distinct().order_by('Name')
 
-    # Maneja la creación de ausencias cuando se envía el formulario (POST).
     if request.method == 'POST':
-        # Instancia el formulario de ausencia (AusenciaForm) con los datos POST y el objeto Course.
         form = AusenciaForm(request.POST, course=course)
 
         if form.is_valid():
-            # Extrae los datos limpios del formulario. 'students_selected' es una lista de estudiantes.
             students_selected = form.cleaned_data.get('students')
             subject = form.cleaned_data.get('subject')
             school_year = form.cleaned_data.get('school_year')
@@ -269,9 +293,7 @@ def class_dashboard(request, course_id):
             date_time = form.cleaned_data.get('date_time')
 
             created = 0
-            # Itera sobre cada estudiante seleccionado para crear una Ausencia individual.
             for s in students_selected:
-                # Crea la instancia de Ausencias, asignando la fecha si fue proporcionada.
                 if date_time:
                     a = Ausencias(student=s, subject=subject,
                                   trimester=trimester, Tipo=tipo, date_time=date_time, school_year=school_year)
@@ -279,87 +301,77 @@ def class_dashboard(request, course_id):
                     a = Ausencias(student=s, subject=subject,
                                   trimester=trimester, Tipo=tipo, school_year=school_year)
                 try:
-                    # Intenta guardar la ausencia en la base de datos.
                     a.save()
                     created += 1
                 except Exception:
-                    # Ignora errores (como duplicados o validación) y continúa con el siguiente estudiante.
                     continue
 
-            # Muestra un mensaje de éxito con el contador de ausencias creadas.
             if created:
                 messages.success(
                     request, f'Ausencias creadas para {created} estudiante(s).')
             else:
                 messages.error(
                     request, 'No se creó ninguna ausencia (posibles duplicados).')
-            # Redirecciona para evitar el reenvío del formulario.
             return redirect('class_dashboard', course_id=course.CourseID)
         else:
-            # Si el formulario no es válido, muestra un mensaje de error.
             messages.error(request, 'Errores en el formulario de ausencia.')
     else:
-        # Petición GET: Instancia el formulario vacío (o con valores por defecto) para mostrarlo.
         form = AusenciaForm(course=course)
 
-    # Prepara el contexto para la plantilla del dashboard.
     context = {
         "course": course,
         "subjects_courses": subjects_courses,
         "students": students,
         "ausencia_form": form,
     }
-    # Renderiza el dashboard de la clase.
     return render(request, "mainapp/class_dashboard.html", context)
 
 
 @login_required
-def download_class_list(request, subject_course_id):
+def download_class_list(request, course_id):
     # Requiere autenticación.
     # Verifica que el usuario tenga el rol 'professor'.
     if request.user.profile.role != 'professor':
         return HttpResponse("Acceso denegado.", status=403)
 
-    # El ID recibido se utiliza para buscar el objeto Subjects_Courses a través del Course ID.
-    course_id_received = subject_course_id
+    # 1. Recuperamos el objeto Course principal (usando get_object_or_404 para robustez).
+    course = get_object_or_404(Course, CourseID=course_id)
 
-    # Busca la primera instancia de Subjects_Courses asociada al CourseID.
-    subject_course = Subjects_Courses.objects.filter(
-        course__CourseID=course_id_received
-    ).first()
+    # Intentamos obtener una instancia de Subjects_Courses para obtener el nombre del curso,
+    # aunque no usaremos esta instancia para filtrar a los estudiantes.
+    subject_course = Subjects_Courses.objects.filter(course=course).first()
 
+    # Si no hay ninguna asignatura asignada, aún podemos nombrar el archivo.
     if not subject_course:
-        return HttpResponse("No se encontró una clase asociada a este curso.", status=404)
+        pass
 
     # Configura la respuesta HTTP para descargar un archivo CSV.
     response = HttpResponse(content_type='text/csv')
 
-    # Genera el nombre del archivo CSV basado en el tipo y sección del curso (e.g., 'Eso1A_import_template.csv').
-    filename = f"{subject_course.course.Tipo}{subject_course.course.Section}_import_template.csv"
+    # Genera el nombre del archivo CSV basado en el Tipo y Section del Course.
+    filename = f"{course.Tipo}{course.Section}_import_template.csv"
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
     # Inicializa el escritor CSV.
     writer = csv.writer(response)
 
-    # Escribe la fila de encabezado que define el formato de importación esperado (para notas).
+    # Escribe la fila de encabezado.
     writer.writerow(['Nombre_Estudiante', 'Asignatura', 'Trimestre',
                     'Año_Escolar', 'Nota', 'Tipo_Nota', 'Numero_Tipo_Nota', 'Comentarios'])
 
-    # Obtiene la lista de estudiantes directamente de la relación en Subjects_Courses, ordenados por nombre.
-    students = subject_course.students.all().order_by('Name')
-
-    # Obtiene todas las asignaturas asociadas al curso (aunque no se usan en la plantilla, puede ser informativo).
-    subjects = Subjects.objects.filter(
-        subjects_courses__course=subject_course.course
+    # *** FILTRADO CORREGIDO PARA OBTENER TODOS LOS ESTUDIANTES DE LA CLASE ***
+    # Se filtra el modelo Students por la relación Students -> Students_Courses -> Course.
+    students = Students.objects.filter(
+        students_courses__course_section=course
     ).distinct().order_by('Name')
 
     # Calcula el string del año escolar actual (e.g., '2025-2026') para prellenar la plantilla.
     current_year = timezone.now().year
     school_year_str = f"{current_year}-{current_year + 1}"
 
-    # Itera sobre los estudiantes para crear una fila de plantilla para cada uno.
+    # Itera sobre TODOS los estudiantes encontrados.
     for student in students:
-        # Escribe la fila con el nombre del estudiante y valores por defecto para el resto de columnas.
+        # Escribe la fila con el nombre del estudiante y valores por defecto.
         writer.writerow([
             student.Name,  # Nombre_Estudiante
             '',  # Asignatura (vacío)
@@ -384,26 +396,70 @@ def student_dashboard_content(request, student_id):
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Students usando el student_id de la URL; si no existe, devuelve 404.
+    # Recupera el objeto Students usando el student_id de la URL.
     student = get_object_or_404(Students, StudentID=student_id)
 
-    # Consulta todas las calificaciones y ausencias del estudiante, ordenando estas últimas por fecha.
-    grades = Grade.objects.filter(student=student)
-    ausensias = Ausencias.objects.filter(
-        student=student).order_by('-date_time')
+    # --- INICIO DE LA LÓGICA DE FILTROS ---
 
-    # Verifica si se pasó un 'course' ID como parámetro GET para permitir un enlace de "volver al curso".
+    # 1. Obtener los IDs de los filtros de los parámetros GET de la URL
+    selected_year_id = request.GET.get('school_year_id')
+    selected_trimester_id = request.GET.get('trimester_id')
+
+    # 2. Empezar con los QuerySets base
+    grades_qs = Grade.objects.filter(student=student)
+    ausensias_qs = Ausencias.objects.filter(student=student)
+
+    # 3. Preparar las opciones para los desplegables
+    all_school_years = School_year.objects.all().order_by('-year')
+    available_trimesters = Trimester.objects.none()  # Vacío por defecto
+
+    # 4. Aplicar filtro de Año Escolar (si se seleccionó)
+    if selected_year_id:
+        try:
+            # Convertir a INT para seguridad y filtrado
+            selected_year_id = int(selected_year_id)
+            grades_qs = grades_qs.filter(school_year_id=selected_year_id)
+            ausensias_qs = ausensias_qs.filter(school_year_id=selected_year_id)
+
+            # Poblar el desplegable de trimestres SOLO para ese año
+            available_trimesters = Trimester.objects.filter(
+                school_year_id=selected_year_id).order_by('Name')
+        except (ValueError, TypeError):
+            selected_year_id = None  # Ignorar si el ID no es un número
+
+    # 5. Aplicar filtro de Trimestre (si se seleccionó)
+    if selected_trimester_id:
+        try:
+            # Convertir a INT
+            selected_trimester_id = int(selected_trimester_id)
+            grades_qs = grades_qs.filter(trimester_id=selected_trimester_id)
+            ausensias_qs = ausensias_qs.filter(
+                trimester_id=selected_trimester_id)
+        except (ValueError, TypeError):
+            selected_trimester_id = None  # Ignorar si no es un número
+
+    # --- FIN DE LA LÓGICA DE FILTROS ---
+
+    # Verifica si se pasó un 'course' ID como parámetro GET.
     return_course = request.GET.get('course')
 
     # Prepara el contexto para la plantilla.
     context = {
         "student": student,
-        "grades": grades,
-        "ausencias": ausensias,
-        "is_tutor": False,  # Indica que esta no es la vista de tutor.
-        "return_course": return_course,  # Pasa el ID del curso de retorno.
+        # Pasa el QuerySet filtrado
+        "grades": grades_qs.order_by('trimester__Name'),
+        # Pasa el QuerySet filtrado
+        "ausencias": ausensias_qs.order_by('-date_time'),
+        "is_tutor": False,
+        "return_course": return_course,
+
+        # --- Pasa el contexto de los filtros a la plantilla ---
+        "all_school_years": all_school_years,
+        "available_trimesters": available_trimesters,
+        "selected_year_id": selected_year_id,
+        "selected_trimester_id": selected_trimester_id,
     }
-    # Renderiza el contenido del dashboard del estudiante (generalmente para ser incrustado en otra página).
+    # Renderiza el contenido del dashboard del estudiante.
     return render(request, "mainapp/student_dashboard_content.html", context)
 
 
@@ -459,29 +515,49 @@ def grades_csv(request, student_id=None):
     grades = Grade.objects.none()  # Inicializa un QuerySet vacío.
     filename = "student_data.csv"
 
+    # --- OBTENER FILTROS DE LA URL ---
+    selected_year_id = request.GET.get('school_year_id')
+    selected_trimester_id = request.GET.get('trimester_id')
+
     if profile.role == "student" and profile.student:
         # Estudiante: filtra solo sus propias notas.
         student = profile.student
-        grades = Grade.objects.filter(student=student)
+        grades = Grade.objects.filter(student=student)  # QuerySet base
         filename = f"{student.Name}_notas.csv"
     elif profile.role == "tutor":
         # Tutor: filtra las notas de todos sus hijos.
         children = list(profile.children.all())
-        grades = Grade.objects.filter(student__in=children)
+        grades = Grade.objects.filter(student__in=children)  # QuerySet base
         filename = f"{request.user.username}_notas.csv"
     elif profile.role == "professor":
         if student_id:
             # Profesor (con ID de estudiante): filtra las notas de un estudiante específico.
             student = get_object_or_404(Students, pk=student_id)
-            grades = Grade.objects.filter(student=student)
+            grades = Grade.objects.filter(student=student)  # QuerySet base
             filename = f"{student.Name}_notas.csv"
         else:
             # Profesor (sin ID): obtiene todas las notas de la base de datos.
-            grades = Grade.objects.all()
+            grades = Grade.objects.all()  # QuerySet base
             filename = "all_grades.csv"
     else:
         # Acceso denegado para cualquier otro rol.
         return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
+
+    # --- APLICAR FILTROS AL QUERYSET BASE ---
+    if selected_year_id:
+        try:
+            grades = grades.filter(school_year_id=int(selected_year_id))
+        except (ValueError, TypeError):
+            pass  # Ignorar filtro inválido
+
+    if selected_trimester_id:
+        try:
+            grades = grades.filter(trimester_id=int(selected_trimester_id))
+            # Opcional: Modificar el nombre del archivo si se filtra por trimestre
+            trim_obj = Trimester.objects.get(pk=int(selected_trimester_id))
+            filename = filename.replace(".csv", f"_T{trim_obj.Name}.csv")
+        except (ValueError, TypeError, Trimester.DoesNotExist):
+            pass  # Ignorar filtro inválido
 
     # Configura la respuesta HTTP para la descarga CSV.
     response = HttpResponse(content_type='text/csv')
@@ -492,7 +568,7 @@ def grades_csv(request, student_id=None):
     writer.writerow(
         ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero tipo de Nota', 'Comentario'])
 
-    # Itera sobre las notas obtenidas y escribe una fila por cada una.
+    # Itera sobre las notas (ya filtradas) y escribe una fila por cada una.
     for grade in grades:
         student = grade.student
         student_name = student.Name
@@ -525,9 +601,10 @@ def class_grades_download(request, course_id):
     # Recupera el objeto Course.
     course = get_object_or_404(Course, CourseID=course_id)
 
-    # Obtiene todos los estudiantes asociados a este curso.
+    # CORRECCIÓN APLICADA AQUÍ:
+    # Se obtiene a los estudiantes filtrando por la relación Students -> Students_Courses -> Course.
     students_in_course = Students.objects.filter(
-        subjects_courses__course=course).distinct()
+        students_courses__course_section=course).distinct()
 
     # Obtiene las asignaturas, trimestres, años escolares y tipos de nota que *existen* en las notas de estos estudiantes.
     subjects_in_course = Subjects.objects.filter(
@@ -565,8 +642,8 @@ def class_grades_download(request, course_id):
         if selected_subject_id:
             subject = get_object_or_404(Subjects, pk=selected_subject_id)
             filename_parts.append(subject.Name)
-        # (Se añaden más partes al nombre del archivo si se usaron más filtros...)
-        # ... (código de generación de filename omitido para brevedad) ...
+        # ... (continúa con la lógica de generación de filename) ...
+        # Aquí se necesita completar la lógica original de filename:
         filename = "_".join(filename_parts) + "_grades.csv"
 
         # Genera el CSV y la respuesta de descarga.
@@ -574,14 +651,23 @@ def class_grades_download(request, course_id):
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         writer = csv.writer(response)
 
-        # Escribe el encabezado CSV (Nota: faltaría 'Numero tipo de Nota' si se usa en otras vistas).
+        # Escribe el encabezado CSV
         writer.writerow(
-            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Comentario'])
+            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero_Tipo_Nota', 'Comentario'])
 
         # Itera y escribe las notas filtradas.
         for grade in grades:
-            # (Código para escribir la fila omitido para brevedad)
-            pass
+            writer.writerow([
+                grade.student.Name,
+                grade.subject.Name,
+                grade.trimester.Name,
+                grade.school_year.year,
+                grade.grade,
+                grade.grade_type,
+                grade.grade_type_number,
+                grade.comments
+            ])
+
         return response
 
     # Petición GET: Muestra el formulario de filtrado para que el profesor elija las opciones.
@@ -598,8 +684,16 @@ def class_grades_download(request, course_id):
 
 @login_required
 def create_edit_grade(request, grade_id=None, student_id=None):
-    # Vista para crear una nota nueva o editar una existente.
-    profile = request.user.profile
+    """
+    Vista para crear una nota nueva o editar una existente.
+    Incluye lógica para pre-seleccionar el estudiante y el año escolar más reciente.
+    """
+    # Asumo que Profile se relaciona con User.
+    try:
+        profile = request.user.profile
+    except User.profile.RelatedObjectDoesNotExist:
+        # Manejar el caso si el usuario no tiene perfil (ajusta esto según tu app)
+        return render(request, "error.html", {"message": "Usuario sin perfil asociado."})
 
     # Restricción de rol: solo el 'professor' puede acceder.
     if profile.role != 'professor':
@@ -607,15 +701,28 @@ def create_edit_grade(request, grade_id=None, student_id=None):
 
     student_instance = None
     grade_instance = None
+    initial_data = {}
+
+    # 1. Obtener el año escolar más reciente
+    latest_year = School_year.objects.all().order_by('-year').first()
 
     # Determina si es edición o creación y obtiene las instancias necesarias.
     if grade_id:
         # Edición: recupera la nota y el estudiante asociado.
         grade_instance = get_object_or_404(Grade, id=grade_id)
         student_instance = grade_instance.student
+        # Fija el estudiante actual en el initial_data para el campo oculto
+        initial_data['student'] = student_instance.pk
     elif student_id:
         # Creación: recupera el estudiante al que se le va a asignar la nota.
         student_instance = get_object_or_404(Students, pk=student_id)
+        # Fija el estudiante en el initial_data para el campo oculto
+        initial_data['student'] = student_instance.pk
+
+        # 2. FIJAR AÑO RECIENTE COMO VALOR INICIAL (Solo en creación)
+        if latest_year:
+            # Esto selecciona el año más reciente en el desplegable
+            initial_data['school_year'] = latest_year.pk
 
     # Maneja la petición POST (envío del formulario de nota).
     if request.method == "POST":
@@ -623,22 +730,15 @@ def create_edit_grade(request, grade_id=None, student_id=None):
         form = GradeForm(request.POST, instance=grade_instance)
 
         if form.is_valid():
-            # Obtiene la instancia del modelo del formulario sin guardarla en la base de datos (commit=False).
-            g = form.save(commit=False)
+            # El campo 'student' se guarda automáticamente porque su valor viene en request.POST (HiddenInput)
+            g = form.save()
 
-        # Asigna el estudiante (solo es necesario si es una nota nueva, ya que en edición ya está asignado).
-        if not grade_id:
-            g.student = student_instance
-
-        # Guarda la instancia final en la base de datos (actualiza o crea).
-        g.save()
-
-        messages.success(request, "Grade saved successfully.")
-        # Redirecciona al dashboard del estudiante afectado.
-        return redirect('student_dashboard_content', student_id=student_instance.pk)
+            messages.success(request, "Grade saved successfully.")
+            # Redirecciona al dashboard del estudiante afectado.
+            return redirect('student_dashboard_content', student_id=student_instance.pk)
     else:
-        # Petición GET: Muestra el formulario, prellenado si es una edición.
-        form = GradeForm(instance=grade_instance)
+        # Petición GET: Muestra el formulario, prellenado con initial_data
+        form = GradeForm(instance=grade_instance, initial=initial_data)
 
     # Prepara el contexto para la plantilla del formulario.
     context = {
@@ -649,6 +749,30 @@ def create_edit_grade(request, grade_id=None, student_id=None):
     }
     # Renderiza el formulario de creación/edición de nota.
     return render(request, "mainapp/grade_form.html", context)
+
+
+# =================================================================
+# 2. VISTA AJAX: CARGAR TRIMESTRES
+# =================================================================
+
+def load_trimesters(request):
+    """
+    Retorna los trimestres de un año escolar dado como JSON para la llamada AJAX.
+    """
+    school_year_id = request.GET.get('school_year_id')
+
+    trimesters = Trimester.objects.filter(
+        school_year_id=school_year_id).order_by('Name')
+
+    trimester_list = [
+        # CAMBIO CLAVE: Usamos trimester.Name (el valor entero 1, 2, 3) como el texto a mostrar
+        {'id': trimester.pk,
+         'name': trimester.Name  # <-- Ahora devuelve 1, 2, o 3
+         }
+        for trimester in trimesters
+    ]
+
+    return JsonResponse({'trimesters': trimester_list})
 
 
 @login_required
@@ -1498,3 +1622,269 @@ def create_and_assign_student_view(request):
         'selected_course_id': request.POST.get('course_id', ''),
     }
     return render(request, "adminage/create_and_assign_student.html", context)
+
+
+def reassign_students(request):
+    """
+    Vista principal para reasignar estudiantes de una clase a otra
+    """
+    if request.method == 'POST':
+        # Procesar la reasignación
+        # Lista de "student_id:course_id"
+        assignments = request.POST.getlist('assignments')
+
+        success_count = 0
+        error_count = 0
+
+        for assignment in assignments:
+            if not assignment or assignment == ':':
+                continue
+
+            try:
+                student_id, new_course_id = assignment.split(':')
+                student = Students.objects.get(StudentID=student_id)
+                new_course = Course.objects.get(CourseID=new_course_id)
+
+                # Buscar el registro existente del estudiante
+                existing_assignment = Students_Courses.objects.filter(
+                    student=student
+                ).first()
+
+                if existing_assignment:
+                    # Actualizar la asignación existente
+                    existing_assignment.course_section = new_course
+                    existing_assignment.save()
+                else:
+                    # Crear nueva asignación si no existe
+                    Students_Courses.objects.create(
+                        student=student,
+                        course_section=new_course
+                    )
+
+                success_count += 1
+
+            except Exception as e:
+                error_count += 1
+                messages.error(
+                    request, f"Error al reasignar estudiante: {str(e)}")
+
+        if success_count > 0:
+            messages.success(
+                request, f"{success_count} estudiante(s) reasignado(s) correctamente.")
+        if error_count > 0:
+            messages.warning(
+                request, f"Hubo {error_count} error(es) durante la reasignación.")
+
+        return redirect('reassign_students')
+
+    # GET: Mostrar el formulario
+    school_years = School_year.objects.all().order_by('-year')
+    course_types = Course.COURSE_TYPE_CHOICES
+
+    context = {
+        'school_years': school_years,
+        'course_types': course_types,
+    }
+
+    return render(request, 'reassign_students.html', context)
+
+
+def ajax_get_course_numbers(request):
+    """
+    Endpoint AJAX para obtener los números de curso disponibles
+    según el año escolar y tipo seleccionados
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+
+    print(f"DEBUG - ajax_get_course_numbers called:")
+    print(f"  school_year_id: {school_year_id}")
+    print(f"  course_type: {course_type}")
+
+    if not school_year_id or not course_type:
+        return JsonResponse({'numbers': [], 'error': 'Faltan parámetros'})
+
+    try:
+        # Obtener todos los cursos que coinciden
+        courses = Course.objects.filter(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type
+        )
+
+        print(f"  Cursos encontrados: {courses.count()}")
+        for course in courses:
+            print(
+                f"    - CourseID: {course.CourseID}, Tipo: {course.Tipo}, Section: {course.Section}, SchoolYear: {course.school_year.year}")
+
+        # Extraer números únicos del campo Section
+        sections = courses.values_list('Section', flat=True)
+
+        # Intentar extraer el primer carácter numérico
+        numbers = set()
+        for section in sections:
+            if section:
+                # Extraer todos los dígitos del inicio de la cadena
+                num = ''
+                for char in section:
+                    if char.isdigit():
+                        num += char
+                    else:
+                        break
+                if num:
+                    numbers.add(num)
+
+        numbers_list = sorted(list(numbers))
+        print(f"  Números extraídos: {numbers_list}")
+
+        return JsonResponse({'numbers': numbers_list})
+
+    except Exception as e:
+        print(f"  ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'numbers': [], 'error': str(e)})
+
+
+def ajax_get_course_sections(request):
+    """
+    Endpoint AJAX para obtener las secciones (letras) disponibles
+    según el año, tipo y número de curso
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+
+    print(f"DEBUG - ajax_get_course_sections called:")
+    print(f"  school_year_id: {school_year_id}")
+    print(f"  course_type: {course_type}")
+    print(f"  course_number: {course_number}")
+
+    if not all([school_year_id, course_type, course_number]):
+        return JsonResponse({'sections': [], 'error': 'Faltan parámetros'})
+
+    try:
+        # Buscar secciones que empiecen con el número seleccionado
+        courses = Course.objects.filter(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section__startswith=course_number
+        )
+
+        print(f"  Cursos encontrados: {courses.count()}")
+
+        # Extraer las letras (todo lo que viene después del número)
+        sections = set()
+        for course in courses:
+            section = course.Section
+            print(f"    - Procesando: {section}")
+            if section:
+                # Saltar los dígitos iniciales y tomar el resto
+                letter_part = ''
+                skip_digits = True
+                for char in section:
+                    if skip_digits and char.isdigit():
+                        continue
+                    skip_digits = False
+                    letter_part += char
+
+                if letter_part:
+                    sections.add(letter_part)
+                    print(f"      Letra extraída: {letter_part}")
+
+        sections_list = sorted(list(sections))
+        print(f"  Secciones finales: {sections_list}")
+
+        return JsonResponse({'sections': sections_list})
+
+    except Exception as e:
+        print(f"  ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'sections': [], 'error': str(e)})
+
+
+def ajax_get_students(request):
+    """
+    Endpoint AJAX para obtener estudiantes de una clase específica
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+    section_letter = request.GET.get('section_letter')
+
+    print(f"DEBUG - ajax_get_students called:")
+    print(f"  school_year_id: {school_year_id}")
+    print(f"  course_type: {course_type}")
+    print(f"  course_number: {course_number}")
+    print(f"  section_letter: {section_letter}")
+
+    if not all([school_year_id, course_type, course_number, section_letter]):
+        return JsonResponse({'students': [], 'error': 'Faltan parámetros'})
+
+    # Construir el Section completo (ej: '1A')
+    section_full = f"{course_number}{section_letter}"
+    print(f"  Buscando curso con Section: {section_full}")
+
+    # Buscar el curso específico
+    try:
+        course = Course.objects.get(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section=section_full
+        )
+
+        print(f"  Curso encontrado: {course} (ID: {course.CourseID})")
+
+        # Obtener estudiantes asignados a este curso
+        student_courses = Students_Courses.objects.filter(
+            course_section=course
+        ).select_related('student')
+
+        print(f"  Estudiantes encontrados: {student_courses.count()}")
+
+        students = [
+            {
+                'id': sc.student.StudentID,
+                'name': sc.student.Name,
+                'email': sc.student.Email
+            }
+            for sc in student_courses
+        ]
+
+        return JsonResponse({'students': students, 'course_id': course.CourseID})
+
+    except Course.DoesNotExist:
+        print(f"  ERROR: Curso no encontrado")
+        return JsonResponse({'students': [], 'error': 'Curso no encontrado'})
+    except Exception as e:
+        print(f"  ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'students': [], 'error': str(e)})
+
+
+def ajax_get_destination_courses(request):
+    """
+    Endpoint AJAX para obtener el ID del curso destino
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+    section_letter = request.GET.get('section_letter')
+
+    if not all([school_year_id, course_type, course_number, section_letter]):
+        return JsonResponse({'course_id': None, 'error': 'Faltan parámetros'})
+
+    section_full = f"{course_number}{section_letter}"
+
+    try:
+        course = Course.objects.get(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section=section_full
+        )
+        return JsonResponse({'course_id': course.CourseID})
+    except Course.DoesNotExist:
+        return JsonResponse({'course_id': None, 'error': 'Curso no encontrado'})
+    except Exception as e:
+        return JsonResponse({'course_id': None, 'error': str(e)})

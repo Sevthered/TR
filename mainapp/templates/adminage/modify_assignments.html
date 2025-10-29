@@ -1,0 +1,170 @@
+<div class="container mt-4">
+    <h2 class="mb-4">🔄 Cambio de Clase de Estudiantes</h2>
+    
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <div class="card p-3 mb-4">
+        <form method="GET" id="filter-form">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    {{ filter_form.school_year.label_tag }}
+                    {{ filter_form.school_year }}
+                </div>
+                <div class="col-md-4">
+                    {{ filter_form.current_course.label_tag }}
+                    {{ filter_form.current_course }}
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Filtrar Estudiantes</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    {% if formset %}
+    <div class="card p-3">
+        <h3>Estudiantes Filtrados ({{ total_students }} encontrados)</h3>
+        <form method="POST">
+            {% csrf_token %}
+            {{ formset.management_form }}
+            
+            <table class="table table-striped table-bordered mt-3">
+                <thead>
+                    <tr>
+                        <th>Estudiante</th>
+                        <th>Clase Actual</th>
+                        <th>Año Destino</th>
+                        <th>Tipo Destino</th>
+                        <th>Clase Destino Final</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for form in formset %}
+                    <tr class="student-row">
+                        {{ form.students_courses_id }}
+                        
+                        <td>{{ form.student_name }}</td> 
+                        
+                        <td>{{ form.current_assignment_display }}</td>
+                        
+                        <td>
+                            {{ form.target_school_year.errors }}
+                            {{ form.target_school_year }}
+                        </td>
+
+                        <td>
+                            {{ form.target_tipo.errors }}
+                            {{ form.target_tipo }}
+                        </td>
+
+                        <td>
+                            {{ form.target_course_section.errors }}
+                            {{ form.target_course_section }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <button type="submit" class="btn btn-success mt-3">💾 Guardar Cambios de Clase</button>
+        </form>
+    </div>
+    {% elif selected_school_year_id %}
+    <p class="alert alert-info">No se encontraron estudiantes para los filtros seleccionados.</p>
+    {% endif %}
+
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script>
+    $(document).ready(function() {
+        var ajaxFilterUrl = "{% url 'ajax_load_courses_for_filter' %}";
+        var ajaxTargetUrl = "{% url 'ajax_load_target_courses' %}";
+
+        // --- A. Lógica para el FILTRO DE BUSQUEDA (current_course) ---
+        $('#id_school_year').change(function() {
+            var schoolYearId = $(this).val();
+            var currentCourseField = $('#id_current_course');
+            currentCourseField.empty().append('<option value="">---</option>');
+            
+            if (schoolYearId) {
+                $.ajax({
+                    url: ajaxFilterUrl,
+                    data: { 'school_year': schoolYearId },
+                    success: function (data) {
+                        $.each(data.courses, function (key, value) {
+                            currentCourseField.append($('<option></option>').attr('value', value.id).text(value.name));
+                        });
+                    }
+                });
+            }
+        });
+
+        // --- B. Lógica para los SELECTORES DEPENDIENTES DEL FORMSET ---
+        // Se aplica a cada fila (por clase .student-row)
+
+        function loadTargetCourses(row, schoolYearId, tipo) {
+            var targetCourseSelect = row.find('select[name$="-target_course_section"]');
+            targetCourseSelect.empty().append('<option value="">---</option>');
+
+            if (schoolYearId && tipo) {
+                $.ajax({
+                    url: ajaxTargetUrl,
+                    data: { 'school_year_id': schoolYearId, 'tipo': tipo },
+                    success: function (data) {
+                        var initialValue = targetCourseSelect.data('initial'); // Mantener el valor actual
+
+                        $.each(data.courses, function (key, value) {
+                            var option = $('<option></option>').attr('value', value.id).text(value.name);
+                            targetCourseSelect.append(option);
+                        });
+                        
+                        // Si hay un valor inicial, seleccionarlo.
+                        if (initialValue) {
+                            targetCourseSelect.val(initialValue);
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Inicializar y vincular eventos para cada fila
+        $('.student-row').each(function() {
+            var row = $(this);
+            var targetTipoSelect = row.find('select[name$="-target_tipo"]');
+            var targetSchoolYearInput = row.find('select[name$="-target_school_year"]');
+            var targetCourseSelect = row.find('select[name$="-target_course_section"]');
+            
+            // Guardar el valor inicial de target_course_section para el POST fallido/recarga
+            if(targetCourseSelect.val()){
+                 targetCourseSelect.data('initial', targetCourseSelect.val());
+            }
+
+            // Función de cambio central
+            function handleTargetChange() {
+                var schoolYearId = targetSchoolYearInput.val();
+                var tipo = targetTipoSelect.val();
+                loadTargetCourses(row, schoolYearId, tipo);
+            }
+
+            // Eventos de cambio en los selectores
+            targetSchoolYearInput.on('change', handleTargetChange);
+            targetTipoSelect.on('change', handleTargetChange);
+
+            // Cargar las opciones iniciales al cargar la página (si los campos ya tienen valores)
+            if (targetTipoSelect.val() || targetSchoolYearInput.val()) {
+                 handleTargetChange();
+            }
+        });
+        
+        // Ejecutar el filtro de curso actual en la carga inicial si hay un año seleccionado
+        if ($('#id_school_year').val()) {
+            $('#id_school_year').trigger('change');
+        }
+    });
+</script>

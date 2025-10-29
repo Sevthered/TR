@@ -15,6 +15,26 @@ Teacher Dashboard
   
     <h1 id="page-title" class="page-title">Listado de Cursos por Tipo</h1>
 
+    <!-- Filtro de Año Escolar -->
+    <div class="filter-section" style="margin-bottom: 2rem;">
+      <form method="get" class="filter-form" style="display: flex; gap: 1rem; align-items: center;">
+        <label for="school-year-select" style="font-weight: 600;">Año Escolar:</label>
+        <select 
+          id="school-year-select" 
+          name="school_year" 
+          onchange="this.form.submit()"
+          style="padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc;">
+          {% for sy in school_years %}
+            <option value="{{ sy.SchoolYearID }}" {% if sy.SchoolYearID == selected_school_year.SchoolYearID %}selected{% endif %}>
+              {{ sy.year }}
+            </option>
+          {% empty %}
+            <option value="">No hay años escolares disponibles</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+
     <div class="container grid grid-3">
       <div class="column">
         <h2>ESO</h2>

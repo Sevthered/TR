@@ -3,26 +3,105 @@
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock %}
+{% endblock styles %}
 
 {% block content %}
-    
-    <h2>
-        {% if is_edit %}
-            Editar Nota
-        {% else %}
-            Crear Nueva Nota
-        {% endif %}
-    </h2>
-
-    <form method="POST">
-        {% csrf_token %} {{ form.as_p }} 
-
-        <button type="submit" class="btn-edit">
+<div class="page-root">
+    <div class="page-surface" role="main">
+        
+        <h2>
             {% if is_edit %}
-                Actualizar Nota
+                📝 Editar Nota
             {% else %}
-                Guardar Nota
+                ➕ Crear Nota para {{ student.Name }}
             {% endif %}
-    </form>
+        </h2>
+
+        <form method="POST">
+            {% csrf_token %} 
+            
+            {{ form.as_p }} 
+
+            <button type="submit" class="btn btn-success">
+                {% if is_edit %}
+                    Actualizar Nota
+                {% else %}
+                    Guardar Nota
+                {% endif %}
+            </button>
+            <button type="button" class="btn btn-danger" onclick="window.history.back()" style="margin-left: 10px;">
+                Cancelar
+            </button>
+        </form>
+    </div>
+</div>
 {% endblock content %}
+
+{% block scripts %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+<script>
+    $(document).ready(function() {
+        // Obtenemos los selectores de los campos
+        var $schoolYearSelect = $('#id_school_year');
+        var $trimesterSelect = $('#id_trimester');
+        var url = "{% url 'ajax_load_trimesters' %}";
+        
+        // Función para cargar los trimestres vía AJAX
+        function loadTrimesters(schoolYearId, selectedTrimesterId) {
+            $trimesterSelect.prop('disabled', true);
+            
+            if (!schoolYearId) {
+                $trimesterSelect.html('<option value="">Seleccione un año escolar</option>');
+                return;
+            }
+
+            $trimesterSelect.html('<option value="">Cargando...</option>');
+
+            $.ajax({
+                url: url,
+                data: {
+                    'school_year_id': schoolYearId
+                },
+                dataType: 'json',
+                // Asegúrate de que la vista AJAX devuelva el número del trimestre (1, 2, 3) en el campo 'name'.
+                success: function(data) {
+                    $trimesterSelect.html('<option value="">---------</option>');
+                    
+                    $.each(data.trimesters, function(key, trimester) {
+                        var trimesterValue = trimester.id; 
+                        var isSelected = (trimesterValue == selectedTrimesterId) ? 'selected' : '';
+                        
+                        // ✅ Usa trimester.name (que ahora es 1, 2, o 3)
+                        $trimesterSelect.append(
+                            '<option value="' + trimesterValue + '" ' + isSelected + '>' + 'Trimestre ' + trimester.name + '</option>'
+                        );
+                    });
+                    
+                    $trimesterSelect.prop('disabled', false);
+                },
+                error: function() {
+                    console.error("Error en la llamada AJAX a load_trimesters.");
+                    $trimesterSelect.html('<option value="">Error al cargar trimestres</option>');
+                }
+            });
+        }
+        
+        // --- 1. Evento de Cambio ---
+        $schoolYearSelect.change(function() {
+            var schoolYearId = $(this).val();
+            loadTrimesters(schoolYearId, null); 
+        });
+        
+        // --- 2. Inicialización (al cargar la página) ---
+        var initialSchoolYearId = $schoolYearSelect.val();
+        
+        if (initialSchoolYearId) {
+            var initialTrimesterId = $trimesterSelect.val();
+            loadTrimesters(initialSchoolYearId, initialTrimesterId);
+        } else {
+             $trimesterSelect.html('<option value="">Seleccione un año escolar</option>').prop('disabled', true);
+        }
+    });
+</script>
+{% endblock scripts %}

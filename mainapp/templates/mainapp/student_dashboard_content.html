@@ -8,6 +8,46 @@
     --surface-padding-vertical: 28px;
     --surface-padding-horizontal: 20px;
   }
+
+  /* Este bloque de estilo es SÓLO para la maquetación (layout) del formulario de filtros.
+   Heredará todos los colores (fondo, texto, bordes) de tu 'global-styles.css'.
+  */
+  .filter-form {
+    display: flex;
+    flex-wrap: wrap; /* Permite que los filtros pasen a la siguiente línea en pantallas pequeñas */
+    gap: 15px; /* Espacio entre los elementos del filtro */
+    align-items: flex-end; /* Alinea los <select> y el enlace 'Limpiar' por la parte inferior */
+    margin-bottom: 20px;
+    padding: 15px;
+    /* Usamos los colores de tu CSS global */
+    background-color: #1e1e1e; /* Coincide con el fondo de tu input/select */
+    border: 1px solid #444; /* Coincide con el borde de tu input/select */
+    border-radius: 8px;
+  }
+  .filter-form .form-group {
+    display: flex;
+    flex-direction: column;
+  }
+  .filter-form label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: var(--muted-color); /* Usa tu variable de color 'muted' */
+  }
+
+  /* Sobrescribe el 'width: 100%' de tu CSS global SÓLO dentro del .filter-form 
+   para que los desplegables quepan uno al lado del otro.
+  */
+  .filter-form select {
+    width: auto; /* Permite que el select tome su ancho natural */
+    min-width: 200px; /* Un ancho mínimo para que no se vea mal */
+    margin-bottom: 0; /* Anula el margen global dentro de este formulario */
+  }
+
+  /* Ajusta la alineación vertical del enlace 'Limpiar' */
+  .filter-form a {
+    margin-bottom: 8px; 
+  }
 </style>
 {% endblock styles %}
 
@@ -27,25 +67,58 @@
             {{ student.Name }}
         </h2>
         <p><strong>Email:</strong> {{ student.Email }}</p>
-                <h2>Notas</h2>
+        
+        <form method="get" action="" class="filter-form">
+            
+            <div class="form-group">
+                <label for="id_school_year">Año Escolar:</label>
+                <select name="school_year_id" id="id_school_year" onchange="this.form.submit()">
+                    <option value="">-- Todos los Años --</option>
+                    {% for year in all_school_years %}
+                        <option value="{{ year.pk }}" {% if year.pk == selected_year_id %}selected{% endif %}>
+                            {{ year.year }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="id_trimester">Trimestre:</label>
+                <select name="trimester_id" id="id_trimester" onchange="this.form.submit()" {% if not selected_year_id %}disabled{% endif %}>
+                    <option value="">-- Todos los Trimestres --</option>
+                    {% for trimester in available_trimesters %}
+                        <option value="{{ trimester.pk }}" {% if trimester.pk == selected_trimester_id %}selected{% endif %}>
+                            Trimestre {{ trimester.Name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <a href="?">Limpiar Filtros</a>
+        </form>
+        <h2>Notas</h2>
                 {% if user.is_authenticated and user.profile.role == 'professor' %}
                 <div style="margin-bottom: 15px;">
                     <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.pk %}'">
                         Crear Notas
                     </button>
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv_student' student_id=student.pk %}'" style="margin-left: 10px;">
+                    <button type="button" class="btn btn-primary" 
+                            onclick="window.location.href='{% url 'grades_csv_student' student_id=student.pk %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'" 
+                            style="margin-left: 10px;">
                         Descargar Notas CSV
                     </button>
                 </div>
                 {% elif user.is_authenticated and user.profile.role == 'student' %}
                 <div style="margin-bottom: 15px;">
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
+                    <button type="button" class="btn btn-primary" 
+                            onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
                         Descargar Mis Notas CSV
                     </button>
                 </div>
                 {% elif user.is_authenticated and user.profile.role == 'tutor' %}
                 <div style="margin-bottom: 15px;">
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
+                    <button type="button" class="btn btn-primary" 
+                            onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
                         Descargar Notas de Mis Hijos CSV
                     </button>
                 </div>
@@ -82,7 +155,7 @@
                         </tr>
                 {% empty %}
                     <tr>
-                        <td colspan="5" id="grades-note">No grades available.</td>
+                        <td colspan="5" id="grades-note">No hay notas disponibles para los filtros seleccionados.</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -127,7 +200,7 @@
                     </tr>
                 {% empty %}
                     <tr>
-                        <td colspan="4" id="absences-note">No absences recorded.</td>
+                        <td colspan="4" id="absences-note">No hay ausencias registradas para los filtros seleccionados.</td>
                     </tr>
                 {% endfor %}
             </tbody>

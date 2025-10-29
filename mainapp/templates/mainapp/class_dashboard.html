@@ -40,7 +40,7 @@ Class Dashboard
 
                 {% if user.is_authenticated and user.profile.role == 'professor' %}
                 <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button type="button" onclick="window.location.href='{% url 'download_class_list' subject_course_id=course.pk %}'" class="btn-download">
+                    <button type="button" onclick="window.location.href='{% url 'download_class_list' course_id=course.CourseID %}'" class="btn-download">
                         Lista de Clase
                     </button>
                     <button type="button" onclick="window.location.href='{% url 'class_grades_download' course_id=course.CourseID %}'" class="btn-download">
