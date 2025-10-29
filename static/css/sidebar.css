@@ -1,0 +1,211 @@
+/* static/css/sidebar.css
+   Full sidebar stylesheet with a root variable to control how close the sidebar sits to the navbar.
+   Change --sidebar-top-gap to move the sidebar closer or farther from the navbar (values in px, rem, etc).
+*/
+
+:root{
+  --sidebar-width: 220px;
+  --sidebar-radius: 12px;
+  --navbar-height: 64px;           /* set this to your real navbar height */
+  --sidebar-top-gap: 8px;          /* distance from navbar to top of sidebar; change this to control closeness */
+  --sidebar-padding-x: 14px;
+  --sidebar-padding-top: 16px;
+  --sidebar-bg-1: #0f1418;
+  --sidebar-bg-2: #0b0e11;
+  --sidebar-border: rgba(255,255,255,0.04);
+  --sidebar-muted: #9aa6b3;
+  --sidebar-accent: #7c5cff;
+  --ease: cubic-bezier(.2,.9,.2,1);
+  --page-gap: 18px;
+  --sidebar-bottom-gap: 12px;      /* breathing room above viewport bottom */
+  --sidebar-max-height: 700px;     /* maximum allowed height for the sidebar */
+}
+
+/* Ensure html/body fill the viewport and page-level vertical scroll is controlled */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden; /* prevent page-level vertical scrolling */
+}
+
+/* Container that holds sidebar + main must fit the viewport minus navbar */
+.bottom-block {
+  display: flex;
+  gap: var(--page-gap);
+  align-items: stretch;
+  min-height: calc(100vh - var(--navbar-height));
+  height: calc(100vh - var(--navbar-height));
+  padding: 0 var(--page-gap) var(--page-gap) var(--page-gap);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Sidebar: position sticky under navbar, top distance controlled by --sidebar-top-gap */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  box-sizing: border-box;
+
+  position: sticky;
+  top: calc(var(--navbar-height) + var(--sidebar-top-gap)); /* uses root variable to control closeness */
+
+  /* compute natural available height, then clamp with a max to avoid being too tall */
+  max-height: min(
+    calc(100vh - var(--navbar-height) - var(--sidebar-bottom-gap)),
+    var(--sidebar-max-height)
+  );
+
+  /* allow internal vertical scrolling if contents exceed allowed space */
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  padding: var(--sidebar-padding-top) var(--sidebar-padding-x);
+  background: linear-gradient(180deg, var(--sidebar-bg-1), var(--sidebar-bg-2));
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: 4px 0 18px rgba(0,0,0,0.35);
+  border-radius: var(--sidebar-radius);
+  color: #eaf1ff;
+}
+
+/* Make sure sidebar stretches to fill its container height visually */
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+}
+
+/* Section card */
+.section {
+  width: 100%;
+  max-width: calc(var(--sidebar-width) - 28px);
+  margin: 0 auto;
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.03);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* Header button */
+.section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(255,255,255,0.006), transparent);
+  border: none;
+  outline: none;
+  color: inherit;
+  position: relative;
+  transition: transform 160ms var(--ease);
+}
+.section-header:hover { transform: translateY(-1px); }
+
+/* Title */
+.section-title { font-weight:700; font-size:13px; padding-right:22px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* chevron */
+.chev { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; color: var(--sidebar-muted); transition: transform 200ms var(--ease), color 160ms linear; }
+.section.open .chev { transform: translateY(-50%) rotate(90deg); color: var(--sidebar-accent); }
+
+/* Collapsible body */
+.section-body { height: 0; overflow: hidden; transition: height 280ms var(--ease); }
+.section-content { padding: 8px 6px; display:flex; flex-direction:column; gap:6px; box-sizing:border-box; }
+
+/* Items */
+.item { display:block; padding:10px 12px; border-radius:8px; color: var(--sidebar-muted); text-decoration:none; font-weight:700; font-size:13px; transition: transform 180ms var(--ease), background 180ms var(--ease), color 140ms linear; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.item:hover { background: rgba(255,255,255,0.02); color: #f5fbff; transform: translateX(6px); }
+
+.empty { color: var(--sidebar-muted); font-size:13px; padding:8px 12px; }
+.sidebar-footer { margin-top:12px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.02); color:var(--sidebar-muted); font-size:12px; text-align:center; }
+
+/* Main area takes the rest of the space and scrolls internally */
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: calc(100vh - var(--navbar-height));
+  overflow-y: auto;
+  padding: 18px;
+}
+
+/* Reduce spacing on short viewports so sidebar can still reach bottom without overflow */
+@media (max-height: 720px) {
+  :root { --sidebar-bottom-gap: 8px; --page-gap: 12px; }
+  .sidebar { padding: 10px; }
+  .section-header { padding: 8px 10px; }
+  .section-content .item { padding: 8px 10px; font-size: 13px; }
+}
+
+/* Mobile: stack layout */
+@media (max-width: 880px) {
+  :root { --sidebar-width: 100%; }
+  .bottom-block { flex-direction: column; gap: 12px; padding: 8px; }
+  .sidebar { position: relative; top: 0; width: 100%; max-height: none; border-radius: var(--sidebar-radius); box-shadow: none; padding: 12px; }
+  .section { max-width: 100%; margin: 6px 0; }
+  .main { height: auto; min-height: auto; padding: 12px; margin-top: 8px; }
+}
+:root{
+  --navbar-height: 80px;           /* actual navbar height */
+  --sidebar-top-gap: 12px;         /* distance between navbar bottom and sidebar top */
+  --sidebar-bottom-gap: 12px;      /* breathing room above viewport bottom */
+  --sidebar-max-height: 0px;     /* set to none or a large value to disable cap */
+  --sidebar-width: 220px;
+  --sidebar-padding: 16px;
+  --sidebar-bg: linear-gradient(180deg,#0f1418,#0b0e11);
+}
+
+/* Layout container must be full-height elsewhere (body padding accounts for fixed navbar) */
+html,body{height:100%;margin:0;padding:0;box-sizing:border-box;}
+
+/* Sidebar layout */
+.sidebar{
+  width: var(--sidebar-width);
+  box-sizing: border-box;
+  position: sticky;
+  top: calc(var(--navbar-height) + var(--sidebar-top-gap));
+  align-self:flex-start;
+  padding: var(--sidebar-padding);
+  background: var(--sidebar-bg);
+  border-right: 1px solid rgba(255,255,255,0.03);
+  color: #eaf1ff;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* precise height calculation: available space from below navbar to viewport bottom */
+  /* primary rule (modern browsers): use clamp to choose between available and max cap */
+  max-height: clamp(
+    0px,
+    calc(100vh - (var(--navbar-height) + var(--sidebar-top-gap) + var(--sidebar-bottom-gap))),
+    var(--sidebar-max-height)
+  );
+}
+
+/* If you prefer explicit height rather than max-height, uncomment this line:
+.sidebar { height: calc(100vh - (var(--navbar-height) + var(--sidebar-top-gap) + var(--sidebar-bottom-gap))); }
+*/
+
+/* Ensure inner content cannot force larger size */
+.sidebar * { box-sizing: border-box; max-width:100%; word-wrap:break-word; }
+
+/* Main area should scroll internally and not cause page-level overflow */
+.main {
+  flex:1 1 auto;
+  min-width:0;
+  box-sizing:border-box;
+  height: calc(100vh - var(--navbar-height));
+  overflow-y: auto;
+  padding: 18px;
+}
+
+/* Responsive: make sidebar full width on small screens */
+@media (max-width:880px){
+  :root{ --sidebar-width:100%; }
+  .sidebar{ position:relative; top:0; max-height:none; height:auto; padding:12px; }
+  .main{ height:auto; min-height:auto; }
+}

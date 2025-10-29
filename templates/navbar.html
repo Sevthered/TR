@@ -1,19 +1,25 @@
 {% load static %}
-
-<div
-    style="background-color:white; padding:10px; border:1px solid rgb(0, 0, 0); border-radius: 15px; display: grid; grid-template-columns: 2fr 2.5fr 1fr;">
-    <div>
-        <p>Bienvenido, {{ user.username }} | <a href="{% url 'logout' %}">Logout</a></p>
-    </div>
-    <div>
-        <p>
-            <a href="{% url 'login' %}">Ejemplo 1</a>
-            <a href="{% url 'login' %}">Ejemplo 2</a>
-            <a href="{% url 'login' %}">Ejemplo 3</a>
-        </p>
-    </div>
-    <div>
-        <img src="{% static '/images/logo.jpg' %}" alt="School Logo" style="height:50px;">
+<header class="app-navbar" id="topNavbar" role="banner">
+  <div class="nav-inner">
+    <div class="nav-left">
+      <div class="user-line">
+        <span class="user-name">Bienvenido, {{ user.username }}</span>
+        <a class="logout" href="{% url 'logout' %}">Logout</a>
+      </div>
     </div>
 
-</div>
+    <div class="nav-center" aria-hidden="false">
+      <form class="nav-search" role="search" action="#" method="get">
+        <input class="nav-search-input" name="q" type="search" placeholder="Buscar..." aria-label="Buscar">
+        <button class="nav-search-btn" type="submit" aria-label="Buscar">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+    <div class="nav-right" aria-hidden="true"></div>
+  </div>
+</header>

@@ -1,20 +1,49 @@
-<!DOCTYPE html>
+{% load static %}
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>
-    {% block page_title %}
-    
-    {% endblock page_title %}
-    </title>
-    {% block styles %}
-    
-    {% endblock styles %}
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block page_title %}{% endblock page_title %}</title>
+
+  <!-- Navbar and sidebar CSS -->
+  <link rel="stylesheet" href="{% static 'css/navbar.css' %}">
+  <link rel="stylesheet" href="{% static 'css/sidebar.css' %}">
+
+  <!-- Set navbar height for CSS layout (adjust if needed) -->
+  <style>
+    :root{ --navbar-height: 80px; }
+  </style>
+
+  {% block styles %}{% endblock styles %}
 </head>
 <body>
-    {% block content %}
-    
-    {% endblock content %}
+  <!-- Top block: navbar -->
+  <div class="top-block">
+    {% include "navbar.html" %}
+  </div>
+
+  <!-- Bottom block: left sidebar + main -->
+  <div class="bottom-block">
+    {% include "sidebar.html" %}
+    <main class="main" id="page">
+      <header class="page-header">
+        <h1>{% block page_header %}{% endblock page_header %}</h1>
+      </header>
+
+      <section class="page-content">
+        {% block content %}{% endblock content %}
+      </section>
+
+      <footer class="page-footer">
+        {% block footer %}{% endblock footer %}
+      </footer>
+    </main>
+  </div>
+
+  <!-- JS: sidebar behaviour and small navbar helper -->
+  <script src="{% static 'js/sidebar.js' %}"></script>
+  <script src="{% static 'js/navbar.js' %}"></script>
+  {% block scripts %}{% endblock scripts %}
 </body>
 </html>

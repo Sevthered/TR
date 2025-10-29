@@ -1,0 +1,355 @@
+/* static/css/navbar.css
+   Fixed navbar that does not let page content overlap it.
+   Replaces previous broken rules. Change the root vars to tune distances.
+*/
+
+:root{
+  --navbar-top-offset: 0px;        /* distance from viewport top */
+  --navbar-height: 80px;           /* total visible navbar height */
+  --page-gutter: 16px;             /* horizontal gutter for pinned items */
+  --nav-bg-1: rgba(15,20,24,0.98);
+  --nav-bg-2: rgba(11,14,17,0.98);
+  --nav-text: #eaf1ff;
+  --nav-muted: #9aa6b3;
+  --accent: #7c5cff;
+  --radius: 14px;
+  --ease: cubic-bezier(.2,.9,.2,1);
+}
+
+/* Make sure body reserves space for the fixed navbar so nothing overlaps it */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  /* push all page content below the fixed navbar */
+  padding-top: calc(var(--navbar-top-offset) + var(--navbar-height));
+}
+
+/* Navbar fixed to viewport, with offset from top controlled by --navbar-top-offset */
+.app-navbar {
+  position: fixed;
+  top: var(--navbar-top-offset);
+  left: 0;
+  right: 0;
+  height: var(--navbar-height);
+  display: block;
+  background: linear-gradient(180deg, var(--nav-bg-1), var(--nav-bg-2));
+  border: 1px solid rgba(255,255,255,0.03);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+  padding: 10px 16px;
+  box-sizing: border-box;
+  z-index: 9999;      /* high z-index ensures navbar sits above sidebar/main */
+  overflow: hidden;
+}
+
+/* Ensure nav-inner uses full width inside the fixed navbar */
+.nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 calc(var(--page-gutter));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  position: relative;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+/* Pinned left area: positioned absolutely inside nav-inner */
+.nav-left {
+  position: absolute;
+  left: var(--page-gutter);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+/* User line styling */
+.user-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: var(--nav-muted);
+  font-weight: 700;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  transition: transform 160ms var(--ease), background 160ms var(--ease);
+  background: transparent;
+}
+.user-name {
+  color: var(--nav-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.logout {
+  color: var(--nav-muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: background 160ms var(--ease), color 160ms var(--ease), transform 160ms var(--ease);
+}
+.logout:hover {
+  background: rgba(255,255,255,0.02);
+  color: var(--nav-text);
+  transform: translateY(-2px);
+}
+
+/* Centered search area */
+.nav-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.nav-search {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 560px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent);
+  border: 1px solid rgba(255,255,255,0.03);
+  padding: 6px;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  transition: box-shadow 220ms var(--ease), transform 220ms var(--ease), border-color 200ms linear;
+  box-sizing: border-box;
+}
+.nav-search:focus-within {
+  box-shadow: 0 10px 30px rgba(124,92,255,0.12);
+  border-color: rgba(124,92,255,0.18);
+  transform: translateY(-2px);
+}
+.nav-search-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  color: var(--nav-text);
+  font-weight: 700;
+  font-size: 14px;
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+  box-sizing: border-box;
+}
+.nav-search-input::placeholder { color: var(--nav-muted); font-weight:600; }
+.nav-search-btn {
+  display: inline-grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  color: var(--nav-muted);
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 140ms var(--ease), color 140ms var(--ease), transform 140ms var(--ease);
+}
+.nav-search-btn:hover {
+  color: var(--accent);
+  background: rgba(124,92,255,0.06);
+  transform: translateY(-2px);
+}
+
+/* Right placeholder kept minimal */
+.nav-right {
+  position: absolute;
+  right: var(--page-gutter);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Accessibility */
+.app-navbar :focus { outline-offset: 3px; }
+
+/* Responsive: on small viewports stack content and make pinned left inline */
+@media (max-width: 880px) {
+  .nav-inner {
+    display: block;
+    text-align: left;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .nav-left {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    margin-bottom: 8px;
+  }
+  .nav-center { width: 100%; margin-bottom: 6px; }
+  .nav-search { max-width: 100%; }
+  .nav-right { display: none; }
+}
+
+/* Very small screens */
+@media (max-width: 480px) {
+  .user-name { max-width: 140px; font-size: 13px; }
+  .nav-search-input { font-size: 13px; padding: 8px 10px; }
+}
+/* Overlap fix: place after all other CSS so it overrides earlier rules */
+
+:root {
+  --navbar-top-offset: 8px;     /* change to move navbar down */
+  --navbar-height: 64px;        /* set to your actual navbar height */
+  --sidebar-top-gap: 4px;       /* gap between navbar and top of sidebar */
+}
+
+/* Make navbar fixed on top and above everything */
+.app-navbar {
+  position: fixed !important;
+  top: var(--navbar-top-offset) !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: var(--navbar-height) !important;
+  z-index: 9999 !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+}
+
+/* Reserve space under the navbar so content can't flow underneath */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+body {
+  padding-top: calc(var(--navbar-top-offset) + var(--navbar-height)) !important;
+}
+
+/* Ensure main page container does not have negative margins or top offsets;
+   reset if someone else set them earlier */
+.bottom-block, .page-wrapper, .site-wrapper {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  box-sizing: border-box;
+}
+
+/* Sidebar sticky top must be computed from navbar height + desired gap */
+.sidebar {
+  position: sticky !important;
+  top: calc(var(--navbar-top-offset) + var(--navbar-height) + var(--sidebar-top-gap)) !important;
+  z-index: 10; /* below navbar */
+  /* keep internal scrolling so it can't push page height */
+  max-height: calc(100vh - (var(--navbar-top-offset) + var(--navbar-height) + var(--sidebar-top-gap) + 12px)) !important;
+  overflow-y: auto !important;
+}
+
+/* Main content area must start below navbar and scroll internally */
+.main, .content, main {
+  position: relative; /* avoid absolute/fixed that ignores flow */
+  z-index: 1;
+  min-height: calc(100vh - (var(--navbar-top-offset) + var(--navbar-height))) !important;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+/* Remove accidental transforms on ancestors that change stacking contexts
+   (transforms can cause positioned children to overlap unexpectedly) */
+.app, .app-root, .page-root, .bottom-block {
+  transform: none !important;
+}
+
+/* Debug helpers (uncomment while debugging) */
+/*
+.app-navbar { outline: 2px solid rgba(124,92,255,0.18); }
+.sidebar { outline: 2px dashed rgba(92,200,255,0.12); }
+.main { outline: 2px dotted rgba(255,200,100,0.12); }
+*/
+/* Responsive safety for pinned left area vs centered search */
+
+/* Ensure nav-center always leaves room for the pinned left block */
+.nav-inner {
+  /* keep centered content but allow the center to shrink */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+/* Make center area flexible but constrained so it won't go under the pinned left/right */
+.nav-center {
+  flex: 1 1 auto;
+  min-width: 0;               /* allow flex children to shrink */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0 12px;            /* small internal padding */
+  box-sizing: border-box;
+}
+
+/* Search must shrink before overlapping; allow it to scale down */
+.nav-search {
+  width: 100%;
+  max-width: 560px;
+  min-width: 140px;           /* don't let it become unreadably small */
+  box-sizing: border-box;
+}
+
+/* Pinned left kept absolute on larger screens */
+.nav-left {
+  position: absolute;
+  left: var(--navbar-side-gutter, 16px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10000;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+/* When viewport is narrow, switch to a safe stacked flow */
+@media (max-width: 880px) {
+  /* Make nav-left inline so it won't overlap center content */
+  .nav-left {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    width: 100%;
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 8px;
+    padding: 0 calc(var(--navbar-side-gutter, 12px));
+    box-sizing: border-box;
+  }
+
+  /* Allow the center column to take full width below the left block */
+  .nav-center {
+    width: 100%;
+    margin-bottom: 6px;
+    padding: 0 calc(var(--navbar-side-gutter, 12px));
+  }
+
+  /* Make the search shrink safely but remain usable */
+  .nav-search {
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+/* Extra protection for very small screens: hide/compact logout or push it out of the way */
+@media (max-width: 480px) {
+  /* shrink user-name to prevent overflow */
+  .user-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+
+  /* if still cramped, make logout icon-only / compact (requires small markup change or use CSS to hide text) */
+  .logout .logout-text { display: none; } /* optional: hide textual logout, show icon only if available */
+  .logout { padding: 6px; }
+}
