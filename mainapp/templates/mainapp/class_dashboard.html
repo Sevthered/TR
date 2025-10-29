@@ -1,34 +1,89 @@
 {% extends "base.html" %}
+{% load static %}
 {% block page_title %}
 Class Dashboard
 {% endblock page_title %}
-{% block styles %}
-{% endblock styles %}
-{% block content %}
-<table
-    border="1"
-    cellpadding="8"
-    cellspacing="0"
-    style="width: 100%; margin-bottom: 20px"
-  >
-    <thead style="background: #f2f2f2">
-      <tr>
-        <th>Alumn@s</th>
-        <th>Email</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for student in students %}
-      <tr>
-        <td><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }}</a></td>
-        <td>{{ student.Email }}</td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="2">No hay estudiantes disponibles.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
 
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock styles %}
+
+{% block content %}
+{# Add data-course-id so the navbar's search form can limit searches to this class when present #}
+<div class="page-content-wrap container" data-course-id="{{ course.CourseID }}">
+        {% if user.is_authenticated and user.profile.role == 'professor' %}
+        <p><button type="button" class="btn-back" onclick="window.history.back()">← Volver</button></p>
+        {% endif %}
+
+        <div style="display:flex; gap:18px; align-items:flex-start;">
+            <div style="flex:1 1 0;">
+                <table class="student-table">
+        <thead>
+            <tr>
+                <th>Alumn@s</th>
+                <th>Email</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for student in students %}
+                <tr>
+                    <td><a href="{% url 'student_dashboard_content' student.StudentID %}?course={{ course.CourseID }}">{{ student.Name }}</a></td>
+                    <td>{{ student.Email }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="2">No hay estudiantes disponibles.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+                </table>
+
+                {% if user.is_authenticated and user.profile.role == 'professor' %}
+                <div style="margin-top: 15px;">
+                    <a href="{% url 'download_class_list' subject_course_id=course.pk %}" class="button secondary">
+                        ⬇️ Descargar Lista de Alumnos
+                    </a>
+                </div>
+                {% endif %}
+
+            </div>
+
+            <aside class="side-panel" style="width:320px; min-width:260px;">
+                <div class="page-surface">
+                    <h3>Crear ausencia (clase)</h3>
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        {% if ausencia_form.non_field_errors %}
+                            <div class="error">{{ ausencia_form.non_field_errors }}</div>
+                        {% endif %}
+                                    <div>
+                                          <label for="id_students">Estudiante(s)</label>
+                                          <div class="muted" style="font-size:0.9rem; margin-bottom:6px">Mantén pulsada la tecla Ctrl/Cmd para seleccionar varios.</div>
+                                          {{ ausencia_form.students }}
+                                    </div>
+                        <div>
+                            <label for="id_subject">Materia</label>
+                            {{ ausencia_form.subject }}
+                        </div>
+                                    <div>
+                                        <label for="id_trimester">Trimestre</label>
+                                        {{ ausencia_form.trimester }}
+                                    </div>
+                                    <div>
+                                        <label for="id_date_time">Fecha y hora</label>
+                                        <div class="muted" style="font-size:0.9rem; margin-bottom:6px">Por defecto se usará la hora actual; puedes editarla.</div>
+                                        {{ ausencia_form.date_time }}
+                                    </div>
+                        <div>
+                            <label for="id_Tipo">Tipo</label>
+                            {{ ausencia_form.Tipo }}
+                        </div>
+                        <div style="margin-top:12px;">
+                            <button type="submit" class="button primary">Crear ausencia</button>
+                        </div>
+                    </form>
+                </div>
+            </aside>
+        </div>
+</div>
 {% endblock content %}

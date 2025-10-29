@@ -9,6 +9,7 @@
   <!-- Navbar and sidebar CSS -->
   <link rel="stylesheet" href="{% static 'css/navbar.css' %}">
   <link rel="stylesheet" href="{% static 'css/sidebar.css' %}">
+  <link rel="stylesheet" href="{% static 'css/site-pages.css' %}">
 
   <!-- Set navbar height for CSS layout (adjust if needed) -->
   <style>
@@ -17,7 +18,8 @@
 
   {% block styles %}{% endblock styles %}
 </head>
-<body>
+{% comment %} Add a class to the body when the logged in user is a tutor so we can target CSS behavior {% endcomment %}
+<body {% if user.is_authenticated and user.profile.role == 'tutor' %}class="no-sidebar-scroll"{% endif %}>
   <!-- Top block: navbar -->
   <div class="top-block">
     {% include "navbar.html" %}
@@ -25,8 +27,13 @@
 
   <!-- Bottom block: left sidebar + main -->
   <div class="bottom-block">
-    {% include "sidebar.html" %}
-    <main class="main" id="page">
+    {% if user.is_authenticated and user.profile.role == 'professor' %}
+      {% include "sidebar.html" %}
+      <main class="main" id="page">
+    {% else %}
+      {# No sidebar for non-professors: render a full-width main area #}
+      <main class="main full-width" id="page">
+    {% endif %}
       <header class="page-header">
         <h1>{% block page_header %}{% endblock page_header %}</h1>
       </header>
