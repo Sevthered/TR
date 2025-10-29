@@ -21,13 +21,25 @@ body {
 
 /* Container for Layout */
 .container {
-    max-width: 960px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
 }
 
+/* Ensure class dashboard gets full width */
+.page-content-wrap.container,
+.class-dashboard-container {
+    max-width: 1400px !important;
+    width: 100% !important;
+}
+
 /* Headings */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
     color: var(--text-color);
     margin: 0 0 1em 0;
     font-weight: 700;
@@ -45,7 +57,9 @@ a:hover {
 }
 
 /* Forms */
-input, textarea {
+input,
+textarea,
+select {
     width: 100%;
     margin-bottom: 1rem;
     padding: 0.75rem;
@@ -55,6 +69,22 @@ input, textarea {
     border-radius: 4px;
     font-family: inherit;
     font-size: 1rem;
+}
+
+/* Select dropdown options */
+select option {
+    background-color: #1e1e1e;
+    color: var(--text-color);
+}
+
+/* Additional select styling for better compatibility */
+select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+select:hover {
+    border-color: var(--secondary-color);
 }
 
 ::placeholder {
@@ -83,7 +113,8 @@ table {
     color: var(--text-color);
 }
 
-th, td {
+th,
+td {
     border: 1px solid #444;
     padding: 0.75rem;
     text-align: left;

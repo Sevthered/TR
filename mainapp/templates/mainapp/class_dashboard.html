@@ -10,7 +10,7 @@ Class Dashboard
 
 {% block content %}
 {# Add data-course-id so the navbar's search form can limit searches to this class when present #}
-<div class="page-content-wrap container" data-course-id="{{ course.CourseID }}">
+<div class="page-content-wrap class-dashboard-container" data-course-id="{{ course.CourseID }}">
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <p><button type="button" class="btn-back" onclick="window.history.back()">← Volver</button></p>
         {% endif %}
@@ -39,16 +39,22 @@ Class Dashboard
                 </table>
 
                 {% if user.is_authenticated and user.profile.role == 'professor' %}
-                <div style="margin-top: 15px;">
-                    <a href="{% url 'download_class_list' subject_course_id=course.pk %}" class="button secondary">
-                        ⬇️ Descargar Lista de Alumnos
-                    </a>
+                <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button type="button" onclick="window.location.href='{% url 'download_class_list' subject_course_id=course.pk %}'" class="btn-download">
+                        Lista de Clase
+                    </button>
+                    <button type="button" onclick="window.location.href='{% url 'class_grades_download' course_id=course.CourseID %}'" class="btn-download">
+                        Descargar Notas de Clase
+                    </button>
+                    <button type="button" onclick="window.location.href='{% url 'import_grades_class' course_id=course.CourseID %}'" class="btn-download">
+                        Importar Notas
+                    </button>
                 </div>
                 {% endif %}
 
             </div>
 
-            <aside class="side-panel" style="width:320px; min-width:260px;">
+            <aside class="side-panel" style="width:400px; min-width:260px;">
                 <div class="page-surface">
                     <h3>Crear ausencia (clase)</h3>
                     <form method="post" novalidate>
@@ -64,6 +70,10 @@ Class Dashboard
                         <div>
                             <label for="id_subject">Materia</label>
                             {{ ausencia_form.subject }}
+                        </div>
+                       <div>
+                            <label for="id_school_year">Año escolar</label>
+                            {{ ausencia_form.school_year }}
                         </div>
                                     <div>
                                         <label for="id_trimester">Trimestre</label>

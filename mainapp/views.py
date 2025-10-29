@@ -2,7 +2,7 @@ from urllib import request
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses
+from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 from django.http import JsonResponse, HttpResponse
 from django.db.models import Q
 import unicodedata
@@ -11,6 +11,8 @@ import csv
 from django.contrib import messages
 from .forms import GradeForm, AusenciaForm, AusenciaEditForm
 from django.utils import timezone
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 # Create your views here.
 
 
@@ -192,6 +194,7 @@ def class_dashboard(request, course_id):
             # student is a QuerySet/list of Students (multiple selection)
             students_selected = form.cleaned_data.get('students')
             subject = form.cleaned_data.get('subject')
+            school_year = form.cleaned_data.get('school_year')
             trimester = form.cleaned_data.get('trimester')
             tipo = form.cleaned_data.get('Tipo')
             date_time = form.cleaned_data.get('date_time')
@@ -201,10 +204,10 @@ def class_dashboard(request, course_id):
                 # create Ausencias for each student
                 if date_time:
                     a = Ausencias(student=s, subject=subject,
-                                  trimester=trimester, Tipo=tipo, date_time=date_time)
+                                  trimester=trimester, Tipo=tipo, date_time=date_time, school_year=school_year)
                 else:
                     a = Ausencias(student=s, subject=subject,
-                                  trimester=trimester, Tipo=tipo)
+                                  trimester=trimester, Tipo=tipo, school_year=school_year)
                 try:
                     a.save()
                     created += 1
@@ -255,18 +258,40 @@ def download_class_list(request, subject_course_id):
 
     # 3. Create the CSV response header
     response = HttpResponse(content_type='text/csv')
-    filename = f"{subject_course.course.Tipo}{subject_course.course.Section}_alumnos.csv"
+    filename = f"{subject_course.course.Tipo}{subject_course.course.Section}_import_template.csv"
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
     # 4. Create CSV writer and write data
     writer = csv.writer(response)
-    writer.writerow(['Nombre', 'Email'])
+
+    # Write the import format header
+    writer.writerow(['Nombre_Estudiante', 'Asignatura', 'Trimestre',
+                    'Año_Escolar', 'Nota', 'Tipo_Nota', 'Numero_Tipo_Nota', 'Comentarios'])
 
     # Get the student list directly from the found Subjects_Courses object
     students = subject_course.students.all().order_by('Name')
 
+    # Get available subjects for this course
+    subjects = Subjects.objects.filter(
+        subjects_courses__course=subject_course.course
+    ).distinct().order_by('Name')
+
+    # Get current school year (or create a default one)
+    current_year = timezone.now().year
+    school_year_str = f"{current_year}-{current_year + 1}"
+
+    # Create template rows - one row per student
     for student in students:
-        writer.writerow([student.Name, student.Email])
+        writer.writerow([
+            student.Name,  # Nombre_Estudiante
+            '',  # Asignatura (empty for template)
+            '',  # Trimestre (empty for template)
+            school_year_str,  # Año_Escolar
+            '',  # Nota (empty for template)
+            'examen',  # Tipo_Nota (default)
+            '0',  # Numero_Tipo_Nota (default)
+            ''  # Comentarios (empty for template)
+        ])
 
     return response
 
@@ -327,7 +352,7 @@ def tutor_dashboard(request):
 
 
 @login_required
-def grades_csv(request):
+def grades_csv(request, student_id=None):
     profile = request.user.profile
     grades = Grade.objects.none()
     filename = "student_data.csv"
@@ -336,39 +361,146 @@ def grades_csv(request):
         # Student: only their grades
         student = profile.student
         grades = Grade.objects.filter(student=student)
-        filename = f"{student.Name}_{student.First_Surname}_grades.csv"
+        filename = f"{student.Name}_notas.csv"
     elif profile.role == "tutor":
-        # Tutor: all their children's grades, grouped by child
+        # Tutor: all their children's grades
         children = list(profile.children.all())
-        grades = []
-        for child in children:
-            child_grades = Grade.objects.filter(student=child)
-            grades.extend(child_grades)
-        filename = f"{request.user.username}_children_grades.csv"
+        grades = Grade.objects.filter(student__in=children)
+        filename = f"{request.user.username}_notas.csv"
     elif profile.role == "professor":
-        # Professor: all grades
-        grades = Grade.objects.all()
-        filename = "all_grades.csv"
+        if student_id:
+            # Professor: specific student's grades
+            student = get_object_or_404(Students, pk=student_id)
+            grades = Grade.objects.filter(student=student)
+            filename = f"{student.Name}_notas.csv"
+        else:
+            # Professor: all grades
+            grades = Grade.objects.all()
+            filename = "all_grades.csv"
     else:
         return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
+
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
     writer.writerow(
-        ['Estudiante', 'Asignatura', 'Profesor', 'Trimestre', 'Nota', 'Comentario'])
+        ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero tipo de Nota', 'Comentario'])
+
     for grade in grades:
         student = grade.student
-        student_name = " ".join(filter(None, [getattr(student, 'Name', ''), getattr(
-            student, 'First_Surname', ''), getattr(student, 'Last_Surname', '')])).strip()
-        if not student_name:
-            student_name = getattr(student, 'Email', 'Unknown')
-        subject_name = getattr(grade.subject, 'Name', 'N/A')
-        teacher_name = getattr(getattr(grade, 'teacher', None), 'Name', 'N/A')
-        trimester_name = getattr(
-            getattr(grade, 'trimester', None), 'Name', 'N/A')
-        writer.writerow([student_name, subject_name, teacher_name,
-                        trimester_name, grade.grade, grade.comments])
+        student_name = student.Name
+        subject_name = grade.subject.Name
+        trimester_name = grade.trimester.Name
+        school_year = grade.school_year.year
+        writer.writerow([
+            student_name,
+            subject_name,
+            trimester_name,
+            school_year,
+            grade.grade,
+            grade.grade_type,
+            grade.grade_type_number,
+            grade.comments
+        ])
     return response
+
+
+@login_required
+def class_grades_download(request, course_id):
+    profile = request.user.profile
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    course = get_object_or_404(Course, CourseID=course_id)
+
+    # Get all students in this course
+    students_in_course = Students.objects.filter(
+        subjects_courses__course=course).distinct()
+
+    # Get all subjects that have grades for students in this course
+    subjects_in_course = Subjects.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('Name')
+
+    # Get all trimesters and school years from grades of students in this course
+    trimesters = Trimester.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('Name')
+    school_years = School_year.objects.filter(
+        grade__student__in=students_in_course).distinct().order_by('year')
+
+    # Get all grade types from grades of students in this course
+    grade_types = Grade.objects.filter(
+        student__in=students_in_course).values_list('grade_type', flat=True).distinct().order_by('grade_type')
+
+    if request.method == 'POST':
+        # Process the filter form
+        selected_subject_id = request.POST.get('subject')
+        selected_trimester_id = request.POST.get('trimester')
+        selected_school_year_id = request.POST.get('school_year')
+        selected_grade_type = request.POST.get('grade_type')
+
+        # Start with grades from students in this course
+        grades = Grade.objects.filter(student__in=students_in_course)
+
+        # Apply filters
+        if selected_subject_id:
+            grades = grades.filter(subject_id=selected_subject_id)
+        if selected_trimester_id:
+            grades = grades.filter(trimester_id=selected_trimester_id)
+        if selected_school_year_id:
+            grades = grades.filter(school_year_id=selected_school_year_id)
+        if selected_grade_type:
+            grades = grades.filter(grade_type=selected_grade_type)
+
+        # Generate filename based on filters
+        filename_parts = [course.Tipo, course.Section]
+        if selected_subject_id:
+            subject = get_object_or_404(Subjects, pk=selected_subject_id)
+            filename_parts.append(subject.Name)
+        if selected_trimester_id:
+            trimester = get_object_or_404(Trimester, pk=selected_trimester_id)
+            filename_parts.append(f"Trimestre_{trimester.Name}")
+        if selected_school_year_id:
+            school_year = get_object_or_404(
+                School_year, pk=selected_school_year_id)
+            filename_parts.append(school_year.year)
+        if selected_grade_type:
+            filename_parts.append(f"Tipo_{selected_grade_type}")
+
+        filename = "_".join(filename_parts) + "_grades.csv"
+
+        # Generate CSV
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow(
+            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Comentario'])
+
+        for grade in grades:
+            student = grade.student
+            student_name = student.Name
+            subject_name = grade.subject.Name
+            trimester_name = grade.trimester.Name
+            school_year = grade.school_year.year
+            writer.writerow([
+                student_name,
+                subject_name,
+                trimester_name,
+                school_year,
+                grade.grade,
+                grade.grade_type,
+                grade.comments
+            ])
+        return response
+
+    # GET request - show the filter form
+    context = {
+        "course": course,
+        "subjects": subjects_in_course,
+        "trimesters": trimesters,
+        "school_years": school_years,
+        "grade_types": grade_types,
+    }
+    return render(request, "mainapp/class_grades_download.html", context)
 
 
 @login_required
@@ -567,3 +699,124 @@ def search_students(request):
         'course_id': course_id,
     }
     return render(request, 'mainapp/search_results.html', context)
+
+
+@login_required
+def import_grades(request, course_id=None):
+    profile = request.user.profile
+    if profile.role != 'professor':
+        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+
+    course = None
+    if course_id:
+        course = get_object_or_404(Course, CourseID=course_id)
+
+    if request.method == 'POST':
+        csv_file = request.FILES.get('csv_file')
+        if not csv_file:
+            messages.error(request, 'Por favor selecciona un archivo CSV.')
+            return render(request, 'mainapp/import_grades.html', {'course': course})
+
+        if not csv_file.name.endswith('.csv'):
+            messages.error(request, 'El archivo debe ser un CSV.')
+            return render(request, 'mainapp/import_grades.html', {'course': course})
+
+        created_count = 0
+        updated_count = 0
+        error_count = 0
+        errors = []
+
+        try:
+            # Read CSV content
+            csv_content = csv_file.read().decode('utf-8')
+            reader = csv.DictReader(csv_content.splitlines())
+
+            for row_num, row in enumerate(reader, start=2):
+                try:
+                    # Parse CSV row - support both Spanish and English column names
+                    student_name = row.get('Nombre_Estudiante') or row.get(
+                        'student_name', '').strip()
+                    subject_name = row.get('Asignatura') or row.get(
+                        'subject_name', '').strip()
+                    trimester_name = row.get('Trimestre') or row.get(
+                        'trimester_name', '').strip()
+                    school_year_str = row.get('Año_Escolar') or row.get(
+                        'school_year', '').strip()
+                    grade_value = float(row.get('Nota') or row.get('grade', 0))
+                    grade_type = (row.get('Tipo_Nota') or row.get(
+                        'grade_type', 'examen')).strip()
+                    grade_type_number = int(
+                        row.get('Numero_Tipo_Nota') or row.get('grade_type_number', 0) or 0)
+                    comments = (row.get('Comentarios')
+                                or row.get('comments', '')).strip()
+
+                    # Get or create objects
+                    student = Students.objects.get(Name=student_name)
+                    subject = Subjects.objects.get(Name=subject_name)
+
+                    # Get or create school year
+                    school_year, _ = School_year.objects.get_or_create(
+                        year=school_year_str,
+                        defaults={'year': school_year_str}
+                    )
+
+                    # Get or create trimester
+                    trimester, _ = Trimester.objects.get_or_create(
+                        Name=int(trimester_name),
+                        school_year=school_year,
+                        defaults={'Name': int(
+                            trimester_name), 'school_year': school_year}
+                    )
+
+                    # Create or update grade
+                    grade, created = Grade.objects.update_or_create(
+                        student=student,
+                        subject=subject,
+                        trimester=trimester,
+                        school_year=school_year,
+                        grade_type=grade_type,
+                        grade_type_number=grade_type_number,
+                        defaults={
+                            'grade': grade_value,
+                            'comments': comments,
+                        }
+                    )
+
+                    if created:
+                        created_count += 1
+                    else:
+                        updated_count += 1
+
+                except Students.DoesNotExist:
+                    errors.append(
+                        f"Fila {row_num}: Estudiante '{student_name}' no encontrado")
+                    error_count += 1
+                except Subjects.DoesNotExist:
+                    errors.append(
+                        f"Fila {row_num}: Asignatura '{subject_name}' no encontrada")
+                    error_count += 1
+                except Exception as e:
+                    errors.append(f"Fila {row_num}: {str(e)}")
+                    error_count += 1
+
+            # Show results
+            if created_count > 0:
+                messages.success(request, f'✓ Creadas: {created_count} notas')
+            if updated_count > 0:
+                messages.info(
+                    request, f'↻ Actualizadas: {updated_count} notas')
+            if error_count > 0:
+                messages.error(request, f'❌ Errores: {error_count} notas')
+                for error in errors[:10]:  # Show first 10 errors
+                    messages.error(request, error)
+                if len(errors) > 10:
+                    messages.error(
+                        request, f'... y {len(errors) - 10} errores más')
+
+        except Exception as e:
+            messages.error(request, f'Error al procesar el archivo: {str(e)}')
+
+    context = {
+        'course': course,
+    }
+    return render(request, 'mainapp/import_grades.html', context)

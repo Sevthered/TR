@@ -3,9 +3,9 @@
 {% block content %}
 <div class="page-content-wrap">
     {% if user.profile.role == 'tutor' %}
-        <p>Estudiante {{ selected_child_obj.student.Name }} {{ selected_child_obj.student.First_Surname }}</p>
+        <p>Estudiante {{ selected_child_obj.student.Name }}</p>
     {% else %}
-        <p>Estudiante {{ student.Name }} {{ student.First_Surname }}</p>
+        <p>Estudiante {{ student.Name }}</p>
     {% endif %}
     {% if user.is_authenticated %}
         <p>Has iniciado sesión como {{ user.username }}</p>
@@ -19,7 +19,7 @@
             <select id="child-select" name="child" onchange="document.getElementById('child-select-form').submit();">
                 {% for child in children_info %}
                 <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
-                    {{ child.student.Name }} {{ child.student.First_Surname }}
+                    {{ child.student.Name }}
                 </option>
                 {% endfor %}
             </select>

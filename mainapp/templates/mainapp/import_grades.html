@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block page_title %}
+Importar Notas
+{% endblock page_title %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+{% endblock styles %}
+
+{% block content %}
+<div class="page-root">
+    <div class="page-surface" role="main" aria-labelledby="page-title">
+        <p>
+            <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
+        </p>
+        
+        <h1 id="page-title" class="page-title">
+            {% if course %}
+                Importar Notas - {{ course.Tipo }} {{ course.Section }}
+            {% else %}
+                Importar Notas
+            {% endif %}
+        </h1>
+        
+        <div class="page-content">
+            <form method="post" enctype="multipart/form-data" class="import-form">
+                {% csrf_token %}
+                
+                <div class="form-group">
+                    <label for="csv_file">Seleccionar archivo CSV:</label>
+                    <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    <div class="file-info">
+                        <small>Formato requerido: CSV con columnas: Nombre_Estudiante, Asignatura, Trimestre, Año_Escolar, Nota, Tipo_Nota, Numero_Tipo_Nota, Comentarios</small>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">
+                        Importar Notas
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="window.history.back()">
+                        Cancelar
+                    </button>
+                </div>
+                <div class="messages">
+                    {% if error_messages %}
+                        <div class="error-messages">
+                            {% for message in error_messages %}
+                                <p>{{ message }}</p>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.import-form {
+    max-width: 600px;
+    margin: 20px 0;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-group input[type="file"] {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background-color: #1e1e1e;
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 1rem;
+}
+
+.file-info {
+    margin-top: 5px;
+    color: var(--muted-color);
+}
+
+.form-actions {
+    margin-top: 30px;
+    display: flex;
+    gap: 10px;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #545b62;
+}
+
+pre {
+    color: var(--text-color);
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+}
+</style>
+{% endblock content %}

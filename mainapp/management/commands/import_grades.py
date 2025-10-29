@@ -4,7 +4,7 @@ import csv
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from datetime import datetime
-from mainapp.models import Grade, Students, Subjects, Teachers, Trimester
+from mainapp.models import Grade, Students, Subjects, Teachers, Trimester, School_year
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tr_webpage.settings')
 django.setup()
 
@@ -35,20 +35,10 @@ class Command(BaseCommand):
                     school_year = row['school_year'].strip()
                     grade_value = float(row['grade'])
                     comments = row.get('comments', '').strip()
-                    teacher_name = row.get('teacher_name', '').strip()
-
-                    # Parse student name (format: "John Doe" -> Name="John", First_Surname="Doe")
-                    name_parts = student_name.split(' ', 1)
-                    if len(name_parts) == 2:
-                        student_first_name = name_parts[0]
-                        student_last_name = name_parts[1]
-                    else:
-                        student_first_name = name_parts[0]
-                        student_last_name = ''
 
                     # Get or create objects
                     student = Students.objects.get(
-                        Name=student_first_name, First_Surname=student_last_name)
+                        Name=student_name)
                     subject = Subjects.objects.get(Name=subject_name)
                     trimester, created = Trimester.objects.get_or_create(
                         Name=trimester_name,
@@ -56,8 +46,6 @@ class Command(BaseCommand):
                         defaults={'Name': trimester_name,
                                   'school_year': school_year}
                     )
-                    teacher = Teachers.objects.get(
-                        Name=teacher_name) if teacher_name else None
 
                     # Create or update grade
                     grade, created = Grade.objects.update_or_create(
@@ -67,7 +55,6 @@ class Command(BaseCommand):
                         defaults={
                             'grade': grade_value,
                             'comments': comments,
-                            'teacher': teacher,
                             'date_assigned': timezone.now(),
                         }
                     )
@@ -86,10 +73,6 @@ class Command(BaseCommand):
                 except Subjects.DoesNotExist:
                     self.stderr.write(
                         f"❌ Row {row_num}: Subject '{subject_name}' not found")
-                    error_count += 1
-                except Teachers.DoesNotExist:
-                    self.stderr.write(
-                        f"❌ Row {row_num}: Teacher '{teacher_name}' not found")
                     error_count += 1
                 except Exception as e:
                     self.stderr.write(f"❌ Row {row_num}: {e}")

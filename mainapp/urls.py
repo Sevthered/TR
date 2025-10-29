@@ -28,5 +28,14 @@ urlpatterns = [
          views.section_courses, name='section_courses'),
     # Search endpoint for student lookups (visible to professors only)
     path('search/', views.search_students, name='search_students'),
+    # CSV download endpoints
+    path('grades/csv/', views.grades_csv, name='grades_csv'),
+    path('grades/csv/<int:student_id>/',
+         views.grades_csv, name='grades_csv_student'),
+    path('class/<int:course_id>/grades/download/',
+         views.class_grades_download, name='class_grades_download'),
+    path('import/grades/', views.import_grades, name='import_grades'),
+    path('import/grades/<int:course_id>/',
+         views.import_grades, name='import_grades_class'),
 
 ]
