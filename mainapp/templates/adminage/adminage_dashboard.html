@@ -15,7 +15,7 @@
             --font-primary: 'Inter', system-ui, sans-serif;
             --config-button-color: #007bff;
             --assign-button-color: #28a745;
-            --student-button-color: #ffc107; /* Color para crear/asignar estudiantes */
+            --student-button-color: #ff3e00; /* Color para crear/asignar estudiantes */
             --logout-color: #dc3545;
         }
 
@@ -166,18 +166,18 @@
             </a>
             
             <a href="{% url 'create_and_assign_student' %}" class="student-button"> 
-                🧑‍🎓 Crear y Asignar Estudiante a Clase 
+                Crear y Asignar Estudiante a Clase 
             </a>
 
             {% if school_years %}
                 {% with current_school_year_id=school_years.0.pk %}
                     <a href="{% url 'assign_subjects' %}?school_year_id={{ current_school_year_id }}" class="assign-button">
-                        ✏️ Asignar Asignaturas a Cursos
+                        Asignar Asignaturas a Cursos
                     </a>
                 {% endwith %}
             {% else %}
                 <button class="assign-button" disabled title="Crea un Año Escolar primero">
-                    ✏️ Asignar Asignaturas a Cursos
+                    Asignar Asignaturas a Cursos
                 </button>
             {% endif %}
 

@@ -1,44 +1,141 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <title>{{ title }}</title>
+    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+    
     <style>
-        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
-        .adminage-form-container { max-width: 900px; margin: 50px auto; padding: 30px; background: white; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
-        h1, h2 { color: #333; }
-        .submit-button { background-color: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; }
-        .submit-button:disabled { background-color: #ccc; cursor: not-allowed; }
-        .adminage-messages { list-style: none; padding: 10px; border-radius: 5px; margin-bottom: 20px;}
-        .adminage-messages li.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .adminage-messages li.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .adminage-messages li.warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        /* Contenedor principal del formulario */
+        .adminage-form-container { 
+            max-width: 900px; 
+            margin: 50px auto; 
+            padding: 30px; 
+            background: #1e1e1e; /* Fondo ligeramente más claro que el body */
+            border-radius: 8px; 
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); /* Sombra suave para destacar */
+        }
         
-        /* Estilos para los selectores de curso */
-        .adminage-filter-box { display: flex; gap: 20px; margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9; align-items: flex-end; }
-        .select-group { display: flex; flex-direction: column; flex: 1; }
-        .select-group label { margin-bottom: 5px; font-weight: bold; }
-        .select-group select { padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+        /* Mensajes de Django */
+        .adminage-messages { 
+            list-style: none; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-bottom: 20px;
+        }
+        .adminage-messages li.success { 
+            background-color: #004d40; /* Verde oscuro */
+            color: #ccff90; /* Verde brillante */
+            border: 1px solid #388e3c; 
+        }
+        .adminage-messages li.error { 
+            background-color: #3b0d0d; /* Rojo oscuro */
+            color: #ffcdd2; /* Rojo claro */
+            border: 1px solid #d32f2f; 
+        }
+        .adminage-messages li.warning { 
+            background-color: #5d4037; /* Naranja/Marrón oscuro */
+            color: #ffeb3b; /* Amarillo brillante */
+            border: 1px solid #ff9800; 
+        }
 
-        /* Estilos para el formulario de asignación */
-        .assignment-form-fields { display: flex; gap: 20px; margin-top: 20px; }
-        .assignment-form-fields .form-group { flex: 1; }
-        .assignment-form-fields select { padding: 10px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+        /* 🛠️ CORRECCIÓN LOCAL DEL BOX MODEL para este formulario */
+        .adminage-form-container input,
+        .adminage-form-container select,
+        .adminage-form-container textarea {
+            box-sizing: border-box; /* Fuerza la corrección del ancho localmente */
+        }
         
-        /* Información de la sección */
-        .section-info { padding: 10px; background-color: #e9ecef; border-radius: 5px; margin-bottom: 20px; }
+        /* Caja de Filtros de Sección */
+        .adminage-filter-box { 
+            display: flex; 
+            gap: 20px; 
+            margin-bottom: 30px; 
+            padding: 15px; 
+            border: 1px solid #333; 
+            border-radius: 8px; 
+            background-color: #212121; 
+            align-items: flex-end; 
+        }
+        .select-group { 
+            display: flex; 
+            flex-direction: column; 
+            flex: 1; 
+        }
+        .select-group label { 
+            margin-bottom: 5px; 
+            font-weight: 600; 
+            color: var(--text-color);
+        }
+        /* Ajustamos la altura del select para consistencia */
+        .select-group select { 
+            height: 48px; 
+        }
+        /* Estilos para el formulario de asignación (campos Asignatura, Profesor) */
+        .assignment-form-fields { 
+            display: flex; 
+            gap: 20px; 
+            margin-top: 20px; 
+        }
+        .assignment-form-fields .form-group { 
+            flex: 1; 
+        }
+        /* Aseguramos que los selectores dentro del form-group se vean bien */
+        .assignment-form-fields select { 
+            width: 100%; 
+            /* Se usan los estilos de tu CSS global, solo ajustamos la altura/padding si es necesario */
+            padding: 10px; 
+            height: 48px; 
+        }
+
+        /* Información de la Sección Asignada */
+        .section-info { 
+            padding: 15px; 
+            background-color: #282828; 
+            border: 1px solid #444;
+            border-radius: 5px; 
+            margin-bottom: 20px; 
+            font-size: 1.1rem;
+        }
+
+        /* Estilos para el campo de selección múltiple de Trimestres */
+        #id_trimesters_selected {
+            height: auto !important; 
+            min-height: 100px;
+        }
+        #id_trimesters_selected option {
+            padding: 8px 10px;
+        }
         
-        /* Estilos para la selección de estudiantes */
+        /* Lista de Selección Individual de Estudiantes */
         .student-list-container {
             margin-top: 15px;
             max-height: 300px; 
-            overflow-y: scroll; 
-            border: 1px solid #ccc; 
+            overflow-y: auto; 
+            border: 1px solid #444; 
             padding: 15px; 
             border-radius: 5px;
-            background: #ffffff;
+            background: #252525; 
         }
-        .student-item { margin-bottom: 8px; }
+        .student-item { 
+            margin-bottom: 8px; 
+            padding: 4px 0;
+        }
+        .student-item label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .student-item input[type="checkbox"] {
+            width: auto; 
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        #select-all-students {
+            width: auto;
+            margin-right: 10px;
+        }
     </style>
 </head>
 <body>
