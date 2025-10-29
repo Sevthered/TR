@@ -1,0 +1,46 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Crear Cursos - Paso 2</title>
+    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+</head>
+<body>
+    <div class="form-container">
+        <h1>3. Definir Secciones</h1>
+        <p><strong>Tipo:</strong> {{ course_tipo }} | <strong>Año Escolar:</strong> {{ school_year }}</p>
+
+        <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="confirm_sections">
+            
+            <input type="hidden" name="course_tipo" value="{{ course_tipo }}">
+            <input type="hidden" name="school_year" value="{{ school_year.pk }}">
+
+            {{ formset.management_form }}
+            
+            <p>Define el número de secciones (A, B, C...) para cada nivel:</p>
+
+            {% for form_section in formset %}
+                <div class="form-row">
+                    <label>{{ form_section.display_name.value }}</label>
+                    {{ form_section.main_course_name }} 
+                    
+                    <div style="flex-grow: 1;">
+                        {{ form_section.num_subsections.label_tag }}
+                        {{ form_section.num_subsections }}
+                        <small style="display: block; color: #777;">{{ form_section.num_subsections.help_text }}</small>
+                    </div>
+                    
+                    {% if form_section.num_subsections.errors %}
+                        <ul class="errorlist"><li>{{ form_section.num_subsections.errors|striptags }}</li></ul>
+                    {% endif %}
+                </div>
+            {% endfor %}
+            
+            <button type="submit">Crear Cursos y Finalizar</button>
+        </form>
+    </div>
+</body>
+</html>

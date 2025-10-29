@@ -1,0 +1,84 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Crear Año Escolar</title>
+    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
+    
+    <style>
+        /* Asegura que el contenedor del formulario no sea demasiado grande y esté centrado */
+        .form-container {
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+        
+        /* Ajuste para que los mensajes de Django se vean bien en el tema oscuro */
+        .messages {
+            list-style: none;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 1.5rem;
+        }
+        /* Estilos de mensajes */
+        .messages li.success { 
+            background-color: #004d40;
+            color: #ccff90; 
+            border: 1px solid #388e3c; 
+        }
+        .messages li.error { 
+            background-color: #3b0d0d;
+            color: #ffcdd2;
+            border: 1px solid #d32f2f; 
+        }
+        .messages li.warning { 
+            background-color: #5d4037;
+            color: #ffeb3b; 
+            border: 1px solid #ff9800; 
+        }
+
+        /* 🚀 SOLUCIÓN DEFINITIVA Y LOCAL AL DESBORDAMIENTO: */
+        
+        /* 1. Aplicamos box-sizing SOLO a los inputs dentro del contenedor para corregir el width: 100% */
+        .form-container input,
+        .form-container select,
+        .form-container textarea {
+            /* ESTA REGLA es la que corrige el cálculo del 100% */
+            box-sizing: border-box;
+        }
+
+        /* 2. Aseguramos que las etiquetas <p> de Django no introduzcan un padding extra */
+        .form-container form p {
+            padding: 0; 
+            margin: 0 0 1rem 0;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="form-container">
+            <h1>1. Crear Año Escolar</h1>
+            
+            {% if messages %}
+                <ul class="messages">
+                    {% for message in messages %}
+                        <li class="{{ message.tags }}">{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            <form method="post">
+                {% csrf_token %}
+                {{ form.as_p }}
+                
+                <button type="submit">Crear Año Escolar y Continuar</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
