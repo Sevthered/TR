@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block page_title %}
+Class Dashboard
+{% endblock page_title %}
+{% block styles %}
+{%endblock styles %}
+{% block content %}
+{% include "navbar.html" %}
+<table
+    border="1"
+    cellpadding="8"
+    cellspacing="0"
+    style="width: 100%; margin-bottom: 20px"
+  >
+    <thead style="background: #f2f2f2">
+      <tr>
+        <th>Alumn@s</th>
+        <th>Email</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for student in students %}
+      <tr>
+        <td><a href="{% url 'student_dashboard_content' student.StudentID %}">{{ student.Name }}</a></td>
+        <td>{{ student.Email }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="2">No hay estudiantes disponibles.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+{% endblock content %}
