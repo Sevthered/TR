@@ -1,3 +1,5 @@
+from .models import Students, Grade, Ausencias, School_year, Trimester, Profile
+from django.shortcuts import render, get_object_or_404
 from .models import (
     School_year, Course, Students, Students_Courses
 )
@@ -102,30 +104,163 @@ def logoutUser(request):
 
 @login_required
 def student_detail(request):
-    # Obtiene el perfil del usuario actualmente autenticado.
+    """
+    Vista para mostrar el dashboard del estudiante con filtros de año escolar y trimestre.
+    Funciona tanto para estudiantes como para tutores viendo datos de sus hijos.
+    """
     profile = request.user.profile
 
-    # Restringe el acceso: solo los usuarios con rol 'student' y con un objeto Student asociado pueden continuar.
-    if profile.role != 'student' or not profile.student:
+    # Determinar qué estudiante mostrar
+    student = None
+    is_tutor = False
+    children_info = []
+    selected_child = None
+    selected_child_obj = None
+
+    # Aceptar tanto 'tutor' como 'legal_tutor' (si el valor en DB difiere)
+    if profile.role in ('tutor', 'legal_tutor'):
+        # Caso: Usuario es tutor
+        is_tutor = True
+        children = profile.children.all()
+
+        if not children.exists():
+            # No tiene hijos asignados
+            context = {
+                "is_tutor": True,
+                "children_info": [],
+            }
+            return render(request, "mainapp/student_file.html", context)
+
+        # Obtener el índice del hijo seleccionado (parámetro GET 'child')
+        try:
+            selected_child = int(request.GET.get('child', 0))
+        except (ValueError, TypeError):
+            selected_child = 0
+
+        # Validar que el índice esté en rango
+        children_list = list(children)
+        if selected_child >= len(children_list) or selected_child < 0:
+            selected_child = 0
+
+        student = children_list[selected_child]
+
+    elif profile.role == 'student':
+        # Caso: Usuario es estudiante
+        if not profile.student:
+            # Renderizar perfil del estudiante si no está vinculado a un registro
+            return render(request, "mainapp/student_profile.html", {"user": request.user, "profile": profile})
+        student = profile.student
+
+    else:
+        # Rol no autorizado
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Obtiene el objeto Students asociado al perfil.
-    student = profile.student
+    # FILTROS DE AÑO ESCOLAR Y TRIMESTRE
+    all_school_years = list(School_year.objects.all().order_by('-year'))
 
-    # Consulta y recupera todas las calificaciones (Grade) y ausencias (Ausencias) del estudiante.
-    grades = Grade.objects.filter(student=student)
-    ausensias = Ausencias.objects.filter(
-        # Ordena las ausencias por fecha descendente.
-        student=student).order_by('-date_time')
+    # Obtener parámetros de filtro desde GET
+    selected_year_id_raw = request.GET.get('school_year_id')
+    selected_trimester_id_raw = request.GET.get('trimester_id')
 
-    # Prepara el contexto con los datos del estudiante y sus registros.
+    # Convertir a enteros si existen
+    selected_year_id = None
+    if selected_year_id_raw:
+        try:
+            candidate = int(selected_year_id_raw)
+        except (ValueError, TypeError):
+            candidate = None
+        if candidate is not None and any(s.SchoolYearID == candidate for s in all_school_years):
+            selected_year_id = candidate
+
+    # Calcular trimestres disponibles si hay año seleccionado
+    available_trimesters = []
+    selected_trimester_id = None
+    if selected_year_id:
+        available_trimesters = Trimester.objects.filter(
+            school_year__SchoolYearID=selected_year_id
+        ).order_by('Name')
+        if selected_trimester_id_raw:
+            try:
+                t_candidate = int(selected_trimester_id_raw)
+            except (ValueError, TypeError):
+                t_candidate = None
+            if t_candidate is not None and any(t.TrimesterID == t_candidate for t in available_trimesters):
+                selected_trimester_id = t_candidate
+
+    # Si no se dejó seleccionar año válido, no hay trimestre seleccionado
+    else:
+        selected_trimester_id = None
+
+    # FILTRAR CALIFICACIONES
+    grades_qs = Grade.objects.filter(student=student)
+    if selected_year_id:
+        grades_qs = grades_qs.filter(
+            school_year__SchoolYearID=selected_year_id)
+    if selected_trimester_id:
+        grades_qs = grades_qs.filter(
+            trimester__TrimesterID=selected_trimester_id)
+
+    grades = grades_qs.select_related('subject', 'trimester', 'school_year').order_by(
+        '-school_year__year', 'trimester__Name', 'subject__Name'
+    )
+
+    # FILTRAR AUSENCIAS
+    ausencias_qs = Ausencias.objects.filter(student=student)
+    if selected_year_id:
+        ausencias_qs = ausencias_qs.filter(
+            school_year__SchoolYearID=selected_year_id)
+    if selected_trimester_id:
+        ausencias_qs = ausencias_qs.filter(
+            trimester__TrimesterID=selected_trimester_id)
+
+    ausencias = ausencias_qs.select_related(
+        'subject', 'trimester', 'school_year').order_by('-date_time')
+
+    # PREPARAR children_info PARA TUTORES
+    if is_tutor:
+        for idx, child in enumerate(children):
+            # NOTAS DEL HIJO
+            child_grades = Grade.objects.filter(student=child)
+            # AUSENCIAS DEL HIJO
+            child_ausencias = Ausencias.objects.filter(student=child)
+
+            # Aplicar los mismos filtros a cada hijo
+            if selected_year_id:
+                child_grades = child_grades.filter(
+                    school_year__SchoolYearID=selected_year_id)
+                child_ausencias = child_ausencias.filter(
+                    school_year__SchoolYearID=selected_year_id)
+
+            if selected_trimester_id:
+                child_grades = child_grades.filter(
+                    trimester__TrimesterID=selected_trimester_id)
+                child_ausencias = child_ausencias.filter(
+                    trimester__TrimesterID=selected_trimester_id)
+
+            children_info.append({
+                'student': child,
+                'grades': child_grades.select_related('subject', 'trimester', 'school_year'),
+                'ausencias': child_ausencias.select_related('subject', 'trimester', 'school_year'),
+            })
+
+        selected_child_obj = children_info[selected_child] if children_info else None
+
+    # PREPARAR CONTEXTO
     context = {
         "student": student,
         "grades": grades,
-        "ausencias": ausensias,
-        "is_tutor": False,  # Indica que esta vista no es la del tutor.
+        "ausencias": ausencias,
+        "is_tutor": is_tutor,
+        "children_info": children_info if is_tutor else None,
+        "selected_child": selected_child if is_tutor else None,
+        "selected_child_obj": selected_child_obj if is_tutor else None,
+        # Variables para los filtros
+        "all_school_years": all_school_years,
+        "available_trimesters": available_trimesters,
+        "selected_year_id": selected_year_id,
+        "selected_trimester_id": selected_trimester_id,
     }
-    # Renderiza la ficha detallada del estudiante.
+
     return render(request, "mainapp/student_file.html", context)
 
 
@@ -215,52 +350,74 @@ def teacher_dashboard(request):
 
 @login_required
 def section_courses(request, section):
-    # Obtiene el perfil del usuario.
     profile = request.user.profile
 
-    # Restringe el acceso: solo los usuarios con rol 'professor' pueden acceder a esta vista.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Normaliza el parámetro 'section' de la URL para facilitar la comparación.
     sec = (section or '').strip().lower()
 
-    # Define un mapeo de las secciones amigables (de la URL) a los valores exactos en la base de datos ('Eso', 'Bachillerato', 'IB').
+    # Define el mapeo para el filtro por Tipo de Curso
     mapping = {
         'eso': 'Eso',
         'bachillerato': 'Bachillerato',
         'ib': 'IB',
-        'todos': None,  # Usado para seleccionar todos los cursos.
-        # Alternativa en inglés para seleccionar todos los cursos.
+        'todos': None,
         'all': None,
     }
-    # Obtiene el valor objetivo para el filtro de la base de datos.
     target = mapping.get(sec)
 
-    # Verifica si la sección solicitada es una clave válida en el mapeo.
     if sec not in mapping:
-        # Si no es válida, redirige al dashboard del profesor (comportamiento indulgente).
         return redirect('teacher_dashboard')
 
-    # Filtra los cursos según el valor objetivo.
-    if target is None:
-        # Si es 'todos' o 'all' (target es None), obtiene todos los cursos.
-        courses_qs = Course.objects.all()
-    else:
-        # Filtra los cursos por el tipo (Tipo=target).
-        courses_qs = Course.objects.filter(Tipo=target)
+    # --- Lógica de Filtro por Año Escolar (NUEVO) ---
 
-    # Ordena la lista de cursos obtenida utilizando la función auxiliar sort_key_section.
+    school_years_qs = School_year.objects.all().order_by('-year')
+    selected_year_id = None
+
+    # 1. Determinar el PK del año escolar a usar
+    selected_year_id_str = request.GET.get('school_year_id')
+
+    if selected_year_id_str:
+        try:
+            selected_year_id = int(selected_year_id_str)
+        except ValueError:
+            selected_year_id = None
+
+    # Si no se encontró un ID válido en la URL, usamos el PK del más reciente.
+    if not selected_year_id and school_years_qs.exists():
+        selected_year_id = school_years_qs.first().pk
+
+    # --- Consulta Principal Filtrada por Año ---
+
+    # Base QuerySet: Filtrar por el año escolar seleccionado
+    if selected_year_id:
+        # 🚨 Aplicar el filtro de año a TODOS los cursos
+        courses_base_qs = Course.objects.filter(
+            school_year_id=selected_year_id)
+    else:
+        courses_base_qs = Course.objects.none()
+
+    # Aplicar el filtro por Tipo de Curso (section)
+    if target is None:
+        # Si es 'todos', usa la base (ya filtrada por año)
+        courses_qs = courses_base_qs
+    else:
+        # Filtra por Tipo sobre la base filtrada por año
+        courses_qs = courses_base_qs.filter(Tipo=target)
+
+    # Ordenar y preparar el contexto
     sorted_courses = sorted(list(courses_qs), key=sort_key_section)
 
-    # Prepara el contexto con la lista de cursos ordenados y una etiqueta para la sección.
     context = {
-        # Etiqueta amigable para mostrar en la plantilla.
         'section_label': section.capitalize(),
         'courses': sorted_courses,
         'is_professor': True,
+
+        # 🆕 Datos del filtro para la plantilla
+        'school_years': school_years_qs,
+        'selected_year_id': selected_year_id,
     }
-    # Renderiza la plantilla que muestra los cursos de una sección específica.
     return render(request, 'mainapp/section_courses.html', context)
 
 
@@ -407,7 +564,7 @@ def student_dashboard_content(request, student_id):
 
     # 2. Empezar con los QuerySets base
     grades_qs = Grade.objects.filter(student=student)
-    ausensias_qs = Ausencias.objects.filter(student=student)
+    ausencias_qs = Ausencias.objects.filter(student=student)
 
     # 3. Preparar las opciones para los desplegables
     all_school_years = School_year.objects.all().order_by('-year')
@@ -416,27 +573,29 @@ def student_dashboard_content(request, student_id):
     # 4. Aplicar filtro de Año Escolar (si se seleccionó)
     if selected_year_id:
         try:
-            # Convertir a INT para seguridad y filtrado
             selected_year_id = int(selected_year_id)
+        except (ValueError, TypeError):
+            selected_year_id = None
+
+        if selected_year_id:
             grades_qs = grades_qs.filter(school_year_id=selected_year_id)
-            ausensias_qs = ausensias_qs.filter(school_year_id=selected_year_id)
+            ausencias_qs = ausencias_qs.filter(school_year_id=selected_year_id)
 
             # Poblar el desplegable de trimestres SOLO para ese año
             available_trimesters = Trimester.objects.filter(
                 school_year_id=selected_year_id).order_by('Name')
-        except (ValueError, TypeError):
-            selected_year_id = None  # Ignorar si el ID no es un número
 
     # 5. Aplicar filtro de Trimestre (si se seleccionó)
     if selected_trimester_id:
         try:
-            # Convertir a INT
             selected_trimester_id = int(selected_trimester_id)
-            grades_qs = grades_qs.filter(trimester_id=selected_trimester_id)
-            ausensias_qs = ausensias_qs.filter(
-                trimester_id=selected_trimester_id)
         except (ValueError, TypeError):
-            selected_trimester_id = None  # Ignorar si no es un número
+            selected_trimester_id = None
+
+        if selected_trimester_id:
+            grades_qs = grades_qs.filter(trimester_id=selected_trimester_id)
+            ausencias_qs = ausencias_qs.filter(
+                trimester_id=selected_trimester_id)
 
     # --- FIN DE LA LÓGICA DE FILTROS ---
 
@@ -449,7 +608,7 @@ def student_dashboard_content(request, student_id):
         # Pasa el QuerySet filtrado
         "grades": grades_qs.order_by('trimester__Name'),
         # Pasa el QuerySet filtrado
-        "ausencias": ausensias_qs.order_by('-date_time'),
+        "ausencias": ausencias_qs.order_by('-date_time'),
         "is_tutor": False,
         "return_course": return_course,
 
@@ -850,9 +1009,11 @@ def search_students(request):
         try:
             # Intenta obtener el objeto Course.
             course_obj = Course.objects.get(CourseID=course_id)
-            # Filtra a los estudiantes que están relacionados con este curso a través de Subjects_Courses.
+            # CORRECCIÓN: Filtra estudiantes por la relación correcta
+            # Students -> Students_Courses -> Course
             students_qs = Students.objects.filter(
-                subjects_courses__course=course_obj).distinct()
+                students_courses__course_section=course_obj
+            ).distinct()
         except Course.DoesNotExist:
             # Si el curso no existe, el QuerySet se mantiene vacío (no hay resultados).
             students_qs = Students.objects.none()
@@ -920,11 +1081,22 @@ def search_students(request):
     # Prepara los resultados finales para la plantilla.
     results = []
     for s in students_qs:
-        # Obtiene todos los cursos relacionados con el estudiante.
-        courses = Course.objects.filter(
-            subjects_courses__students=s).distinct()
+        # CORRECCIÓN: Obtiene los cursos usando la relación correcta
+        # Students -> Students_Courses -> Course
+        student_courses_relations = Students_Courses.objects.filter(
+            student=s
+        ).select_related('course_section')
+
+        # Extrae los objetos Course de las relaciones
+        courses = [
+            sc.course_section
+            for sc in student_courses_relations
+            if sc.course_section is not None
+        ]
+
         # Formatea las etiquetas de los cursos (ej: "Eso 1B").
         course_labels = [f"{c.Tipo} {c.Section}" for c in courses]
+
         results.append({
             'student': s,
             # Lista de cursos a los que está inscrito el estudiante.
