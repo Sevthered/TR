@@ -16,7 +16,21 @@
           <a class="btn btn-secondary" href="javascript:history.back()">Volver</a>
         {% endif %}
       </header>
-
+      
+      <div class="filter-section mb-4">
+        {% if school_years %}
+            <form method="GET" id="school-year-filter-form">
+                <label for="school-year-select" style="font-weight: bold;">Seleccionar Año Escolar:</label>
+                <select name="school_year_id" id="school-year-select" class="form-control" onchange="document.getElementById('school-year-filter-form').submit();">
+                    {% for sy in school_years %}
+                        <option value="{{ sy.pk }}" {% if sy.pk == selected_year_id %}selected{% endif %}>
+                            {{ sy.year }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        {% endif %}
+      </div>
       {% if courses %}
         <div class="table-wrap">
           <table class="table course-table">
@@ -24,14 +38,18 @@
           <tbody>
             {% for course in courses %}
             <tr>
-              <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
+              <td>
+                <a href="{% url 'class_dashboard' course.CourseID %}?school_year_id={{ selected_year_id }}">
+                    {{ course.Section }}
+                </a>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
           </table>
         </div>
       {% else %}
-        <div class="empty">No hay cursos en esta sección.</div>
+        <div class="empty">No hay cursos en esta sección para el año seleccionado.</div>
       {% endif %}
     </div>
   </div>

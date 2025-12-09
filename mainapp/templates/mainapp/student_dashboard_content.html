@@ -8,6 +8,38 @@
     --surface-padding-vertical: 28px;
     --surface-padding-horizontal: 20px;
   }
+
+  .filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: flex-end;
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 8px;
+  }
+  .filter-form .form-group {
+    display: flex;
+    flex-direction: column;
+  }
+  .filter-form label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: var(--muted-color);
+  }
+
+  .filter-form select {
+    width: auto;
+    min-width: 200px;
+    margin-bottom: 0;
+  }
+
+  .filter-form a {
+    margin-bottom: 8px; 
+  }
 </style>
 {% endblock styles %}
 
@@ -16,124 +48,170 @@
     <div class="page-surface" role="main" aria-labelledby="student-name">
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <p>
-            {% if return_course %}
-                <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
-            {% else %}
-                <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
-            {% endif %}
+            <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
         </p>
         {% endif %}
-        <h2 id="student-name">
-            {{ student.Name }}
-        </h2>
+        
+        <h2 id="student-name">{{ student.Name }}</h2>
         <p><strong>Email:</strong> {{ student.Email }}</p>
-                <h2>Notas</h2>
-                {% if user.is_authenticated and user.profile.role == 'professor' %}
-                <div style="margin-bottom: 15px;">
-                    <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.pk %}'">
-                        Crear Notas
-                    </button>
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv_student' student_id=student.pk %}'" style="margin-left: 10px;">
-                        Descargar Notas CSV
-                    </button>
-                </div>
-                {% elif user.is_authenticated and user.profile.role == 'student' %}
-                <div style="margin-bottom: 15px;">
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
-                        Descargar Mis Notas CSV
-                    </button>
-                </div>
-                {% elif user.is_authenticated and user.profile.role == 'tutor' %}
-                <div style="margin-bottom: 15px;">
-                    <button type="button" class="btn btn-primary" onclick="window.location.href='{% url 'grades_csv' %}'">
-                        Descargar Notas de Mis Hijos CSV
-                    </button>
-                </div>
-                {% endif %}
-                <div class="table-wrap">
-                    <table class="table student-table" aria-describedby="grades-note">
-            <thead>
-                <tr>
-                    <th>Trimestre</th>
-                    <th>Nota</th>
-                    <th>Asignatura</th>
-                    <th>Comentario</th>
-                    {% if user.is_authenticated and user.profile.role == 'professor' %}
-                    <th>Acciones</th>
-                    {% endif %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for grade in grades %}
-                        <tr>
-                            <td>{{ grade.trimester.Name|default:"N/A" }}</td>
-                            <td class="{% if grade.grade < 5 %}grade-fail{% endif %}">
-                                {{ grade.grade }}
-                            </td>
-                            <td>{{ grade.subject.Name|default:"N/A" }}</td>
-                            <td class="comment-cell">
-                                {{ grade.comments|default:"No hay comentario" }}
-                            </td>
-                            {% if user.is_authenticated and user.profile.role == 'professor' %}
-                            <td>
-                                <button type="button" class="btn-edit" onclick="window.location.href='{% url 'grade_edit' grade_id=grade.id %}'">Edit</button>
-                            </td>
-                            {% endif %}    
-                        </tr>
-                {% empty %}
-                    <tr>
-                        <td colspan="5" id="grades-note">No grades available.</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-                    </table>
-                </div>
+        
+        <!-- FORMULARIO DE FILTROS -->
+        <form method="get" action="" class="filter-form">
+    {% if is_tutor and selected_child is not None %}
+        <!-- Preservar la selección del hijo en tutores -->
+        <input type="hidden" name="child" value="{{ selected_child }}">
+    {% endif %}
 
-                <h2>Ausencias</h2>
-                {% if user.is_authenticated and user.profile.role == 'professor' %}
-                <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'ausencia_create' student_id=student.pk %}'">
-                    Crear Ausencia
-                </button>
-                <br>
-                <br>
-                {% endif %}
-                <div class="table-wrap">
-                    <table class="table student-table" aria-describedby="absences-note">
-            <thead>
-                <tr>
-                    <th>Fecha</th>
-                    <th>Materia</th>
-                    <th>Profesor</th>
-                    <th>Tipo</th>
-                    {% if user.is_authenticated and user.profile.role == 'professor' %}
-                    <th>Acciones</th>
-                    {% endif %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for ausencia in ausencias %}
+    <div class="form-group">
+        <label for="id_school_year">Año Escolar:</label>
+        <select name="school_year_id" id="id_school_year" onchange="this.form.submit()">
+            <option value="">-- Todos los Años --</option>
+            {% if all_school_years %}
+                {% for year in all_school_years %}
+                    <option value="{{ year.SchoolYearID }}" {% if year.SchoolYearID == selected_year_id %}selected{% endif %}>
+                        {{ year.year }}
+                    </option>
+                {% endfor %}
+            {% else %}
+                <option value="" disabled>No hay años escolares registrados</option>
+            {% endif %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="id_trimester">Trimestre:</label>
+        <select name="trimester_id" id="id_trimester" onchange="this.form.submit()" {% if not selected_year_id %}disabled{% endif %}>
+            <option value="">-- Todos los Trimestres --</option>
+            {% for trimester in available_trimesters %}
+                <option value="{{ trimester.TrimesterID }}" {% if trimester.TrimesterID == selected_trimester_id %}selected{% endif %}>
+                    Trimestre {{ trimester.Name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+    
+    <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}{% endif %}">Limpiar Filtros</a>
+</form>
+
+        <!-- SECCIÓN DE NOTAS -->
+        <h2>Notas</h2>
+        {% if user.is_authenticated and user.profile.role == 'professor' %}
+        <div style="margin-bottom: 15px;">
+            <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'grade_create' student_id=student.StudentID %}'">
+                Crear Notas
+            </button>
+            <button type="button" class="btn btn-primary" 
+                    onclick="window.location.href='{% url 'grades_csv_student' student_id=student.StudentID %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'" 
+                    style="margin-left: 10px;">
+                Descargar Notas CSV
+            </button>
+        </div>
+        {% elif user.is_authenticated and user.profile.role == 'student' %}
+        <div style="margin-bottom: 15px;">
+            <button type="button" class="btn btn-primary" 
+                    onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
+                Descargar Mis Notas CSV
+            </button>
+        </div>
+        {% elif user.is_authenticated and user.profile.role == 'tutor' %}
+        <div style="margin-bottom: 15px;">
+            <button type="button" class="btn btn-primary" 
+                    onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
+                Descargar Notas de Mis Hijos CSV
+            </button>
+        </div>
+        {% endif %}
+
+        <div class="table-wrap">
+            <table class="table student-table" aria-describedby="grades-note">
+                <thead>
                     <tr>
-                        <td>{{ ausencia.date_time }}</td>
-                        <td>{{ ausencia.subject }}</td>
-                        <td>{{ ausencia.teacher }}</td>
+                        <th>Año Escolar</th>
+                        <th>Trimestre</th>
+                        <th>Asignatura</th>
+                        <th>Tipo</th>
+                        <th>Nota</th>
+                        <th>Comentario</th>
+                        {% if user.is_authenticated and user.profile.role == 'professor' %}
+                        <th>Acciones</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for grade in grades %}
+                    <tr>
+                        <td>{{ grade.school_year.year|default:"N/A" }}</td>
+                        <td>{{ grade.trimester.Name|default:"N/A" }}</td>
+                        <td>{{ grade.subject.Name|default:"N/A" }}</td>
+                        <td>{{ grade.grade_type|default:"N/A" }}</td>
+                        <td class="{% if grade.grade < 5 %}grade-fail{% endif %}">
+                            {{ grade.grade }}
+                        </td>
+                        <td class="comment-cell">
+                            {{ grade.comments|default:"No hay comentario" }}
+                        </td>
+                        {% if user.is_authenticated and user.profile.role == 'professor' %}
+                        <td>
+                            <button type="button" class="btn-edit" onclick="window.location.href='{% url 'grade_edit' grade_id=grade.id %}'">Editar</button>
+                        </td>
+                        {% endif %}    
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" id="grades-note">No hay notas disponibles para los filtros seleccionados.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- SECCIÓN DE AUSENCIAS -->
+        <h2>Ausencias</h2>
+        {% if user.is_authenticated and user.profile.role == 'professor' %}
+        <button type="button" class="btn btn-success" onclick="window.location.href='{% url 'ausencia_create' student_id=student.StudentID %}'">
+            Crear Ausencia
+        </button>
+        <br><br>
+        {% endif %}
+
+        <div class="table-wrap">
+            <table class="table student-table" aria-describedby="absences-note">
+                <thead>
+                    <tr>
+                        <th>Año Escolar</th>
+                        <th>Trimestre</th>
+                        <th>Fecha y Hora</th>
+                        <th>Materia</th>
+                        <th>Tipo</th>
+                        {% if user.is_authenticated and user.profile.role == 'professor' %}
+                        <th>Acciones</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ausencia in ausencias %}
+                    <tr>
+                        <td>{{ ausencia.school_year.year|default:"N/A" }}</td>
+                        <td>{{ ausencia.trimester.Name|default:"N/A" }}</td>
+                        <td>{{ ausencia.date_time|date:"d/m/Y H:i" }}</td>
+                        <td>{{ ausencia.subject.Name|default:"N/A" }}</td>
                         <td class="{% if ausencia.Tipo == 'Retraso' %}absence-delay{% elif ausencia.Tipo == 'Ausencia' %}absence-absence{% endif %}">
                             {{ ausencia.Tipo }}
                         </td>
                         {% if user.is_authenticated and user.profile.role == 'professor' %}
                         <td>
-                            <button type="button" class="btn-edit" onclick="window.location.href='{% url 'ausencia_edit' ausencia_id=ausencia.id %}'">Edit</button>
+                            <button type="button" class="btn-edit" onclick="window.location.href='{% url 'ausencia_edit' ausencia_id=ausencia.id %}'">Editar</button>
                         </td>
                         {% endif %}
                     </tr>
-                {% empty %}
+                    {% empty %}
                     <tr>
-                        <td colspan="4" id="absences-note">No absences recorded.</td>
+                        <td colspan="6" id="absences-note">No hay ausencias registradas para los filtros seleccionados.</td>
                     </tr>
-                {% endfor %}
-            </tbody>
-                    </table>
-                </div>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
-
 {% endblock content %}

@@ -6,6 +6,7 @@
     <title>Panel de Administración Escolar</title>
     
     <style>
+        /* ... (TUS ESTILOS CSS COMPLETOS AQUÍ) ... */
         :root {
             --background-color: #121212;
             --text-color: #e0e0e0;
@@ -15,7 +16,9 @@
             --font-primary: 'Inter', system-ui, sans-serif;
             --config-button-color: #007bff;
             --assign-button-color: #28a745;
-            --student-button-color: #ff3e00; /* Color para crear/asignar estudiantes */
+            --student-button-color: #ff3e00; 
+            --promote-button-color: #ffc107; 
+            --modify-button-color: #004d99; /* 🆕 Nuevo color para Modificar Asignación */
             --logout-color: #dc3545;
         }
 
@@ -84,8 +87,9 @@
         
         .action-button,
         .assign-button,
-        .student-button { 
-            color: #333; /* Color de texto ajustado para student-button */
+        .student-button,
+        .promote-button,
+        .modify-button { /* Añadido .modify-button */
             padding: 0.75em 1.5em;
             border: none;
             border-radius: 3px;
@@ -97,19 +101,31 @@
 
         .action-button {
             background-color: var(--config-button-color);
-            color: #ffffff; /* Texto blanco para config */
+            color: #ffffff;
         }
 
         .assign-button {
             background-color: var(--assign-button-color);
-            color: #ffffff; /* Texto blanco para assign */
+            color: #ffffff;
         }
         
         .student-button {
             background-color: var(--student-button-color); 
             color: #333; 
         }
+
+        .promote-button {
+            background-color: var(--promote-button-color);
+            color: #333; 
+        }
         
+        /* 🆕 Estilo para la nueva página */
+        .modify-button {
+            background-color: var(--modify-button-color);
+            color: #ffffff;
+        }
+
+
         .action-button:hover {
             background-color: #0056b3;
         }
@@ -118,6 +134,12 @@
         }
         .student-button:hover {
             background-color: #e0a800;
+        }
+        .promote-button:hover {
+            background-color: #e0a800; 
+        }
+        .modify-button:hover {
+            background-color: #003366; /* Tono más oscuro al pasar el ratón */
         }
 
 
@@ -168,7 +190,9 @@
             <a href="{% url 'create_and_assign_student' %}" class="student-button"> 
                 Crear y Asignar Estudiante a Clase 
             </a>
-
+            <a href="{% url 'reassign_students' %}" class="modify-button">
+                Reasignar Estudiantes de Clase
+            </a>
             {% if school_years %}
                 {% with current_school_year_id=school_years.0.pk %}
                     <a href="{% url 'assign_subjects' %}?school_year_id={{ current_school_year_id }}" class="assign-button">

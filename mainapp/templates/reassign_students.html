@@ -1,0 +1,661 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Reasignar Estudiantes</title>
+    <style>
+        :root {
+            --background-color: #121212;
+            --text-color: #e0e0e0;
+            --primary-color: #ff3e00;
+            --secondary-color: #ff9800;
+            --card-bg: #1e1e1e;
+            --border-color: #333;
+            --button-primary: #007bff;
+            --button-success: #28a745;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            color: var(--text-color);
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1, h2 {
+            color: var(--text-color);
+            margin-bottom: 1.5rem;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            color: var(--secondary-color);
+        }
+
+        .filter-section {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+
+        select {
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background-color: #2a2a2a;
+            color: var(--text-color);
+            font-size: 1rem;
+        }
+
+        select:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .students-section {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .student-card {
+            background: #2a2a2a;
+            padding: 1.5rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .student-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .student-info h3 {
+            margin: 0 0 0.25rem 0;
+            color: var(--primary-color);
+        }
+
+        .student-info p {
+            margin: 0;
+            color: var(--text-color);
+            opacity: 0.8;
+        }
+
+        .destination-filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background-color: var(--button-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: var(--button-success);
+            color: white;
+            font-size: 1.1rem;
+            padding: 1rem 2rem;
+            margin-top: 1rem;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-success:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .messages {
+            list-style: none;
+            padding: 1rem;
+            background-color: #2e4d4d;
+            border-radius: 4px;
+            margin-bottom: 1.5rem;
+            border: 1px solid #4d8080;
+        }
+
+        .messages li {
+            margin: 0.5rem 0;
+        }
+
+        .no-students {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-color);
+            opacity: 0.6;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--secondary-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="{% url 'adminage_dashboard' %}" class="back-link">← Volver al Panel de Administración</a>
+        
+        <h1>Reasignar Estudiantes de Clase</h1>
+
+        {% if messages %}
+            <ul class="messages">
+                {% for message in messages %}
+                <li class="{{ message.tags }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <!-- FILTROS ORIGEN -->
+        <div class="filter-section">
+            <h2>1. Selecciona la Clase Origen</h2>
+            <div class="filter-row">
+                <div class="form-group">
+                    <label for="origin-school-year">Año Escolar:</label>
+                    <select id="origin-school-year">
+                        <option value="">-- Seleccionar --</option>
+                        {% for sy in school_years %}
+                            <option value="{{ sy.SchoolYearID }}">{{ sy.year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="origin-course-type">Tipo de Curso:</label>
+                    <select id="origin-course-type" disabled>
+                        <option value="">-- Seleccionar --</option>
+                        <option value="Eso">Eso</option>
+                        <option value="Bachillerato">Bachillerato</option>
+                        <option value="IB">IB</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="origin-course-number">Curso (Número):</label>
+                    <select id="origin-course-number" disabled>
+                        <option value="">-- Seleccionar --</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="origin-section-letter">Sección (Letra):</label>
+                    <select id="origin-section-letter" disabled>
+                        <option value="">-- Seleccionar --</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="btn btn-primary" id="load-students-btn" disabled>
+                Cargar Estudiantes
+            </button>
+        </div>
+
+        <!-- LISTA DE ESTUDIANTES -->
+        <form method="POST" id="reassignment-form">
+            {% csrf_token %}
+            <div class="students-section" id="students-section" style="display: none;">
+                <h2>2. Asigna Nueva Clase a cada Estudiante</h2>
+                <div id="students-container">
+                    <div class="loading">Cargando estudiantes...</div>
+                </div>
+                <button type="submit" class="btn btn-success" id="submit-btn" disabled>
+                    Guardar Reasignaciones
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Referencias a los selectores origen
+        const originSchoolYear = document.getElementById('origin-school-year');
+        const originCourseType = document.getElementById('origin-course-type');
+        const originCourseNumber = document.getElementById('origin-course-number');
+        const originSectionLetter = document.getElementById('origin-section-letter');
+        const loadStudentsBtn = document.getElementById('load-students-btn');
+        const studentsSection = document.getElementById('students-section');
+        const studentsContainer = document.getElementById('students-container');
+        const submitBtn = document.getElementById('submit-btn');
+
+        // Manejo de filtros en cascada - ORIGEN
+        originSchoolYear.addEventListener('change', function() {
+            console.log('=== EVENT: Año escolar changed ===');
+            console.log('Año escolar seleccionado:', this.value);
+            const value = this.value;
+            
+            console.log('Habilitando originCourseType...');
+            originCourseType.disabled = !value;
+            console.log('originCourseType.disabled:', originCourseType.disabled);
+            
+            originCourseNumber.disabled = true;
+            originSectionLetter.disabled = true;
+            loadStudentsBtn.disabled = true;
+            
+            // Solo resetear el valor, NO borrar las opciones del tipo de curso
+            originCourseType.value = "";
+            resetSelect(originCourseNumber);
+            resetSelect(originSectionLetter);
+            console.log('=== END EVENT ===');
+        });
+
+        originCourseType.addEventListener('change', function() {
+            console.log('=== EVENT: Tipo de curso changed ===');
+            console.log('Tipo de curso seleccionado:', this.value);
+            console.log('Año escolar actual:', originSchoolYear.value);
+            console.log('originCourseType element:', originCourseType);
+            console.log('originSchoolYear element:', originSchoolYear);
+            
+            if (this.value && originSchoolYear.value) {
+                console.log('✓ Ambos valores presentes, llamando a loadCourseNumbers...');
+                loadCourseNumbers('origin');
+            } else {
+                console.log('✗ Faltan valores, reseteando selects');
+                console.log('  this.value:', this.value);
+                console.log('  originSchoolYear.value:', originSchoolYear.value);
+                originCourseNumber.disabled = true;
+                originSectionLetter.disabled = true;
+                loadStudentsBtn.disabled = true;
+                resetSelect(originCourseNumber);
+                resetSelect(originSectionLetter);
+            }
+            console.log('=== END EVENT ===');
+        });
+        
+        console.log('Event listeners configurados correctamente');
+        console.log('originSchoolYear:', originSchoolYear);
+        console.log('originCourseType:', originCourseType);
+
+        originCourseNumber.addEventListener('change', function() {
+            if (this.value) {
+                loadSectionLetters('origin');
+            } else {
+                originSectionLetter.disabled = true;
+                loadStudentsBtn.disabled = true;
+                resetSelect(originSectionLetter);
+            }
+        });
+
+        originSectionLetter.addEventListener('change', function() {
+            loadStudentsBtn.disabled = !this.value;
+        });
+
+        // Cargar números de curso
+        function loadCourseNumbers(prefix) {
+            const schoolYearSelect = document.getElementById(`${prefix}-school-year`);
+            const typeSelect = document.getElementById(`${prefix}-course-type`);
+            const numberSelect = document.getElementById(`${prefix}-course-number`);
+            
+            const schoolYearId = schoolYearSelect.value;
+            const courseType = typeSelect.value;
+
+            console.log(`loadCourseNumbers para ${prefix}:`, {schoolYearId, courseType});
+
+            if (!schoolYearId || !courseType) {
+                console.log('Faltan parámetros, abortando');
+                return;
+            }
+
+            const url = `/ajax/get-course-numbers/?school_year_id=${schoolYearId}&course_type=${courseType}`;
+            console.log('Fetching:', url);
+
+            fetch(url)
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Datos recibidos:', data);
+                    resetSelect(numberSelect);
+                    
+                    if (data.numbers && data.numbers.length > 0) {
+                        data.numbers.forEach(num => {
+                            const option = document.createElement('option');
+                            option.value = num;
+                            option.textContent = num;
+                            numberSelect.appendChild(option);
+                        });
+                        numberSelect.disabled = false;
+                        console.log('Números cargados exitosamente');
+                    } else {
+                        console.log('No se encontraron números de curso');
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = '-- No hay cursos disponibles --';
+                        numberSelect.appendChild(option);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error en fetch:', error);
+                });
+        }
+
+        // Cargar letras de sección
+        function loadSectionLetters(prefix) {
+            const schoolYearSelect = document.getElementById(`${prefix}-school-year`);
+            const typeSelect = document.getElementById(`${prefix}-course-type`);
+            const numberSelect = document.getElementById(`${prefix}-course-number`);
+            const letterSelect = document.getElementById(`${prefix}-section-letter`);
+            
+            const schoolYearId = schoolYearSelect.value;
+            const courseType = typeSelect.value;
+            const courseNumber = numberSelect.value;
+
+            console.log(`loadSectionLetters para ${prefix}:`, {schoolYearId, courseType, courseNumber});
+
+            if (!schoolYearId || !courseType || !courseNumber) {
+                console.log('Faltan parámetros, abortando');
+                return;
+            }
+
+            const url = `/ajax/get-course-sections/?school_year_id=${schoolYearId}&course_type=${courseType}&course_number=${courseNumber}`;
+            console.log('Fetching:', url);
+
+            fetch(url)
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Datos recibidos:', data);
+                    resetSelect(letterSelect);
+                    
+                    if (data.sections && data.sections.length > 0) {
+                        data.sections.forEach(letter => {
+                            const option = document.createElement('option');
+                            option.value = letter;
+                            option.textContent = letter;
+                            letterSelect.appendChild(option);
+                        });
+                        letterSelect.disabled = false;
+                        console.log('Secciones cargadas exitosamente');
+                    } else {
+                        console.log('No se encontraron secciones');
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = '-- No hay secciones disponibles --';
+                        letterSelect.appendChild(option);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error en fetch:', error);
+                });
+        }
+
+        // Cargar estudiantes
+        loadStudentsBtn.addEventListener('click', function() {
+            const schoolYearId = originSchoolYear.value;
+            const courseType = originCourseType.value;
+            const courseNumber = originCourseNumber.value;
+            const sectionLetter = originSectionLetter.value;
+
+            studentsContainer.innerHTML = '<div class="loading">Cargando estudiantes...</div>';
+            studentsSection.style.display = 'block';
+
+            fetch(`/ajax/get-students/?school_year_id=${schoolYearId}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.students && data.students.length > 0) {
+                        renderStudents(data.students);
+                        submitBtn.disabled = false;
+                    } else {
+                        studentsContainer.innerHTML = '<div class="no-students">No se encontraron estudiantes en esta clase.</div>';
+                        submitBtn.disabled = true;
+                    }
+                });
+        });
+
+        // Renderizar estudiantes con filtros de destino
+        function renderStudents(students) {
+            studentsContainer.innerHTML = '';
+            
+            students.forEach((student, index) => {
+                const card = document.createElement('div');
+                card.className = 'student-card';
+                card.innerHTML = `
+                    <div class="student-header">
+                        <div class="student-info">
+                            <h3>${student.name}</h3>
+                            <p>${student.email}</p>
+                        </div>
+                    </div>
+                    <div class="destination-filters">
+                        <div class="form-group">
+                            <label>Año Escolar Destino:</label>
+                            <select class="dest-school-year" data-student="${student.id}">
+                                <option value="">-- Seleccionar --</option>
+                                {% for sy in school_years %}
+                                    <option value="{{ sy.SchoolYearID }}">{{ sy.year }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tipo:</label>
+                            <select class="dest-course-type" data-student="${student.id}" disabled>
+                                <option value="">-- Seleccionar --</option>
+                                <option value="Eso">Eso</option>
+                                <option value="Bachillerato">Bachillerato</option>
+                                <option value="IB">IB</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Curso:</label>
+                            <select class="dest-course-number" data-student="${student.id}" disabled>
+                                <option value="">-- Seleccionar --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sección:</label>
+                            <select class="dest-section-letter" data-student="${student.id}" disabled>
+                                <option value="">-- Seleccionar --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <input type="hidden" name="assignments" class="assignment-input" data-student="${student.id}" value="">
+                `;
+                studentsContainer.appendChild(card);
+                
+                // Configurar event listeners para este estudiante
+                setupDestinationFilters(student.id);
+            });
+        }
+
+        // Configurar filtros de destino para cada estudiante
+        function setupDestinationFilters(studentId) {
+            const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
+            const schoolYear = card.querySelector('.dest-school-year');
+            const courseType = card.querySelector('.dest-course-type');
+            const courseNumber = card.querySelector('.dest-course-number');
+            const sectionLetter = card.querySelector('.dest-section-letter');
+            const assignmentInput = card.querySelector('.assignment-input');
+
+            schoolYear.addEventListener('change', function() {
+                console.log(`Estudiante ${studentId}: Año destino seleccionado:`, this.value);
+                courseType.disabled = !this.value;
+                courseNumber.disabled = true;
+                sectionLetter.disabled = true;
+                
+                // Solo resetear el valor, NO las opciones del tipo de curso
+                courseType.value = "";
+                resetSelect(courseNumber);
+                resetSelect(sectionLetter);
+                assignmentInput.value = '';
+            });
+
+            courseType.addEventListener('change', function() {
+                console.log(`Estudiante ${studentId}: Tipo destino seleccionado:`, this.value);
+                if (this.value && schoolYear.value) {
+                    loadDestCourseNumbers(studentId);
+                } else {
+                    courseNumber.disabled = true;
+                    sectionLetter.disabled = true;
+                    resetSelect(courseNumber);
+                    resetSelect(sectionLetter);
+                    assignmentInput.value = '';
+                }
+            });
+
+            courseNumber.addEventListener('change', function() {
+                console.log(`Estudiante ${studentId}: Número destino seleccionado:`, this.value);
+                if (this.value) {
+                    loadDestSectionLetters(studentId);
+                } else {
+                    sectionLetter.disabled = true;
+                    resetSelect(sectionLetter);
+                    assignmentInput.value = '';
+                }
+            });
+
+            sectionLetter.addEventListener('change', function() {
+                console.log(`Estudiante ${studentId}: Sección destino seleccionada:`, this.value);
+                if (this.value) {
+                    updateAssignment(studentId);
+                } else {
+                    assignmentInput.value = '';
+                }
+            });
+        }
+
+        // Funciones para cargar opciones de destino
+        function loadDestCourseNumbers(studentId) {
+            console.log(`loadDestCourseNumbers para estudiante ${studentId}`);
+            const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
+            const schoolYear = card.querySelector('.dest-school-year').value;
+            const courseType = card.querySelector('.dest-course-type').value;
+            const numberSelect = card.querySelector('.dest-course-number');
+
+            console.log(`  schoolYear: ${schoolYear}, courseType: ${courseType}`);
+
+            fetch(`/ajax/get-course-numbers/?school_year_id=${schoolYear}&course_type=${courseType}`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(`  Números recibidos:`, data.numbers);
+                    resetSelect(numberSelect);
+                    if (data.numbers && data.numbers.length > 0) {
+                        data.numbers.forEach(num => {
+                            const option = document.createElement('option');
+                            option.value = num;
+                            option.textContent = num;
+                            numberSelect.appendChild(option);
+                        });
+                        numberSelect.disabled = false;
+                        console.log(`  Números cargados exitosamente`);
+                    } else {
+                        console.log(`  No hay números disponibles`);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        function loadDestSectionLetters(studentId) {
+            console.log(`loadDestSectionLetters para estudiante ${studentId}`);
+            const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
+            const schoolYear = card.querySelector('.dest-school-year').value;
+            const courseType = card.querySelector('.dest-course-type').value;
+            const courseNumber = card.querySelector('.dest-course-number').value;
+            const letterSelect = card.querySelector('.dest-section-letter');
+
+            console.log(`  schoolYear: ${schoolYear}, courseType: ${courseType}, courseNumber: ${courseNumber}`);
+
+            fetch(`/ajax/get-course-sections/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(`  Secciones recibidas:`, data.sections);
+                    resetSelect(letterSelect);
+                    if (data.sections && data.sections.length > 0) {
+                        data.sections.forEach(letter => {
+                            const option = document.createElement('option');
+                            option.value = letter;
+                            option.textContent = letter;
+                            letterSelect.appendChild(option);
+                        });
+                        letterSelect.disabled = false;
+                        console.log(`  Secciones cargadas exitosamente`);
+                    } else {
+                        console.log(`  No hay secciones disponibles`);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // Actualizar el valor del input oculto con la asignación
+        function updateAssignment(studentId) {
+            const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
+            const schoolYear = card.querySelector('.dest-school-year').value;
+            const courseType = card.querySelector('.dest-course-type').value;
+            const courseNumber = card.querySelector('.dest-course-number').value;
+            const sectionLetter = card.querySelector('.dest-section-letter').value;
+            const assignmentInput = card.querySelector('.assignment-input');
+
+            fetch(`/ajax/get-destination-courses/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.course_id) {
+                        assignmentInput.value = `${studentId}:${data.course_id}`;
+                    }
+                });
+        }
+
+        // Resetear un select
+        function resetSelect(select) {
+            console.log('Reseteando select:', select.id);
+            select.innerHTML = '<option value="">-- Seleccionar --</option>';
+            console.log('Select reseteado, innerHTML:', select.innerHTML);
+        }
+    </script>
+</body>
+</html>

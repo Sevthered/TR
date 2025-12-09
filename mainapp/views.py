@@ -1,5 +1,12 @@
+from .models import Students, Grade, Ausencias, School_year, Trimester, Profile
+from django.shortcuts import render, get_object_or_404
+from .models import (
+    School_year, Course, Students, Students_Courses
+)
+from django.shortcuts import render, redirect
 from django.http import JsonResponse
 import profile
+from django.db import transaction
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.shortcuts import render, get_object_or_404, redirect
@@ -14,154 +21,298 @@ from .forms import GradeForm, AusenciaForm, AusenciaEditForm, SchoolYearForm, Co
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
-from django.forms import formset_factory
+from django.forms import formset_factory, ModelChoiceField
 from django.http import Http404
 from django.urls import reverse
 # Create your views here.
 
 
 def loginPage(request):
-    # Verifica si el usuario ya está autenticado.
+    # Check authentication.
     if request.user.is_authenticated:
         try:
-            # Intenta obtener el perfil asociado al usuario autenticado.
+            # Get user profile.
             profile = request.user.profile
         except Exception:
-            # Si el perfil no existe por alguna razón, cierra la sesión.
+            # Profile missing, logout.
             logout(request)
-            # Muestra la página de inicio de sesión.
             return render(request, "mainapp/login.html")
 
-        # Redirecciona al usuario a su panel de control específico según su rol.
+        # Redirect based on role.
         if profile.role == 'student' and profile.student:
             return redirect('student_dashboard')
         elif profile.role == 'tutor':
-            return redirect('tutor_dashboard')
+            return redirect('student_dashboard')
         elif profile.role == 'professor':
             return redirect('teacher_dashboard')
         elif profile.role == 'administrator':
             return redirect('adminage_dashboard')
         else:
-            # Si el rol existe pero no es válido, muestra una página de acceso prohibido.
             return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Procesa el formulario de inicio de sesión (método POST).
+    # Process login form.
     if request.method == "POST":
-        # Extrae el nombre de usuario y la contraseña del formulario.
         username = request.POST.get("username")
         password = request.POST.get("password")
 
-        # Verifica que ambos campos hayan sido completados.
         if not username or not password:
             return render(request, "mainapp/login.html", {"error": "Please provide both username and password."})
 
         try:
-            # Verifica si el usuario existe en la base de datos antes de intentar la autenticación.
+            # Check if user exists.
             User.objects.get(username=username)
         except User.DoesNotExist:
-            # Si el usuario no existe, informa el error.
             return render(request, "mainapp/login.html", {"error": "User does not exist"})
 
-        # Intenta autenticar al usuario usando las credenciales proporcionadas.
+        # Authenticate user.
         user = authenticate(request, username=username, password=password)
 
         if user is not None:
-            # Si la autenticación es exitosa, inicia la sesión del usuario.
+            # Login successful.
             login(request, user)
             profile = request.user.profile
 
-            # Redirecciona al panel de control según el rol.
+            # Redirect based on role.
             if profile.role == 'student' and profile.student:
                 return redirect('student_dashboard')
             elif profile.role == 'tutor':
-                return redirect('tutor_dashboard')
+                return redirect('student_dashboard')
             elif profile.role == 'professor':
                 return redirect('teacher_dashboard')
+            elif profile.role == 'administrator':
+                return redirect('adminage_dashboard')
             else:
-                # Caso de rol no reconocido después del login.
+                # Unknown role.
                 return render(request, "forbidden.html", {"user": request.user, "profile": profile})
         else:
-            # Si el autenticador retorna None, las credenciales son inválidas.
+            # Invalid credentials.
             return render(request, "mainapp/login.html", {"error": "Invalid username or password"})
 
-    # Si la petición es GET (o cualquier otro método), simplemente muestra el formulario de inicio de sesión.
     return render(request, "mainapp/login.html")
 
 
 def logoutUser(request):
-    # Cierra la sesión del usuario.
+    # Logs out user.
     logout(request)
-    # Redirecciona al usuario a la página de inicio de sesión.
     return redirect('login')
 
 
 @login_required
 def student_detail(request):
-    # Obtiene el perfil del usuario actualmente autenticado.
+    """
+    Student dashboard view with filters.
+    Works for both students and tutors.
+    """
     profile = request.user.profile
 
-    # Restringe el acceso: solo los usuarios con rol 'student' y con un objeto Student asociado pueden continuar.
-    if profile.role != 'student' or not profile.student:
+    # Determine student to show.
+    student = None
+    is_tutor = False
+    children_info = []
+    selected_child = None
+    selected_child_obj = None
+
+    # Handle Tutor role.
+    if profile.role in ('tutor', 'legal_tutor'):
+        is_tutor = True
+        children = profile.children.all()
+
+        if not children.exists():
+            # No children assigned.
+            context = {
+                "is_tutor": True,
+                "children_info": [],
+            }
+            return render(request, "mainapp/student_file.html", context)
+
+        # Get selected child index.
+        try:
+            selected_child = int(request.GET.get('child', 0))
+        except (ValueError, TypeError):
+            selected_child = 0
+
+        # Validate index.
+        children_list = list(children)
+        if selected_child >= len(children_list) or selected_child < 0:
+            selected_child = 0
+
+        student = children_list[selected_child]
+
+    elif profile.role == 'student':
+        # Handle Student role.
+        if not profile.student:
+            return render(request, "mainapp/student_profile.html", {"user": request.user, "profile": profile})
+        student = profile.student
+
+    else:
+        # Unauthorized role.
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Obtiene el objeto Students asociado al perfil.
-    student = profile.student
+    # FILTERS: School Year & Trimester
+    all_school_years = list(School_year.objects.all().order_by('-year'))
 
-    # Consulta y recupera todas las calificaciones (Grade) y ausencias (Ausencias) del estudiante.
-    grades = Grade.objects.filter(student=student)
-    ausensias = Ausencias.objects.filter(
-        # Ordena las ausencias por fecha descendente.
-        student=student).order_by('-date_time')
+    # Get filter params.
+    selected_year_id_raw = request.GET.get('school_year_id')
+    selected_trimester_id_raw = request.GET.get('trimester_id')
 
-    # Prepara el contexto con los datos del estudiante y sus registros.
+    # Convert to int.
+    selected_year_id = None
+    if selected_year_id_raw:
+        try:
+            candidate = int(selected_year_id_raw)
+        except (ValueError, TypeError):
+            candidate = None
+        if candidate is not None and any(s.SchoolYearID == candidate for s in all_school_years):
+            selected_year_id = candidate
+
+    # Get available trimesters.
+    available_trimesters = []
+    selected_trimester_id = None
+    if selected_year_id:
+        available_trimesters = Trimester.objects.filter(
+            school_year__SchoolYearID=selected_year_id
+        ).order_by('Name')
+        if selected_trimester_id_raw:
+            try:
+                t_candidate = int(selected_trimester_id_raw)
+            except (ValueError, TypeError):
+                t_candidate = None
+            if t_candidate is not None and any(t.TrimesterID == t_candidate for t in available_trimesters):
+                selected_trimester_id = t_candidate
+
+    else:
+        selected_trimester_id = None
+
+    # FILTER GRADES
+    grades_qs = Grade.objects.filter(student=student)
+    if selected_year_id:
+        grades_qs = grades_qs.filter(
+            school_year__SchoolYearID=selected_year_id)
+    if selected_trimester_id:
+        grades_qs = grades_qs.filter(
+            trimester__TrimesterID=selected_trimester_id)
+
+    grades = grades_qs.select_related('subject', 'trimester', 'school_year').order_by(
+        '-school_year__year', 'trimester__Name', 'subject__Name'
+    )
+
+    # FILTER ABSENCES
+    ausencias_qs = Ausencias.objects.filter(student=student)
+    if selected_year_id:
+        ausencias_qs = ausencias_qs.filter(
+            school_year__SchoolYearID=selected_year_id)
+    if selected_trimester_id:
+        ausencias_qs = ausencias_qs.filter(
+            trimester__TrimesterID=selected_trimester_id)
+
+    ausencias = ausencias_qs.select_related(
+        'subject', 'trimester', 'school_year').order_by('-date_time')
+
+    # PREPARE children_info FOR TUTORS
+    if is_tutor:
+        for idx, child in enumerate(children):
+            # Child grades.
+            child_grades = Grade.objects.filter(student=child)
+            # Child absences.
+            child_ausencias = Ausencias.objects.filter(student=child)
+
+            # Apply filters.
+            if selected_year_id:
+                child_grades = child_grades.filter(
+                    school_year__SchoolYearID=selected_year_id)
+                child_ausencias = child_ausencias.filter(
+                    school_year__SchoolYearID=selected_year_id)
+
+            if selected_trimester_id:
+                child_grades = child_grades.filter(
+                    trimester__TrimesterID=selected_trimester_id)
+                child_ausencias = child_ausencias.filter(
+                    trimester__TrimesterID=selected_trimester_id)
+
+            children_info.append({
+                'student': child,
+                'grades': child_grades.select_related('subject', 'trimester', 'school_year'),
+                'ausencias': child_ausencias.select_related('subject', 'trimester', 'school_year'),
+            })
+
+        selected_child_obj = children_info[selected_child] if children_info else None
+
+    # PREPARE CONTEXT
     context = {
         "student": student,
         "grades": grades,
-        "ausencias": ausensias,
-        "is_tutor": False,  # Indica que esta vista no es la del tutor.
+        "ausencias": ausencias,
+        "is_tutor": is_tutor,
+        "children_info": children_info if is_tutor else None,
+        "selected_child": selected_child if is_tutor else None,
+        "selected_child_obj": selected_child_obj if is_tutor else None,
+        # Filter variables.
+        "all_school_years": all_school_years,
+        "available_trimesters": available_trimesters,
+        "selected_year_id": selected_year_id,
+        "selected_trimester_id": selected_trimester_id,
     }
-    # Renderiza la ficha detallada del estudiante.
+
     return render(request, "mainapp/student_file.html", context)
 
 
 def sort_key_section(course):
-    # Función auxiliar para ordenar los cursos por sección de forma lógica.
-    # Asume que la sección sigue un patrón como "1A", "2B", etc.
+    # Helper to sort courses by section (e.g., 1A, 2B).
 
     section = course.Section
-    # Extrae la parte numérica (e.g., '1' de '1A').
+    # Extract number part.
     number_part = int(section[0])
-    # Extrae la parte de la letra (e.g., 'A' de '1A').
+    # Extract letter part.
     letter_part = section[1]
 
-    # Retorna una tupla para que el método sorted() ordene primero por número y luego por letra.
+    # Return tuple for sorting.
     return (number_part, letter_part)
 
 
 @login_required
 def teacher_dashboard(request):
-    # Obtiene el perfil del usuario.
+    # Get user profile.
     profile = request.user.profile
 
-    # Restringe el acceso: solo los usuarios con rol 'professor' pueden acceder al dashboard.
+    # Restrict access to professors.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
     else:
-        # Recupera todos los datos necesarios para el dashboard: estudiantes, calificaciones, ausencias y cursos.
+        # Fetch dashboard data.
         all_students = Students.objects.all().order_by('Name')
         all_grades = Grade.objects.all()
         all_ausencias = Ausencias.objects.all()
-        all_courses = Course.objects.all()
 
-    # Ordena la lista de cursos en Python utilizando la función sort_key_section.
+        # Get available school years.
+        all_school_years = School_year.objects.all().order_by('-year')
+
+        # Get selected school year or default to newest.
+        selected_school_year = request.GET.get('school_year')
+
+        if selected_school_year:
+            try:
+                school_year = School_year.objects.get(
+                    SchoolYearID=selected_school_year)
+                all_courses = Course.objects.filter(school_year=school_year)
+            except School_year.DoesNotExist:
+                # Fallback to newest.
+                school_year = all_school_years.first()
+                all_courses = Course.objects.filter(
+                    school_year=school_year) if school_year else Course.objects.none()
+        else:
+            # Default to newest.
+            school_year = all_school_years.first()
+            all_courses = Course.objects.filter(
+                school_year=school_year) if school_year else Course.objects.none()
+
+    # Sort courses.
     sorted_courses = sorted(all_courses, key=sort_key_section)
 
-    # Inicializa listas vacías para categorizar los cursos por tipo (ESO, Bachillerato, IB).
+    # Categorize courses.
     eso_courses = []
     bachillerato_courses = []
     ib_courses = []
 
-    # Itera sobre los cursos ordenados y los clasifica.
     for course in sorted_courses:
         if course.Tipo == "Eso":
             eso_courses.append(course)
@@ -170,7 +321,7 @@ def teacher_dashboard(request):
         elif course.Tipo == "IB":
             ib_courses.append(course)
 
-    # Prepara el contexto para la plantilla, incluyendo los cursos clasificados.
+    # Prepare context.
     context = {
         "students": all_students,
         "grades": all_grades,
@@ -179,88 +330,103 @@ def teacher_dashboard(request):
         'eso_courses': eso_courses,
         'bachillerato_courses': bachillerato_courses,
         'ib_courses': ib_courses,
+        'school_years': all_school_years,
+        'selected_school_year': school_year,
     }
-    # Renderiza la plantilla del panel de control del profesor.
+    # Render dashboard.
     return render(request, "mainapp/teacher_dashboard.html", context)
 
 
 @login_required
 def section_courses(request, section):
-    # Obtiene el perfil del usuario.
     profile = request.user.profile
 
-    # Restringe el acceso: solo los usuarios con rol 'professor' pueden acceder a esta vista.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Normaliza el parámetro 'section' de la URL para facilitar la comparación.
     sec = (section or '').strip().lower()
 
-    # Define un mapeo de las secciones amigables (de la URL) a los valores exactos en la base de datos ('Eso', 'Bachillerato', 'IB').
+    # Map section types.
     mapping = {
         'eso': 'Eso',
         'bachillerato': 'Bachillerato',
         'ib': 'IB',
-        'todos': None,  # Usado para seleccionar todos los cursos.
-        # Alternativa en inglés para seleccionar todos los cursos.
+        'todos': None,
         'all': None,
     }
-    # Obtiene el valor objetivo para el filtro de la base de datos.
     target = mapping.get(sec)
 
-    # Verifica si la sección solicitada es una clave válida en el mapeo.
     if sec not in mapping:
-        # Si no es válida, redirige al dashboard del profesor (comportamiento indulgente).
         return redirect('teacher_dashboard')
 
-    # Filtra los cursos según el valor objetivo.
-    if target is None:
-        # Si es 'todos' o 'all' (target es None), obtiene todos los cursos.
-        courses_qs = Course.objects.all()
-    else:
-        # Filtra los cursos por el tipo (Tipo=target).
-        courses_qs = Course.objects.filter(Tipo=target)
+    # --- School Year Filter ---
 
-    # Ordena la lista de cursos obtenida utilizando la función auxiliar sort_key_section.
+    school_years_qs = School_year.objects.all().order_by('-year')
+    selected_year_id = None
+
+    # 1. Get School Year PK.
+    selected_year_id_str = request.GET.get('school_year_id')
+
+    if selected_year_id_str:
+        try:
+            selected_year_id = int(selected_year_id_str)
+        except ValueError:
+            selected_year_id = None
+
+    # Default to newest if not found.
+    if not selected_year_id and school_years_qs.exists():
+        selected_year_id = school_years_qs.first().pk
+
+    # --- Main Query ---
+
+    # Base QuerySet: Filter by school year.
+    if selected_year_id:
+        courses_base_qs = Course.objects.filter(
+            school_year_id=selected_year_id)
+    else:
+        courses_base_qs = Course.objects.none()
+
+    # Filter by Course Type.
+    if target is None:
+        courses_qs = courses_base_qs
+    else:
+        courses_qs = courses_base_qs.filter(Tipo=target)
+
+    # Sort and prepare context.
     sorted_courses = sorted(list(courses_qs), key=sort_key_section)
 
-    # Prepara el contexto con la lista de cursos ordenados y una etiqueta para la sección.
     context = {
-        # Etiqueta amigable para mostrar en la plantilla.
         'section_label': section.capitalize(),
         'courses': sorted_courses,
         'is_professor': True,
+
+        # Filter data.
+        'school_years': school_years_qs,
+        'selected_year_id': selected_year_id,
     }
-    # Renderiza la plantilla que muestra los cursos de una sección específica.
     return render(request, 'mainapp/section_courses.html', context)
 
 
 @login_required
 def class_dashboard(request, course_id):
-    # Requiere que el usuario esté autenticado.
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede ver el dashboard de la clase.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Course usando el course_id de la URL; si no existe, devuelve 404.
     course = get_object_or_404(Course, CourseID=course_id)
 
-    # Obtiene todas las instancias de Subjects_Courses relacionadas con este Course.
+    # Get all Subjects_Courses for this Course.
     subjects_courses = course.subjects_courses_set.all()
 
-    # Obtiene una lista distinta de todos los estudiantes inscritos en este curso, ordenados por nombre.
+    # Filter students by course section.
     students = Students.objects.filter(
-        subjects_courses__course=course).distinct().order_by('Name')
+        students_courses__course_section=course).distinct().order_by('Name')
 
-    # Maneja la creación de ausencias cuando se envía el formulario (POST).
     if request.method == 'POST':
-        # Instancia el formulario de ausencia (AusenciaForm) con los datos POST y el objeto Course.
         form = AusenciaForm(request.POST, course=course)
 
         if form.is_valid():
-            # Extrae los datos limpios del formulario. 'students_selected' es una lista de estudiantes.
             students_selected = form.cleaned_data.get('students')
             subject = form.cleaned_data.get('subject')
             school_year = form.cleaned_data.get('school_year')
@@ -269,9 +435,7 @@ def class_dashboard(request, course_id):
             date_time = form.cleaned_data.get('date_time')
 
             created = 0
-            # Itera sobre cada estudiante seleccionado para crear una Ausencia individual.
             for s in students_selected:
-                # Crea la instancia de Ausencias, asignando la fecha si fue proporcionada.
                 if date_time:
                     a = Ausencias(student=s, subject=subject,
                                   trimester=trimester, Tipo=tipo, date_time=date_time, school_year=school_year)
@@ -279,220 +443,232 @@ def class_dashboard(request, course_id):
                     a = Ausencias(student=s, subject=subject,
                                   trimester=trimester, Tipo=tipo, school_year=school_year)
                 try:
-                    # Intenta guardar la ausencia en la base de datos.
                     a.save()
                     created += 1
                 except Exception:
-                    # Ignora errores (como duplicados o validación) y continúa con el siguiente estudiante.
                     continue
 
-            # Muestra un mensaje de éxito con el contador de ausencias creadas.
             if created:
                 messages.success(
                     request, f'Ausencias creadas para {created} estudiante(s).')
             else:
                 messages.error(
                     request, 'No se creó ninguna ausencia (posibles duplicados).')
-            # Redirecciona para evitar el reenvío del formulario.
             return redirect('class_dashboard', course_id=course.CourseID)
         else:
-            # Si el formulario no es válido, muestra un mensaje de error.
             messages.error(request, 'Errores en el formulario de ausencia.')
     else:
-        # Petición GET: Instancia el formulario vacío (o con valores por defecto) para mostrarlo.
         form = AusenciaForm(course=course)
 
-    # Prepara el contexto para la plantilla del dashboard.
     context = {
         "course": course,
         "subjects_courses": subjects_courses,
         "students": students,
         "ausencia_form": form,
     }
-    # Renderiza el dashboard de la clase.
     return render(request, "mainapp/class_dashboard.html", context)
 
 
 @login_required
-def download_class_list(request, subject_course_id):
-    # Requiere autenticación.
-    # Verifica que el usuario tenga el rol 'professor'.
+def download_class_list(request, course_id):
+    # Check if user is professor.
     if request.user.profile.role != 'professor':
-        return HttpResponse("Acceso denegado.", status=403)
+        return HttpResponse("Access denied.", status=403)
 
-    # El ID recibido se utiliza para buscar el objeto Subjects_Courses a través del Course ID.
-    course_id_received = subject_course_id
+    # 1. Get Course object.
+    course = get_object_or_404(Course, CourseID=course_id)
 
-    # Busca la primera instancia de Subjects_Courses asociada al CourseID.
-    subject_course = Subjects_Courses.objects.filter(
-        course__CourseID=course_id_received
-    ).first()
+    # Get subject (optional).
+    subject_course = Subjects_Courses.objects.filter(course=course).first()
 
     if not subject_course:
-        return HttpResponse("No se encontró una clase asociada a este curso.", status=404)
+        pass
 
-    # Configura la respuesta HTTP para descargar un archivo CSV.
+    # Configure CSV response.
     response = HttpResponse(content_type='text/csv')
 
-    # Genera el nombre del archivo CSV basado en el tipo y sección del curso (e.g., 'Eso1A_import_template.csv').
-    filename = f"{subject_course.course.Tipo}{subject_course.course.Section}_import_template.csv"
+    # Generate filename.
+    filename = f"{course.Tipo}{course.Section}_import_template.csv"
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
-    # Inicializa el escritor CSV.
+    # Initialize CSV writer.
     writer = csv.writer(response)
 
-    # Escribe la fila de encabezado que define el formato de importación esperado (para notas).
+    # Write header.
     writer.writerow(['Nombre_Estudiante', 'Asignatura', 'Trimestre',
                     'Año_Escolar', 'Nota', 'Tipo_Nota', 'Numero_Tipo_Nota', 'Comentarios'])
 
-    # Obtiene la lista de estudiantes directamente de la relación en Subjects_Courses, ordenados por nombre.
-    students = subject_course.students.all().order_by('Name')
-
-    # Obtiene todas las asignaturas asociadas al curso (aunque no se usan en la plantilla, puede ser informativo).
-    subjects = Subjects.objects.filter(
-        subjects_courses__course=subject_course.course
+    # Get all students in the class.
+    students = Students.objects.filter(
+        students_courses__course_section=course
     ).distinct().order_by('Name')
 
-    # Calcula el string del año escolar actual (e.g., '2025-2026') para prellenar la plantilla.
+    # Get current school year string.
     current_year = timezone.now().year
     school_year_str = f"{current_year}-{current_year + 1}"
 
-    # Itera sobre los estudiantes para crear una fila de plantilla para cada uno.
+    # Iterate over students.
     for student in students:
-        # Escribe la fila con el nombre del estudiante y valores por defecto para el resto de columnas.
+        # Write row with defaults.
         writer.writerow([
-            student.Name,  # Nombre_Estudiante
-            '',  # Asignatura (vacío)
-            '',  # Trimestre (vacío)
-            school_year_str,  # Año_Escolar (predeterminado)
-            '',  # Nota (vacío)
-            'examen',  # Tipo_Nota (valor por defecto)
-            '0',  # Numero_Tipo_Nota (valor por defecto)
-            ''  # Comentarios (vacío)
+            student.Name,
+            '',  # Subject
+            '',  # Trimester
+            school_year_str,
+            '',  # Grade
+            'examen',
+            '0',
+            ''  # Comments
         ])
 
-    # Retorna la respuesta HTTP que fuerza la descarga del archivo.
     return response
 
 
 @login_required
 def student_dashboard_content(request, student_id):
-    # Requiere autenticación.
+    # Authentication required.
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede acceder a esta vista.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Students usando el student_id de la URL; si no existe, devuelve 404.
+    # Get student.
     student = get_object_or_404(Students, StudentID=student_id)
 
-    # Consulta todas las calificaciones y ausencias del estudiante, ordenando estas últimas por fecha.
-    grades = Grade.objects.filter(student=student)
-    ausensias = Ausencias.objects.filter(
-        student=student).order_by('-date_time')
+    # --- FILTER LOGIC ---
 
-    # Verifica si se pasó un 'course' ID como parámetro GET para permitir un enlace de "volver al curso".
+    # 1. Get filter IDs.
+    selected_year_id = request.GET.get('school_year_id')
+    selected_trimester_id = request.GET.get('trimester_id')
+
+    # 2. Base QuerySets.
+    grades_qs = Grade.objects.filter(student=student)
+    ausencias_qs = Ausencias.objects.filter(student=student)
+
+    # 3. Prepare options.
+    all_school_years = School_year.objects.all().order_by('-year')
+    available_trimesters = Trimester.objects.none()
+
+    # 4. Apply School Year filter.
+    if selected_year_id:
+        try:
+            selected_year_id = int(selected_year_id)
+        except (ValueError, TypeError):
+            selected_year_id = None
+
+        if selected_year_id:
+            grades_qs = grades_qs.filter(school_year_id=selected_year_id)
+            ausencias_qs = ausencias_qs.filter(school_year_id=selected_year_id)
+
+            # Populate trimesters for this year.
+            available_trimesters = Trimester.objects.filter(
+                school_year_id=selected_year_id).order_by('Name')
+
+    # 5. Apply Trimester filter.
+    if selected_trimester_id:
+        try:
+            selected_trimester_id = int(selected_trimester_id)
+        except (ValueError, TypeError):
+            selected_trimester_id = None
+
+        if selected_trimester_id:
+            grades_qs = grades_qs.filter(trimester_id=selected_trimester_id)
+            ausencias_qs = ausencias_qs.filter(
+                trimester_id=selected_trimester_id)
+
+    # --- END FILTER LOGIC ---
+
+    # Check for return course.
     return_course = request.GET.get('course')
 
-    # Prepara el contexto para la plantilla.
+    # Prepare context.
     context = {
         "student": student,
-        "grades": grades,
-        "ausencias": ausensias,
-        "is_tutor": False,  # Indica que esta no es la vista de tutor.
-        "return_course": return_course,  # Pasa el ID del curso de retorno.
+        "grades": grades_qs.order_by('trimester__Name'),
+        "ausencias": ausencias_qs.order_by('-date_time'),
+        "is_tutor": False,
+        "return_course": return_course,
+
+        # Filter context.
+        "all_school_years": all_school_years,
+        "available_trimesters": available_trimesters,
+        "selected_year_id": selected_year_id,
+        "selected_trimester_id": selected_trimester_id,
     }
-    # Renderiza el contenido del dashboard del estudiante (generalmente para ser incrustado en otra página).
     return render(request, "mainapp/student_dashboard_content.html", context)
 
 
 @login_required
+@login_required
 def tutor_dashboard(request):
-    # Requiere autenticación.
-    profile = request.user.profile
-
-    # Restricción de rol: solo el 'tutor' puede acceder a esta vista.
-    if profile.role != 'tutor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-
-    # Obtiene la lista de "hijos" (estudiantes) asociados al perfil del tutor.
-    children = profile.children.all()
-    children_info = []
-
-    # Itera sobre cada hijo para recopilar sus notas y ausencias.
-    for child in children:
-        grades = Grade.objects.filter(student=child)
-        ausensias = Ausencias.objects.filter(
-            student=child).order_by('-date_time')
-        children_info.append({
-            "student": child,
-            "grades": grades,
-            "ausensias": ausensias,
-        })
-
-    # Intenta obtener el índice del hijo seleccionado desde el parámetro GET 'child', por defecto 0.
-    try:
-        selected_child = int(request.GET.get("child", 0))
-    except (TypeError, ValueError):
-        selected_child = 0
-
-    # Selecciona el objeto de información del hijo si el índice es válido.
-    selected_child_obj = children_info[selected_child] if children_info and 0 <= selected_child < len(
-        children_info) else None
-
-    # Prepara el contexto con la información de todos los hijos y el hijo seleccionado.
-    context = {
-        "children_info": children_info,
-        "selected_child": selected_child,
-        "selected_child_obj": selected_child_obj,
-        "is_tutor": True,  # Indica que esta es la vista de tutor.
-    }
-    # Reutiliza la plantilla 'student_file.html' para mostrar la información del hijo seleccionado.
-    return render(request, "mainapp/student_file.html", context)
+    """
+    Deprecated view. Redirects to student_dashboard which handles
+    tutor logic and filtering correctly.
+    """
+    return redirect('student_dashboard')
 
 
 @login_required
 def grades_csv(request, student_id=None):
-    # Vista genérica para descargar calificaciones en formato CSV, adaptable por rol.
+    # Generic view to download grades as CSV.
     profile = request.user.profile
-    grades = Grade.objects.none()  # Inicializa un QuerySet vacío.
+    grades = Grade.objects.none()
     filename = "student_data.csv"
 
+    # --- GET FILTERS ---
+    selected_year_id = request.GET.get('school_year_id')
+    selected_trimester_id = request.GET.get('trimester_id')
+
     if profile.role == "student" and profile.student:
-        # Estudiante: filtra solo sus propias notas.
+        # Student: own grades.
         student = profile.student
         grades = Grade.objects.filter(student=student)
         filename = f"{student.Name}_notas.csv"
     elif profile.role == "tutor":
-        # Tutor: filtra las notas de todos sus hijos.
+        # Tutor: all children.
         children = list(profile.children.all())
         grades = Grade.objects.filter(student__in=children)
         filename = f"{request.user.username}_notas.csv"
     elif profile.role == "professor":
         if student_id:
-            # Profesor (con ID de estudiante): filtra las notas de un estudiante específico.
+            # Professor (specific student).
             student = get_object_or_404(Students, pk=student_id)
             grades = Grade.objects.filter(student=student)
             filename = f"{student.Name}_notas.csv"
         else:
-            # Profesor (sin ID): obtiene todas las notas de la base de datos.
+            # Professor (all).
             grades = Grade.objects.all()
             filename = "all_grades.csv"
     else:
-        # Acceso denegado para cualquier otro rol.
+        # Access denied.
         return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
 
-    # Configura la respuesta HTTP para la descarga CSV.
+    # --- APPLY FILTERS ---
+    if selected_year_id:
+        try:
+            grades = grades.filter(school_year_id=int(selected_year_id))
+        except (ValueError, TypeError):
+            pass
+
+    if selected_trimester_id:
+        try:
+            grades = grades.filter(trimester_id=int(selected_trimester_id))
+            trim_obj = Trimester.objects.get(pk=int(selected_trimester_id))
+            filename = filename.replace(".csv", f"_T{trim_obj.Name}.csv")
+        except (ValueError, TypeError, Trimester.DoesNotExist):
+            pass
+
+    # Configure CSV response.
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
 
-    # Escribe el encabezado CSV.
+    # Write header.
     writer.writerow(
         ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero tipo de Nota', 'Comentario'])
 
-    # Itera sobre las notas obtenidas y escribe una fila por cada una.
+    # Write rows.
     for grade in grades:
         student = grade.student
         student_name = student.Name
@@ -509,27 +685,26 @@ def grades_csv(request, student_id=None):
             grade.grade_type_number,
             grade.comments
         ])
-    # Retorna la respuesta para iniciar la descarga.
     return response
 
 
 @login_required
 def class_grades_download(request, course_id):
-    # Vista para descargar notas de una clase específica, con opciones de filtrado.
+    # Download grades for a specific class.
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede acceder.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Course.
+    # Get Course.
     course = get_object_or_404(Course, CourseID=course_id)
 
-    # Obtiene todos los estudiantes asociados a este curso.
+    # Filter students by course section.
     students_in_course = Students.objects.filter(
-        subjects_courses__course=course).distinct()
+        students_courses__course_section=course).distinct()
 
-    # Obtiene las asignaturas, trimestres, años escolares y tipos de nota que *existen* en las notas de estos estudiantes.
+    # Get available filters based on existing data.
     subjects_in_course = Subjects.objects.filter(
         grade__student__in=students_in_course).distinct().order_by('Name')
     trimesters = Trimester.objects.filter(
@@ -539,18 +714,18 @@ def class_grades_download(request, course_id):
     grade_types = Grade.objects.filter(
         student__in=students_in_course).values_list('grade_type', flat=True).distinct().order_by('grade_type')
 
-    # Maneja la petición POST para generar y descargar el CSV filtrado.
+    # Handle POST to generate CSV.
     if request.method == 'POST':
-        # Obtiene los filtros seleccionados por el usuario.
+        # Get filters.
         selected_subject_id = request.POST.get('subject')
         selected_trimester_id = request.POST.get('trimester')
         selected_school_year_id = request.POST.get('school_year')
         selected_grade_type = request.POST.get('grade_type')
 
-        # Empieza con todas las notas de los estudiantes del curso.
+        # Base grades.
         grades = Grade.objects.filter(student__in=students_in_course)
 
-        # Aplica los filtros de forma incremental al QuerySet.
+        # Apply filters.
         if selected_subject_id:
             grades = grades.filter(subject_id=selected_subject_id)
         if selected_trimester_id:
@@ -565,8 +740,8 @@ def class_grades_download(request, course_id):
         if selected_subject_id:
             subject = get_object_or_404(Subjects, pk=selected_subject_id)
             filename_parts.append(subject.Name)
-        # (Se añaden más partes al nombre del archivo si se usaron más filtros...)
-        # ... (código de generación de filename omitido para brevedad) ...
+        # ... (continúa con la lógica de generación de filename) ...
+        # Aquí se necesita completar la lógica original de filename:
         filename = "_".join(filename_parts) + "_grades.csv"
 
         # Genera el CSV y la respuesta de descarga.
@@ -574,14 +749,23 @@ def class_grades_download(request, course_id):
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         writer = csv.writer(response)
 
-        # Escribe el encabezado CSV (Nota: faltaría 'Numero tipo de Nota' si se usa en otras vistas).
+        # Escribe el encabezado CSV
         writer.writerow(
-            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Comentario'])
+            ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero_Tipo_Nota', 'Comentario'])
 
         # Itera y escribe las notas filtradas.
         for grade in grades:
-            # (Código para escribir la fila omitido para brevedad)
-            pass
+            writer.writerow([
+                grade.student.Name,
+                grade.subject.Name,
+                grade.trimester.Name,
+                grade.school_year.year,
+                grade.grade,
+                grade.grade_type,
+                grade.grade_type_number,
+                grade.comments
+            ])
+
         return response
 
     # Petición GET: Muestra el formulario de filtrado para que el profesor elija las opciones.
@@ -598,111 +782,131 @@ def class_grades_download(request, course_id):
 
 @login_required
 def create_edit_grade(request, grade_id=None, student_id=None):
-    # Vista para crear una nota nueva o editar una existente.
-    profile = request.user.profile
+    """
+    Create or edit a grade.
+    Pre-selects student and latest school year.
+    """
+    try:
+        profile = request.user.profile
+    except User.profile.RelatedObjectDoesNotExist:
+        return render(request, "error.html", {"message": "User has no profile."})
 
-    # Restricción de rol: solo el 'professor' puede acceder.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     student_instance = None
     grade_instance = None
+    initial_data = {}
 
-    # Determina si es edición o creación y obtiene las instancias necesarias.
+    # 1. Get latest school year.
+    latest_year = School_year.objects.all().order_by('-year').first()
+
+    # Determine edit or create mode.
     if grade_id:
-        # Edición: recupera la nota y el estudiante asociado.
+        # Edit mode.
         grade_instance = get_object_or_404(Grade, id=grade_id)
         student_instance = grade_instance.student
+        initial_data['student'] = student_instance.pk
     elif student_id:
-        # Creación: recupera el estudiante al que se le va a asignar la nota.
+        # Create mode.
         student_instance = get_object_or_404(Students, pk=student_id)
+        initial_data['student'] = student_instance.pk
 
-    # Maneja la petición POST (envío del formulario de nota).
+        # 2. Set default school year.
+        if latest_year:
+            initial_data['school_year'] = latest_year.pk
+
+    # Handle POST.
     if request.method == "POST":
-        # Instancia el formulario, en modo edición si grade_instance existe.
         form = GradeForm(request.POST, instance=grade_instance)
 
         if form.is_valid():
-            # Obtiene la instancia del modelo del formulario sin guardarla en la base de datos (commit=False).
-            g = form.save(commit=False)
+            g = form.save()
 
-        # Asigna el estudiante (solo es necesario si es una nota nueva, ya que en edición ya está asignado).
-        if not grade_id:
-            g.student = student_instance
-
-        # Guarda la instancia final en la base de datos (actualiza o crea).
-        g.save()
-
-        messages.success(request, "Grade saved successfully.")
-        # Redirecciona al dashboard del estudiante afectado.
-        return redirect('student_dashboard_content', student_id=student_instance.pk)
+            messages.success(request, "Grade saved successfully.")
+            return redirect('student_dashboard_content', student_id=student_instance.pk)
     else:
-        # Petición GET: Muestra el formulario, prellenado si es una edición.
-        form = GradeForm(instance=grade_instance)
+        # GET request.
+        form = GradeForm(instance=grade_instance, initial=initial_data)
 
-    # Prepara el contexto para la plantilla del formulario.
     context = {
         "form": form,
-        # Booleano para indicar si es modo edición.
         "is_edit": grade_instance is not None,
         "student": student_instance,
     }
-    # Renderiza el formulario de creación/edición de nota.
     return render(request, "mainapp/grade_form.html", context)
+
+
+# =================================================================
+# 2. AJAX VIEW: LOAD TRIMESTERS
+# =================================================================
+
+def load_trimesters(request):
+    """
+    Returns trimesters for a school year as JSON.
+    """
+    school_year_id = request.GET.get('school_year_id')
+
+    trimesters = Trimester.objects.filter(
+        school_year_id=school_year_id).order_by('Name')
+
+    trimester_list = [
+        # Use Name (1, 2, 3) as display text.
+        {'id': trimester.pk,
+         'name': trimester.Name
+         }
+        for trimester in trimesters
+    ]
+
+    return JsonResponse({'trimesters': trimester_list})
 
 
 @login_required
 def create_edit_ausencia(request, ausencia_id=None, student_id=None):
-    # Vista para crear una ausencia nueva o editar una existente (similar a create_edit_grade).
+    # Create or edit absence.
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede acceder.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     student_instance = None
     ausencia_instance = None
 
-    # Determina si es edición o creación.
+    # Determine edit or create mode.
     if ausencia_id:
-        # Edición: recupera la ausencia y el estudiante asociado.
+        # Edit mode.
         ausencia_instance = get_object_or_404(Ausencias, id=ausencia_id)
         student_instance = ausencia_instance.student
     elif student_id:
-        # Creación: recupera el estudiante para la nueva ausencia.
+        # Create mode.
         student_instance = get_object_or_404(Students, pk=student_id)
 
-    # Maneja la petición POST (envío del formulario de ausencia).
+    # Handle POST.
     if request.method == "POST":
-        # Instancia el formulario de edición (AusenciaEditForm) o creación.
         form = AusenciaEditForm(request.POST, instance=ausencia_instance)
 
         if form.is_valid():
-            # Obtiene la instancia del modelo sin guardar (commit=False).
             ausencia = form.save(commit=False)
 
-        # Asigna el estudiante (solo si es una nueva ausencia).
+        # Assign student if new.
         if not ausencia_id:
             ausencia.student = student_instance
 
-        # Guarda la instancia final en la base de datos.
         ausencia.save()
 
         messages.success(request, "Absence saved successfully.")
-        # Redirecciona al dashboard del estudiante.
         return redirect('student_dashboard_content', student_id=student_instance.pk)
     else:
-        # Petición GET: Muestra el formulario.
+        # GET request.
         form = AusenciaEditForm(instance=ausencia_instance)
 
-    # Prepara el contexto.
     context = {
         "form": form,
-        # Booleano para indicar si es modo edición.
         "is_edit": ausencia_instance is not None,
         "student": student_instance,
     }
-    # Renderiza el formulario de creación/edición de ausencia.
     return render(request, "mainapp/ausencia_form.html", context)
 
 
@@ -710,104 +914,92 @@ def create_edit_ausencia(request, ausencia_id=None, student_id=None):
 def search_students(request):
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede acceder a la búsqueda.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Obtiene el término de búsqueda ('q') y el filtro opcional de curso ('course') de los parámetros GET.
+    # Get query and optional course filter.
     query = (request.GET.get('q') or '').strip()
-    # ID opcional para limitar la búsqueda a una clase.
     course_id = request.GET.get('course')
 
-    students_qs = Students.objects.none()  # Inicializa un QuerySet vacío.
+    students_qs = Students.objects.none()
 
-    # Lógica para aplicar el filtro de curso.
+    # Filter by course.
     if course_id:
         try:
-            # Intenta obtener el objeto Course.
             course_obj = Course.objects.get(CourseID=course_id)
-            # Filtra a los estudiantes que están relacionados con este curso a través de Subjects_Courses.
+            # Filter by Students -> Students_Courses -> Course
             students_qs = Students.objects.filter(
-                subjects_courses__course=course_obj).distinct()
+                students_courses__course_section=course_obj
+            ).distinct()
         except Course.DoesNotExist:
-            # Si el curso no existe, el QuerySet se mantiene vacío (no hay resultados).
             students_qs = Students.objects.none()
     else:
-        # Si no hay filtro de curso, la búsqueda comienza con todos los estudiantes.
+        # No course filter, start with all.
         students_qs = Students.objects.all()
 
-    # Define una función local para normalizar cadenas, eliminando acentos (diacríticos).
     def _strip_accents(text):
         if not text:
             return ''
-        # Normaliza la cadena a su forma canónica de descomposición (NFKD).
         nkfd = unicodedata.normalize('NFKD', text)
-        # Filtra los caracteres combinatorios (los acentos).
         return ''.join([c for c in nkfd if not unicodedata.combining(c)])
 
-    # Lógica para aplicar el filtro de la consulta ('query').
+    # Filter by query.
     if query:
-        # Normaliza la consulta del usuario (sin acentos, minúsculas).
         qnorm = _strip_accents(query).lower()
 
-        # Intento de optimización: usa `unaccent` a nivel de base de datos (típico de PostgreSQL).
+        # Try DB-level unaccent optimization.
         try:
-            # Importaciones necesarias para operaciones avanzadas de base de datos.
             from django.db.models import Func, F
 
-            # Construye un QuerySet candidato anotando campos sin acento para filtrar de forma eficiente.
             students_qs_candidate = students_qs.annotate(
-                # Crea el campo 'name_unaccent'
                 name_unaccent=Func(F('Name'), function='unaccent'),
-                # Crea el campo 'email_unaccent'
                 email_unaccent=Func(F('Email'), function='unaccent'),
             ).filter(
-                # Filtra por coincidencia parcial (icontains) en el nombre O el email sin acentos.
                 Q(name_unaccent__icontains=qnorm) | Q(
                     email_unaccent__icontains=qnorm)
             ).order_by('Name')
 
-            # Intenta evaluar el QuerySet (tomando un elemento) para forzar la ejecución de SQL.
-            # Esto detecta si la función `unaccent` existe en la base de datos.
+            # Test execution.
             try:
                 _ = list(students_qs_candidate[:1])
-                # Si tiene éxito, usa el QuerySet optimizado.
                 students_qs = students_qs_candidate
             except Exception:
-                # Si el SQL falla (la función `unaccent` no está disponible), salta al bloque `except` principal.
                 raise
         except Exception:
-            # Mecanismo de respaldo (fallback) en caso de que la función `unaccent` no esté disponible.
+            # Fallback to Python filtering.
             matched = []
-            # Itera sobre el QuerySet original y filtra en Python (menos eficiente para grandes volúmenes).
             for s in students_qs:
                 name_val = getattr(s, 'Name', '') or ''
                 email_val = getattr(s, 'Email', '') or ''
-                # Compara si la consulta normalizada está en el nombre o email normalizados del estudiante.
                 if qnorm in _strip_accents(name_val).lower() or qnorm in _strip_accents(email_val).lower():
                     matched.append(s)
-            # Usa la lista de estudiantes filtrados en Python.
             students_qs = matched
     else:
-        # Si no hay consulta de búsqueda y tampoco filtro de curso, devuelve un QuerySet vacío.
         if not course_id:
             students_qs = Students.objects.none()
 
-    # Prepara los resultados finales para la plantilla.
+    # Prepare results.
     results = []
     for s in students_qs:
-        # Obtiene todos los cursos relacionados con el estudiante.
-        courses = Course.objects.filter(
-            subjects_courses__students=s).distinct()
-        # Formatea las etiquetas de los cursos (ej: "Eso 1B").
+        # Get courses.
+        student_courses_relations = Students_Courses.objects.filter(
+            student=s
+        ).select_related('course_section')
+
+        courses = [
+            sc.course_section
+            for sc in student_courses_relations
+            if sc.course_section is not None
+        ]
+
         course_labels = [f"{c.Tipo} {c.Section}" for c in courses]
+
         results.append({
             'student': s,
-            # Lista de cursos a los que está inscrito el estudiante.
             'courses': course_labels,
         })
 
-    # Prepara el contexto y renderiza la página de resultados.
     context = {
         'query': query,
         'results': results,
@@ -820,21 +1012,20 @@ def search_students(request):
 def import_grades(request, course_id=None):
     profile = request.user.profile
 
-    # Restricción de rol: solo el 'professor' puede acceder a la importación.
+    # Restrict to professor.
     if profile.role != 'professor':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Recupera el objeto Course si se proporciona el ID en la URL.
+    # Get Course.
     course = None
     if course_id:
         course = get_object_or_404(Course, CourseID=course_id)
 
-    # Maneja la petición POST (envío del archivo CSV).
+    # Handle POST (CSV upload).
     if request.method == 'POST':
-        # Obtiene el archivo CSV subido.
         csv_file = request.FILES.get('csv_file')
 
-        # Validación básica del archivo.
+        # Basic validation.
         if not csv_file:
             messages.error(request, 'Por favor selecciona un archivo CSV.')
             return render(request, 'mainapp/import_grades.html', {'course': course})
@@ -843,22 +1034,21 @@ def import_grades(request, course_id=None):
             messages.error(request, 'El archivo debe ser un CSV.')
             return render(request, 'mainapp/import_grades.html', {'course': course})
 
-        # Contadores de resultados de la importación.
+        # Counters.
         created_count = 0
         updated_count = 0
         error_count = 0
         errors = []
 
         try:
-            # Lee el contenido del CSV, decodificándolo como UTF-8.
+            # Read CSV.
             csv_content = csv_file.read().decode('utf-8')
-            # Usa DictReader para tratar cada fila como un diccionario (basado en el encabezado).
             reader = csv.DictReader(csv_content.splitlines())
 
-            # Itera sobre las filas del CSV (el conteo comienza en 2 para incluir la fila de encabezado).
+            # Iterate rows.
             for row_num, row in enumerate(reader, start=2):
                 try:
-                    # Intenta parsear los valores de la fila. Soporta nombres de columna en español o inglés como fallback.
+                    # Parse values.
                     student_name = row.get('Nombre_Estudiante') or row.get(
                         'student_name', '').strip()
                     subject_name = row.get('Asignatura') or row.get(
@@ -867,27 +1057,25 @@ def import_grades(request, course_id=None):
                         'trimester_name', '').strip()
                     school_year_str = row.get('Año_Escolar') or row.get(
                         'school_year', '').strip()
-                    # Convierte la nota a float.
                     grade_value = float(row.get('Nota') or row.get('grade', 0))
                     grade_type = (row.get('Tipo_Nota') or row.get(
                         'grade_type', 'examen')).strip()
-                    # Convierte el número de tipo de nota a entero.
                     grade_type_number = int(
                         row.get('Numero_Tipo_Nota') or row.get('grade_type_number', 0) or 0)
                     comments = (row.get('Comentarios')
                                 or row.get('comments', '')).strip()
 
-                    # Obtiene el estudiante y la asignatura (si no existen, lanza una excepción).
+                    # Get Student and Subject.
                     student = Students.objects.get(Name=student_name)
                     subject = Subjects.objects.get(Name=subject_name)
 
-                    # Obtiene o crea el objeto School_year basado en el string.
+                    # Get or create School Year.
                     school_year, _ = School_year.objects.get_or_create(
                         year=school_year_str,
                         defaults={'year': school_year_str}
                     )
 
-                    # Obtiene o crea el objeto Trimester, asociado al año escolar.
+                    # Get or create Trimester.
                     trimester, _ = Trimester.objects.get_or_create(
                         Name=int(trimester_name),
                         school_year=school_year,
@@ -895,7 +1083,7 @@ def import_grades(request, course_id=None):
                             trimester_name), 'school_year': school_year}
                     )
 
-                    # Crea o actualiza la nota (Grade). Usa todos los campos como clave única.
+                    # Update or Create Grade.
                     grade, created = Grade.objects.update_or_create(
                         student=student,
                         subject=subject,
@@ -904,152 +1092,140 @@ def import_grades(request, course_id=None):
                         grade_type=grade_type,
                         grade_type_number=grade_type_number,
                         defaults={
-                            # Estos son los campos que se actualizan o se establecen al crear.
                             'grade': grade_value,
                             'comments': comments,
                         }
                     )
 
-                    # Incrementa los contadores.
                     if created:
                         created_count += 1
                     else:
                         updated_count += 1
 
-                # Manejo de errores específicos (si no encuentra estudiante o asignatura).
                 except Students.DoesNotExist:
                     errors.append(
-                        f"Fila {row_num}: Estudiante '{student_name}' no encontrado")
+                        f"Row {row_num}: Student '{student_name}' not found")
                     error_count += 1
                 except Subjects.DoesNotExist:
                     errors.append(
-                        f"Fila {row_num}: Asignatura '{subject_name}' no encontrada")
+                        f"Row {row_num}: Subject '{subject_name}' not found")
                     error_count += 1
                 except Exception as e:
-                    # Manejo de otros errores (ej: ValueError al convertir a float o int).
-                    errors.append(f"Fila {row_num}: {str(e)}")
+                    errors.append(f"Row {row_num}: {str(e)}")
                     error_count += 1
 
-            # Muestra el resumen de los resultados de la importación usando mensajes de Django.
+            # Show summary.
             if created_count > 0:
-                messages.success(request, f'✓ Creadas: {created_count} notas')
+                messages.success(request, f'✓ Created: {created_count}')
             if updated_count > 0:
                 messages.info(
-                    request, f'↻ Actualizadas: {updated_count} notas')
+                    request, f'↻ Updated: {updated_count}')
             if error_count > 0:
-                messages.error(request, f'❌ Errores: {error_count} notas')
-                # Muestra los primeros 10 errores para no saturar.
+                messages.error(request, f'❌ Errors: {error_count}')
                 for error in errors[:10]:
                     messages.error(request, error)
                 if len(errors) > 10:
                     messages.error(
-                        request, f'... y {len(errors) - 10} errores más')
+                        request, f'... and {len(errors) - 10} more errors')
 
         except Exception as e:
-            # Captura errores al abrir o procesar el archivo CSV en general.
-            messages.error(request, f'Error al procesar el archivo: {str(e)}')
+            messages.error(request, f'Error processing file: {str(e)}')
 
-    # Prepara el contexto para la plantilla (útil si hay que mostrar el curso).
     context = {
         'course': course,
     }
-    # Renderiza la plantilla de importación de notas.
     return render(request, 'mainapp/import_grades.html', context)
 
 
 @login_required
 def adminage_dashboard_view(request):
     profile = request.user.profile
-    # Restricción de rol: solo el 'administrator' puede ver este panel.
+    # Restrict to administrator.
     if profile.role != 'administrator':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Prepara el contexto con la lista de años escolares existentes, ordenados del más reciente al más antiguo.
     context = {
-        'title': 'Panel de Administración Escolar',
+        'title': 'School Admin Dashboard',
         'school_years': School_year.objects.all().order_by('-year')
     }
-    # Renderiza el dashboard principal.
     return render(request, "adminage/adminage_dashboard.html", context)
 
 
 # =======================================================
-# --- VISTA 1: CREAR AÑO ESCOLAR ---
+# --- VIEW 1: CREATE SCHOOL YEAR ---
 # =======================================================
 @login_required
 def create_school_year_view(request):
     profile = request.user.profile
-    # Restricción de rol.
+    # Restrict to administrator.
     if profile.role != 'administrator':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Maneja la creación del Año Escolar (POST).
+    # Handle POST.
     if request.method == 'POST':
         form = SchoolYearForm(request.POST)
         if form.is_valid():
-            # 1. Crea y guarda el objeto School_year.
+            # 1. Create School_year.
             school_year_obj = form.save()
 
-            # 2. Crea automáticamente los 3 Trimestres asociados a ese año escolar.
+            # 2. Create 3 Trimesters.
             trimestres_a_crear = [
                 Trimester(Name=1, school_year=school_year_obj),
                 Trimester(Name=2, school_year=school_year_obj),
                 Trimester(Name=3, school_year=school_year_obj),
             ]
-            # Usa 'bulk_create' para insertar los 3 trimestres con una sola consulta a la base de datos (más eficiente).
+            # Bulk create.
             Trimester.objects.bulk_create(trimestres_a_crear)
 
             messages.success(
-                request, f"Año Escolar {school_year_obj.year} creado. Se han generado 3 trimestres asociados.")
+                request, f"School Year {school_year_obj.year} created with 3 trimesters.")
 
-            # 3. Redirige a la siguiente vista de configuración (creación de cursos), pasando el ID del nuevo año escolar.
+            # 3. Redirect to course creation.
             url = reverse('create_courses_sections')
             return redirect(f'{url}?school_year_id={school_year_obj.pk}')
         else:
-            # Si el formulario falla, muestra un error.
             messages.error(
-                request, "Error al crear el Año Escolar. Por favor, corrija los errores.")
+                request, "Error creating School Year.")
     else:
-        # Petición GET: Muestra el formulario vacío.
+        # GET request.
         form = SchoolYearForm()
 
     context = {
         'form': form,
-        'title': 'Crear Nuevo Año Escolar'
+        'title': 'Create New School Year'
     }
     return render(request, "adminage/create_school_year.html", context)
 
 
 # =======================================================
-# --- VISTA 2: CREAR SECCIONES DE CURSO (Multi-Step) ---
+# --- VIEW 2: CREATE COURSE SECTIONS (Multi-Step) ---
 # =======================================================
 @login_required
 def create_courses_sections_view(request):
     profile = request.user.profile
-    # Restricción de rol.
+    # Restrict to administrator.
     if profile.role != 'administrator':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Obtiene el ID del año escolar de los parámetros GET (debe venir de la vista anterior).
+    # Get School Year ID.
     school_year_id = request.GET.get('school_year_id')
 
-    # Valida que el proceso haya comenzado con la definición de un Año Escolar.
+    # Validate flow.
     if not school_year_id:
-        messages.error(request, "Debe comenzar definiendo un Año Escolar.")
+        messages.error(request, "Start by defining a School Year.")
         return redirect('adminage_dashboard')
 
-    # Obtiene el objeto School_year (lanza 404 si no existe).
+    # Get School Year object.
     try:
         school_year = School_year.objects.get(pk=school_year_id)
     except School_year.DoesNotExist:
-        raise Http404("Año Escolar no encontrado.")
+        raise Http404("School Year not found.")
 
     context = {'school_year': school_year}
 
-    # --- PASO 1 POST (Selección del Tipo: ESO, Bachillerato, etc.) ---
+    # --- STEP 1 POST (Select Type) ---
     if request.method == 'POST' and request.POST.get('step') == 'select_type':
 
-        # Crea el formulario principal con los datos POST y el ID del año.
         form_main = CourseCreationForm(
             request.POST,
             initial_school_year_id=school_year_id,
@@ -1057,23 +1233,18 @@ def create_courses_sections_view(request):
         )
 
         if not form_main.is_valid():
-            messages.error(
-                request, "Error de validación. Revise la selección inicial.")
+            messages.error(request, "Validation error.")
             context['form'] = form_main
             return render(request, "adminage/create_courses_step1.html", context)
 
-        # Si es válido, extrae el tipo de curso seleccionado.
         course_tipo = form_main.cleaned_data['course_tipo']
-
-        # Llama a la función auxiliar para pasar al Paso 2.
         return _render_step2(request, course_tipo, school_year, form_main)
 
-    # --- PASO 2 POST (Guardado de Secciones Confirmadas) ---
+    # --- STEP 2 POST (Confirm Sections) ---
     elif request.method == 'POST' and request.POST.get('step') == 'confirm_sections':
 
         course_tipo = request.POST.get('course_tipo')
 
-        # Vuelve a validar el formulario principal (contiene datos clave como el año y el tipo).
         form_main = CourseCreationForm(
             request.POST,
             initial_school_year_id=school_year_id,
@@ -1081,30 +1252,24 @@ def create_courses_sections_view(request):
         )
 
         if not form_main.is_valid():
-            messages.error(request, "Error de validación. Vuelva a empezar.")
+            messages.error(request, "Validation error. Restart.")
             return redirect('adminage_dashboard')
 
-        # Crea una factoría para el formset (colección de formularios) para las secciones.
         CourseFormSet = formset_factory(CourseSectionForm, extra=0)
-        # Instancia el formset con los datos POST.
         formset = CourseFormSet(request.POST)
 
         if formset.is_valid():
             num_created = 0
 
-            # Itera sobre los formularios del formset para crear las secciones.
             for form_section in formset:
                 if form_section.cleaned_data:
-                    # Ej: '1'
                     main_course_name = form_section.cleaned_data['main_course_name']
-                    # Ej: 3 (para A, B, C)
                     num_subsections = form_section.cleaned_data['num_subsections']
-                    # Genera las letras de sección (A=65, B=66, etc.).
+                    # Generate letters (A=65, B=66...).
                     subsection_letters = [chr(65 + i)
                                           for i in range(num_subsections)]
 
                     new_courses = []
-                    # Crea un objeto Course para cada subsección (Ej: '1A', '1B', '1C').
                     for letter in subsection_letters:
                         new_courses.append(
                             Course(
@@ -1113,49 +1278,40 @@ def create_courses_sections_view(request):
                                 school_year=school_year
                             )
                         )
-                    # Inserta todas las nuevas secciones de curso con 'bulk_create'.
                     Course.objects.bulk_create(new_courses)
                     num_created += len(new_courses)
 
             messages.success(
-                request, f"{num_created} secciones de cursos ({course_tipo}) creadas exitosamente para {school_year}.")
+                request, f"{num_created} sections created for {course_tipo} ({school_year}).")
 
-            # Redirige al dashboard de administración.
             return redirect('adminage_dashboard')
 
         else:
-            # Si el formset falla, muestra error y vuelve a renderizar el Paso 2 con los errores.
-            messages.error(
-                request, "Por favor, corrige los errores en las secciones.")
+            messages.error(request, "Please correct errors.")
             return _render_step2(request, course_tipo, school_year, form_main, formset=formset)
 
-    # --- PASO 1 GET (Carga Inicial) ---
+    # --- STEP 1 GET (Initial Load) ---
     else:
-        # Petición GET: Carga el formulario inicial de selección de Tipo.
         form = CourseCreationForm(
             initial_school_year_id=school_year_id,
             initial={'school_year': school_year}
         )
         context['form'] = form
-        # Renderiza el primer paso.
         return render(request, "adminage/create_courses_step1.html", context)
 
 
-# Función auxiliar para renderizar el Paso 2
+# Helper to render Step 2
 def _render_step2(request, course_tipo, school_year, form_main, formset=None):
     profile = request.user.profile
-    # Aplica la restricción de rol (por si se llama directamente con un rol incorrecto).
     if profile.role != 'administrator':
         return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
-    # Si no se proporciona un formset (es la primera vez que se carga el Paso 2), se inicializa.
     if not formset:
         CourseFormSet = formset_factory(CourseSectionForm, extra=0)
         initial_data = []
-        # Utiliza un diccionario global (MAIN_COURSES) para obtener los niveles principales del Tipo de curso.
+        # Use MAIN_COURSES global.
         if course_tipo in MAIN_COURSES:
             for main_course_num in MAIN_COURSES[course_tipo]:
-                # Prepara los datos iniciales para el formset.
                 initial_data.append({
                     'main_course_name': str(main_course_num),
                     'display_name': f"{main_course_num}º {course_tipo}"
@@ -1163,33 +1319,30 @@ def _render_step2(request, course_tipo, school_year, form_main, formset=None):
         formset = CourseFormSet(initial=initial_data)
 
     context = {
-        'form_main': form_main,  # Formulario principal (oculto)
-        'formset': formset,  # Formset de secciones a definir
+        'form_main': form_main,
+        'formset': formset,
         'course_tipo': course_tipo,
         'school_year': school_year,
-        'title': f"Definir Secciones para {course_tipo} ({school_year})"
+        'title': f"Define Sections for {course_tipo} ({school_year})"
     }
-    # Renderiza la plantilla del Paso 2.
     return render(request, "adminage/create_courses_step2.html", context)
 
 
 @login_required
 def assign_subjects_view(request):
     """
-    Vista compleja para asignar una asignatura (y profesor) a múltiples trimestres de un curso,
-    definiendo opcionalmente un subconjunto de estudiantes del curso que tomarán esa materia.
+    Complex view to assign subject/teacher to multiple trimesters,
+    optionally defining a subset of students.
     """
-    # Obtiene las opciones de tipos de curso.
     course_types = Course.COURSE_TYPE_CHOICES
 
-    # 1. DEFINICIÓN E INICIALIZACIÓN DE VARIABLES
-    # Obtiene el año escolar más reciente como valor por defecto.
+    # 1. INITIALIZATION
+    # Get latest school year default.
     latest_school_year = School_year.objects.order_by(
         '-year').only('pk').first()
     school_year_id = request.GET.get('school_year_id') or (
         str(latest_school_year.pk) if latest_school_year else '')
 
-    # Formulario de asignación de asignatura/profesor.
     current_form = SubjectAssignmentForm()
     selected_course_id = request.GET.get('course_id')
     current_school_year = None
@@ -1197,59 +1350,52 @@ def assign_subjects_view(request):
     course_students_links = None
     target_course = None
 
-    # Si hay un ID de año escolar válido, carga los objetos necesarios.
+    # Load objects if school year valid.
     if school_year_id:
         try:
             current_school_year = School_year.objects.get(pk=school_year_id)
-            # Filtra los trimestres asociados a ese año.
             trimesters = Trimester.objects.filter(
                 school_year=current_school_year).order_by('Name')
 
-            # Ajusta los QuerySets del formulario para Asignatura y Profesor.
             current_form.fields['subject'].queryset = Subjects.objects.all().order_by(
                 'Name')
             current_form.fields['teacher'].queryset = Teachers.objects.all().order_by(
                 'Name')
 
         except School_year.DoesNotExist:
-            messages.error(request, "Año escolar no válido.")
+            messages.error(request, "Invalid School Year.")
             return redirect('assign_subjects')
 
-    # Obtiene los enlaces de estudiantes (registros Students_Courses) si se selecciona un curso.
+    # Get student links if course selected.
     if selected_course_id:
         try:
             target_course = Course.objects.get(pk=selected_course_id)
-            # Obtiene los registros de la tabla intermedia que vinculan estudiantes al curso.
             course_students_links = Students_Courses.objects.filter(
                 course_section=target_course
             ).select_related('student').order_by('student__Name')
         except Course.DoesNotExist:
             messages.warning(
-                request, "El ID de curso seleccionado no es válido.")
+                request, "Invalid Course ID.")
             selected_course_id = None
 
-    # 2. Manejo del POST (Creación/Actualización de Asignación Subjects_Courses)
+    # 2. HANDLE POST (Create/Update Assignment)
     if request.method == 'POST':
 
-        # Recupera IDs del POST (pueden venir de campos ocultos o filtros).
         selected_course_id = request.POST.get('course_id')
         school_year_id_post = request.POST.get('school_year_id')
         final_school_year_id = school_year_id_post or school_year_id
 
-        # Valida IDs esenciales.
         if not selected_course_id or not final_school_year_id:
             messages.error(
-                request, "Error: Debe seleccionar una sección de curso y un año escolar válido.")
+                request, "Error: Select course and school year.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
-        # Vuelve a obtener el objeto Course.
         try:
             target_course = Course.objects.get(pk=selected_course_id)
         except Course.DoesNotExist:
-            messages.error(request, "Sección de curso no válida.")
+            messages.error(request, "Invalid Course.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
-        # Carga y valida el formulario de Asignatura/Profesor.
         form = SubjectAssignmentForm(request.POST)
         form.fields['subject'].queryset = Subjects.objects.all().order_by(
             'Name')
@@ -1257,41 +1403,38 @@ def assign_subjects_view(request):
             'Name')
 
         if form.is_valid():
-            # --- 🟢 LÓGICA DE TRIMESTRES ---
+            # --- TRIMESTER LOGIC ---
             trimester_ids_selected = request.POST.getlist(
                 'trimesters_selected')
 
             if not trimester_ids_selected:
                 messages.error(
-                    request, "Error: Debe seleccionar al menos un trimestre.")
-                # Si falla, se reestablecen los filtros para que el usuario pueda corregir.
+                    request, "Error: Select at least one trimester.")
                 current_form = form
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
             try:
-                # Obtiene los objetos Trimester seleccionados.
                 selected_trimesters = Trimester.objects.filter(
                     pk__in=trimester_ids_selected,
                     school_year__pk=final_school_year_id
                 )
             except ValueError:
                 messages.error(
-                    request, "Error de datos: IDs de trimestre no válidos.")
+                    request, "Error: Invalid Trimester IDs.")
                 current_form = form
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
-            # --- 🟢 LÓGICA DE ESTUDIANTES ---
-            # Obtiene los IDs de los registros Students_Courses seleccionados (los *enlaces* a los estudiantes).
+            # --- STUDENT LOGIC ---
+            # Get selected student link IDs.
             assigned_students_courses_ids_selected = request.POST.getlist(
                 'student_links_selected')
 
             try:
-                # Convierte a una lista de IDs de enteros.
                 assigned_students_courses_ids = [
                     int(pk) for pk in assigned_students_courses_ids_selected if pk]
             except ValueError:
                 messages.error(
-                    request, "Error de datos: Los IDs de estudiante seleccionados no son válidos.")
+                    request, "Error: Invalid Student IDs.")
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
             student_count = len(assigned_students_courses_ids)
@@ -1300,34 +1443,31 @@ def assign_subjects_view(request):
             teacher = form.cleaned_data['teacher']
             newly_created_objects = []
 
-            # 1. Crea/Obtiene el registro Subjects_Courses para cada TRIMESTRE.
+            # 1. Create/Get Subjects_Courses for each TRIMESTER.
             for trimester in selected_trimesters:
                 assignment, created = Subjects_Courses.objects.get_or_create(
                     subject=subject,
                     course=target_course,
                     trimester=trimester,
-                    # Si se crea, asigna el profesor.
                     defaults={'teacher': teacher}
                 )
-                # Si ya existía, actualiza el profesor si es diferente.
                 if not created and assignment.teacher != teacher:
                     assignment.teacher = teacher
                     assignment.save()
 
                 newly_created_objects.append(assignment)
 
-            # 2. Asigna los enlaces de estudiantes a CADA registro Subjects_Courses.
+            # 2. Assign student links.
             if student_count > 0:
                 for assignment in newly_created_objects:
-                    # Usa .set() para reemplazar la lista de estudiantes asignados a esta materia-trimestre.
                     assignment.assigned_course_sections.set(
                         assigned_students_courses_ids)
 
                 messages.success(
-                    request, f"Asignación de {subject.Name} creada/actualizada para {len(newly_created_objects)} trimestre(s) y {student_count} estudiantes.")
+                    request, f"Assignment of {subject.Name} created/updated for {len(newly_created_objects)} trimester(s) and {student_count} students.")
 
             else:
-                # Si no se seleccionó ningún estudiante, limpia la relación ManyToMany.
+                # If no students selected, clear ManyToMany.
                 for assignment in newly_created_objects:
                     assignment.assigned_course_sections.clear()
                 messages.warning(
@@ -1432,18 +1572,17 @@ def load_course_sections(request):
 
 
 # =======================================================
-# --- VISTA ÚNICA: CREAR ESTUDIANTE Y ASIGNAR CLASE ---
+# --- SINGLE VIEW: CREATE STUDENT AND ASSIGN CLASS ---
 # =======================================================
 @login_required
 def create_and_assign_student_view(request):
     """
-    Gestiona la creación de un nuevo estudiante (tabla Students) y su asignación
-    a una sección de curso específica (creando un registro en Students_Courses).
+    Creates a new student and assigns them to a course section.
     """
 
     course_types = Course.COURSE_TYPE_CHOICES
 
-    # Obtiene el ID del año escolar más reciente para preselección en los filtros AJAX.
+    # Get latest school year ID for AJAX filters.
     latest_school_year = School_year.objects.order_by(
         '-year').only('pk').first()
     latest_school_year_id = str(
@@ -1453,48 +1592,272 @@ def create_and_assign_student_view(request):
 
     if request.method == 'POST':
         current_form = StudentCreationForm(request.POST)
-        # ID de la sección de curso seleccionada.
+        # Selected course section ID.
         course_id = request.POST.get('course_id')
 
         if current_form.is_valid():
 
             if not course_id:
                 messages.error(
-                    request, "Error: Debe seleccionar una sección de curso (Tipo, Nivel, Sección) para asignar al estudiante.")
+                    request, "Error: Select a course section to assign.")
             else:
                 try:
-                    # Obtiene el objeto Course seleccionado.
+                    # Get selected Course.
                     target_course = Course.objects.get(pk=course_id)
                 except Course.DoesNotExist:
                     messages.error(
-                        request, "Error: La sección de curso seleccionada no es válida.")
+                        request, "Error: Invalid course section.")
                 else:
-                    # 1. CREAR ESTUDIANTE (Tabla Students)
+                    # 1. Create Student.
                     new_student = current_form.save()
 
-                    # 2. CREAR LA RELACIÓN (Tabla Students_Courses)
-                    # Esto vincula al estudiante recién creado con el curso.
+                    # 2. Create Relation (Students_Courses).
                     Students_Courses.objects.create(
                         student=new_student,
                         course_section=target_course
                     )
 
                     messages.success(
-                        request, f"Estudiante '{new_student.Name}' creado y asignado a {target_course.Section} exitosamente.")
+                        request, f"Student '{new_student.Name}' created and assigned to {target_course.Section}.")
 
-                    # Redirige para mostrar el formulario limpio tras el éxito.
+                    # Redirect to clear form.
                     return redirect('create_and_assign_student')
 
         else:
             messages.error(
-                request, "Error en los datos del estudiante. Revise el Nombre y Email.")
+                request, "Error: Check student data (Name/Email).")
 
     context = {
-        'title': 'Crear Estudiante y Asignar Clase',
+        'title': 'Create Student and Assign Class',
         'form': current_form,
         'course_types': course_types,
         'current_school_year_id': latest_school_year_id,
-        # Pasa el ID del curso seleccionado (en caso de que el POST haya fallado).
+        # Pass selected course ID if POST failed.
         'selected_course_id': request.POST.get('course_id', ''),
     }
     return render(request, "adminage/create_and_assign_student.html", context)
+
+
+def reassign_students(request):
+    """
+    Main view to reassign students from one class to another.
+    """
+    if request.method == 'POST':
+        # Process reassignment.
+        # List of "student_id:course_id"
+        assignments = request.POST.getlist('assignments')
+
+        success_count = 0
+        error_count = 0
+
+        for assignment in assignments:
+            if not assignment or assignment == ':':
+                continue
+
+            try:
+                student_id, new_course_id = assignment.split(':')
+                student = Students.objects.get(StudentID=student_id)
+                new_course = Course.objects.get(CourseID=new_course_id)
+
+                # Find existing assignment.
+                existing_assignment = Students_Courses.objects.filter(
+                    student=student
+                ).first()
+
+                if existing_assignment:
+                    # Update existing.
+                    existing_assignment.course_section = new_course
+                    existing_assignment.save()
+                else:
+                    # Create new if not exists.
+                    Students_Courses.objects.create(
+                        student=student,
+                        course_section=new_course
+                    )
+
+                success_count += 1
+
+            except Exception as e:
+                error_count += 1
+                messages.error(
+                    request, f"Error reassigning student: {str(e)}")
+
+        if success_count > 0:
+            messages.success(
+                request, f"{success_count} student(s) reassigned successfully.")
+        if error_count > 0:
+            messages.warning(
+                request, f"{error_count} error(s) during reassignment.")
+
+        return redirect('reassign_students')
+
+    # GET: Show form.
+    school_years = School_year.objects.all().order_by('-year')
+    course_types = Course.COURSE_TYPE_CHOICES
+
+    context = {
+        'school_years': school_years,
+        'course_types': course_types,
+    }
+
+    return render(request, 'reassign_students.html', context)
+
+
+def ajax_get_course_numbers(request):
+    """
+    AJAX endpoint to get available course numbers
+    based on selected school year and type.
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+
+    if not school_year_id or not course_type:
+        return JsonResponse({'numbers': [], 'error': 'Missing parameters'})
+
+    try:
+        # Get matching courses.
+        courses = Course.objects.filter(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type
+        )
+
+        # Extract unique numbers from Section field.
+        sections = courses.values_list('Section', flat=True)
+
+        # Try extracting first numeric character.
+        numbers = set()
+        for section in sections:
+            if section:
+                # Extract digits from start of string.
+                num = ''
+                for char in section:
+                    if char.isdigit():
+                        num += char
+                    else:
+                        break
+                if num:
+                    numbers.add(num)
+
+        numbers_list = sorted(list(numbers))
+
+        return JsonResponse({'numbers': numbers_list})
+
+    except Exception as e:
+        return JsonResponse({'numbers': [], 'error': str(e)})
+
+
+def ajax_get_course_sections(request):
+    """
+    AJAX endpoint to get available sections (letters)
+    based on year, type, and course number.
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+
+    if not all([school_year_id, course_type, course_number]):
+        return JsonResponse({'sections': [], 'error': 'Missing parameters'})
+
+    try:
+        # Find sections starting with selected number.
+        courses = Course.objects.filter(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section__startswith=course_number
+        )
+
+        # Extract letters (everything after number).
+        sections = set()
+        for course in courses:
+            section = course.Section
+            if section:
+                # Skip initial digits and take the rest.
+                letter_part = ''
+                skip_digits = True
+                for char in section:
+                    if skip_digits and char.isdigit():
+                        continue
+                    skip_digits = False
+                    letter_part += char
+
+                if letter_part:
+                    sections.add(letter_part)
+
+        sections_list = sorted(list(sections))
+
+        return JsonResponse({'sections': sections_list})
+
+    except Exception as e:
+        return JsonResponse({'sections': [], 'error': str(e)})
+
+
+def ajax_get_students(request):
+    """
+    AJAX endpoint to get students of a specific class.
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+    section_letter = request.GET.get('section_letter')
+
+    if not all([school_year_id, course_type, course_number, section_letter]):
+        return JsonResponse({'students': [], 'error': 'Missing parameters'})
+
+    # Build full Section (e.g., '1A').
+    section_full = f"{course_number}{section_letter}"
+
+    # Find specific course.
+    try:
+        course = Course.objects.get(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section=section_full
+        )
+
+        # Get students assigned to this course.
+        student_courses = Students_Courses.objects.filter(
+            course_section=course
+        ).select_related('student')
+
+        students = [
+            {
+                'id': sc.student.StudentID,
+                'name': sc.student.Name,
+                'email': sc.student.Email
+            }
+            for sc in student_courses
+        ]
+
+        return JsonResponse({'students': students, 'course_id': course.CourseID})
+
+    except Course.DoesNotExist:
+        return JsonResponse({'students': [], 'error': 'Course not found'})
+    except Exception as e:
+        return JsonResponse({'students': [], 'error': str(e)})
+
+
+def ajax_get_destination_courses(request):
+    """
+    AJAX endpoint to get destination course ID.
+    """
+    school_year_id = request.GET.get('school_year_id')
+    course_type = request.GET.get('course_type')
+    course_number = request.GET.get('course_number')
+    section_letter = request.GET.get('section_letter')
+
+    if not all([school_year_id, course_type, course_number, section_letter]):
+        return JsonResponse({'course_id': None, 'error': 'Missing parameters'})
+
+    section_full = f"{course_number}{section_letter}"
+
+    try:
+        course = Course.objects.get(
+            school_year__SchoolYearID=school_year_id,
+            Tipo=course_type,
+            Section=section_full
+        )
+        return JsonResponse({'course_id': course.CourseID})
+    except Course.DoesNotExist:
+        return JsonResponse({'course_id': None, 'error': 'Course not found'})
+    except Exception as e:
+        return JsonResponse({'course_id': None, 'error': str(e)})
