@@ -3,14 +3,13 @@ from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausenc
 
 
 class CSVImportForm(forms.Form):
-    # Formulario simple, no basado en modelos, diseñado únicamente para manejar la subida de un archivo.
+    # Simple form for CSV upload.
     csv_file = forms.FileField()
 
 
 class GradeForm(forms.ModelForm):
     class Meta:
         model = Grade
-        # Orden corregido: school_year debe ir antes de trimester
         fields = ['student', 'school_year', 'trimester', 'subject',
                   'grade_type', 'grade_type_number', 'grade', 'comments']
 
@@ -22,22 +21,17 @@ class GradeForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # 1. Ordenar el año escolar (más reciente primero)
+        # 1. Order school year (newest first)
         self.fields['school_year'].queryset = School_year.objects.all().order_by(
             '-year')
 
-        # 2. VACIAR EL QUERYSET DEL TRIMESTRE EN MODO CREACIÓN
-        # Si NO estamos editando una instancia existente:
+        # 2. Empty trimester queryset on creation
         if not self.instance or not self.instance.pk:
-
-            # Fuerza el queryset del trimestre a estar vacío.
             self.fields['trimester'].queryset = Trimester.objects.none()
-
-            # Etiqueta y deshabilitación visual.
-            self.fields['trimester'].empty_label = "Seleccione un año escolar"
+            self.fields['trimester'].empty_label = "Select a school year"
             self.fields['trimester'].widget.attrs['disabled'] = True
 
-        # 3. (Opcional) Limitar el queryset en Edición
+        # 3. Limit queryset on edit
         elif self.instance.school_year:
             self.fields['trimester'].queryset = Trimester.objects.filter(
                 school_year=self.instance.school_year
@@ -45,178 +39,158 @@ class GradeForm(forms.ModelForm):
 
 
 class AusenciaEditForm(forms.ModelForm):
-    # Formulario basado en el modelo Ausencias, optimizado para la edición de un registro existente.
+    # Form for editing an existing absence.
     class Meta:
         model = Ausencias
         fields = ['subject', 'trimester', 'school_year', 'Tipo', 'date_time']
         widgets = {
-            # Usa un widget de selección de fecha/hora local para una interfaz de usuario más amigable.
             'date_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
         }
 
 
 class AusenciaForm(forms.ModelForm):
-    # Formulario avanzado para registrar una incidencia (Ausencia/Retraso) para MÚLTIPLES estudiantes.
+    # Advanced form for registering absences for multiple students.
 
-    # Campo extra (no existe en el modelo Ausencias) para seleccionar varios estudiantes a la vez.
+    # Extra field for selecting multiple students.
     students = forms.ModelMultipleChoiceField(
-        # Inicialmente vacío, se rellena con el QuerySet correcto en __init__.
         queryset=Students.objects.none(),
         widget=forms.SelectMultiple(attrs={'size': 6}),
         required=True,
-        label='Estudiantes'
+        label='Students'
     )
-    # Campo extra para capturar la fecha y hora de la incidencia.
+    # Extra field for date/time.
     date_time = forms.DateTimeField(
         required=False,
         widget=forms.DateTimeInput(attrs={'type': 'datetime-local'}),
-        label='Fecha y hora'
+        label='Date and Time'
     )
 
     class Meta:
         model = Ausencias
-        # Se excluye la clave foránea 'student' del modelo original.
         fields = ['subject', 'trimester', 'school_year', 'Tipo']
 
     def __init__(self, *args, course=None, **kwargs):
-        # El constructor se modifica para permitir filtrar los choices del formulario por curso.
         super().__init__(*args, **kwargs)
 
-        # Lógica para manejar si el parámetro 'course' es un objeto o solo un ID.
+        # Handle course ID or object.
         if course is not None:
             if not hasattr(course, 'CourseID'):
                 try:
-                    # Intenta obtener el objeto Course si solo se pasó el ID.
                     course = Course.objects.get(CourseID=course)
                 except Exception:
                     course = None
 
         if course is not None:
-            # CORRECCIÓN DEL FILTRO DE ESTUDIANTES:
-            # Se usa students_courses__course_section para ir de Students -> Students_Courses -> Course.
+            # Filter students by course section.
             self.fields['students'].queryset = Students.objects.filter(
                 students_courses__course_section=course).distinct().order_by('Name')
 
-            # Filtra las asignaturas para mostrar solo las que se imparten en este curso.
-            # Subjects.subjects_courses es la relación inversa de la FK 'subject' en Subjects_Courses.
+            # Filter subjects by course.
             self.fields['subject'].queryset = Subjects.objects.filter(
                 subjects_courses__course=course).distinct()
 
-        # Establece la hora actual como valor inicial por defecto para el campo date_time si no se proporciona.
+            # Filter School Year to the one associated with the course
+            self.fields['school_year'].queryset = School_year.objects.filter(
+                pk=course.school_year.pk)
+            self.fields['school_year'].initial = course.school_year
+
+            # Filter Trimesters to those in the course's school year
+            self.fields['trimester'].queryset = Trimester.objects.filter(
+                school_year=course.school_year).order_by('Name')
+
+        # Set default date/time to now.
         if 'initial' not in kwargs or 'date_time' not in kwargs.get('initial', {}):
             from django.utils import timezone
             now = timezone.localtime(timezone.now())
-            # Formatea la hora en el formato YYYY-MM-DDTHH:MM, requerido por el widget 'datetime-local'.
             self.fields['date_time'].initial = now.strftime('%Y-%m-%dT%H:%M')
 
 
 MAIN_COURSES = {
-    # Diccionario de utilidad para el flujo de creación de cursos.
+    # Helper dictionary for course creation flow.
     'Eso': [1, 2, 3, 4],
     'Bachillerato': [1, 2],
     'IB': [1, 2],
 }
 
-# 1. Formulario para crear School_year
-
 
 class SchoolYearForm(forms.ModelForm):
-    # Formulario para crear un nuevo registro de School_year.
+    # Form for creating a new School Year.
     class Meta:
         model = School_year
         fields = ['year']
         labels = {
-            'year': 'Definir Año Escolar (Ej: 2025-2026)',
+            'year': 'Define School Year (e.g., 2025-2026)',
         }
         widgets = {
-            # Placeholder para guiar al administrador sobre el formato.
-            'year': forms.TextInput(attrs={'placeholder': 'Ej: 2025-2026'}),
+            'year': forms.TextInput(attrs={'placeholder': 'e.g., 2025-2026'}),
         }
-
-# 2. Formulario Base para Secciones Dinámicas (Paso 2)
 
 
 class CourseSectionForm(forms.Form):
-    # Formulario base utilizado en el FORMSET para la creación de secciones (Paso 2).
+    # Base form for dynamic sections (Step 2).
 
-    # Campo oculto para llevar el nombre principal del curso (ej: '1' para 1º ESO).
     main_course_name = forms.CharField(widget=forms.HiddenInput())
 
-    # Campo de solo lectura para mostrar el nombre del nivel al usuario (ej: '1º ESO').
     display_name = forms.CharField(
         label="",
         required=False,
         widget=forms.TextInput(attrs={'readonly': 'readonly'})
     )
 
-    # Campo clave para definir la cantidad de secciones (letras) a crear.
     num_subsections = forms.IntegerField(
-        label="Nº de Secciones (A, B, C...)",
+        label="No. of Sections (A, B, C...)",
         min_value=1,
         max_value=26,
         initial=3,
-        help_text="Ej: 3 creará 1A, 1B, 1C."
+        help_text="e.g., 3 will create 1A, 1B, 1C."
     )
-
-# 3. Formulario Principal (Paso 1)
 
 
 class CourseCreationForm(forms.Form):
-    # Formulario principal para iniciar el proceso de creación de cursos (Paso 1).
+    # Main form for course creation (Step 1).
 
     course_tipo = forms.ChoiceField(
-        # Usa las opciones definidas en el modelo Course.
         choices=Course.COURSE_TYPE_CHOICES,
-        label="Tipo de Curso a Configurar"
+        label="Course Type"
     )
 
     school_year = forms.ModelChoiceField(
-        # Muestra los años escolares más recientes primero.
         queryset=School_year.objects.all().order_by('-year'),
-        label="Año Escolar",
+        label="School Year",
         required=False
     )
 
     def __init__(self, *args, **kwargs):
-        # Parámetros personalizados extraídos de kwargs.
         initial_school_year_id = kwargs.pop('initial_school_year_id', None)
         self.course_type_initial = kwargs.pop('course_type_initial', None)
 
         super().__init__(*args, **kwargs)
 
-        # Si se proporciona un ID de año escolar inicial (desde la vista anterior), lo establece y lo deshabilita.
         if initial_school_year_id:
             self.fields['school_year'].initial = initial_school_year_id
             self.fields['school_year'].widget.attrs['disabled'] = True
 
-        # Si se proporciona un tipo de curso inicial (al volver del Paso 2), lo establece y lo deshabilita.
         if self.course_type_initial:
             self.fields['course_tipo'].initial = self.course_type_initial
             self.fields['course_tipo'].widget.attrs['disabled'] = True
 
     def clean(self):
-        # Método para manejar la validación y limpieza de datos, crucial para campos deshabilitados (que no vienen en self.cleaned_data).
         cleaned_data = super().clean()
 
-        # Si el campo school_year fue deshabilitado, lo recuperamos manualmente.
+        # Recover disabled school_year field.
         if 'school_year' not in cleaned_data:
             school_year_value = self.fields['school_year'].initial or self.data.get(
                 'school_year')
 
             if school_year_value:
                 try:
-                    # Intenta obtener el objeto School_year para añadirlo a cleaned_data.
                     cleaned_data['school_year'] = School_year.objects.get(
                         pk=school_year_value)
                 except School_year.DoesNotExist:
                     raise forms.ValidationError(
-                        "El año escolar seleccionado no es válido.")
+                        "Invalid school year.")
 
         return cleaned_data
-
-# 4. SOLUCIÓN AL ImportError: 'GradeForm'
-# Este bloque parece ser una redefinición para asegurar que GradeForm esté disponible.
-# Utiliza '__all__' para incluir todos los campos.
 
 
 class GradeForm(forms.ModelForm):
@@ -226,32 +200,29 @@ class GradeForm(forms.ModelForm):
 
 
 class SubjectAssignmentForm(forms.Form):
-    # Formulario para seleccionar la asignatura y el profesor en la vista 'assign_subjects'.
+    # Form for assigning subject and teacher.
 
     subject = forms.ModelChoiceField(
-        # Muestra todas las asignaturas.
         queryset=Subjects.objects.all().order_by('Name'),
-        label="Asignatura",
-        empty_label="Seleccione Asignatura",
+        label="Subject",
+        empty_label="Select Subject",
         required=True
     )
 
     teacher = forms.ModelChoiceField(
-        # Muestra todos los profesores.
         queryset=Teachers.objects.all().order_by('Name'),
-        label="Profesor/a",
-        empty_label="Seleccione Profesor/a",
+        label="Professor",
+        empty_label="Select Professor",
         required=True
     )
 
 
 class StudentCreationForm(forms.ModelForm):
-    # Formulario para crear una nueva instancia del modelo Students.
+    # Form for creating a new Student.
     class Meta:
         model = Students
         fields = ['Name', 'Email']
         widgets = {
-            # Widgets con placeholder para mejorar la guía de entrada de datos.
-            'Name': forms.TextInput(attrs={'placeholder': 'Nombre Completo del Estudiante'}),
-            'Email': forms.EmailInput(attrs={'placeholder': 'Correo Electrónico'}),
+            'Name': forms.TextInput(attrs={'placeholder': 'Full Student Name'}),
+            'Email': forms.EmailInput(attrs={'placeholder': 'Email Address'}),
         }

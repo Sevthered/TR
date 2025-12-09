@@ -15,7 +15,7 @@
     <br>
     {% if children_info %}
         <form method="get" id="child-select-form">
-            <label for="child-select">Select child:</label>
+            <label for="child-select">Selecciona un niñ@:</label>
             <select id="child-select" name="child" onchange="document.getElementById('child-select-form').submit();">
                 {% for child in children_info %}
                 <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
