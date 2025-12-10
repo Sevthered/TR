@@ -1110,8 +1110,8 @@ def import_grades(request, course_id=None):
                     errors.append(
                         f"Row {row_num}: Subject '{subject_name}' not found")
                     error_count += 1
-                except Exception as e:
-                    errors.append(f"Row {row_num}: {str(e)}")
+                except Exception:
+                    errors.append(f"Row {row_num}: An error occurred processing this row.")
                     error_count += 1
 
             # Show summary.
@@ -1128,8 +1128,8 @@ def import_grades(request, course_id=None):
                     messages.error(
                         request, f'... and {len(errors) - 10} more errors')
 
-        except Exception as e:
-            messages.error(request, f'Error processing file: {str(e)}')
+        except Exception:
+            messages.error(request, 'Error processing file. Please ensure it is a valid CSV.')
 
     context = {
         'course': course,
@@ -1566,9 +1566,8 @@ def load_course_sections(request):
             # Retorna las secciones finales.
             return JsonResponse({'mode': 'SECTIONS', 'data': sections_data})
 
-    except Exception as e:
-        print(f"!!! ERROR FATAL EN load_course_sections (AJAX) !!!: {e}")
-        return JsonResponse({'error': f'Error interno del servidor: {str(e)}'}, status=500)
+    except Exception:
+        return JsonResponse({'error': 'Internal server error processing request.'}, status=500)
 
 
 # =======================================================
@@ -1680,7 +1679,7 @@ def reassign_students(request):
             except Exception as e:
                 error_count += 1
                 messages.error(
-                    request, f"Error reassigning student: {str(e)}")
+                    request, "Error reassigning student.")
 
         if success_count > 0:
             messages.success(
@@ -1742,8 +1741,8 @@ def ajax_get_course_numbers(request):
 
         return JsonResponse({'numbers': numbers_list})
 
-    except Exception as e:
-        return JsonResponse({'numbers': [], 'error': str(e)})
+    except Exception:
+        return JsonResponse({'numbers': [], 'error': 'An error occurred retrieving course numbers.'})
 
 
 def ajax_get_course_sections(request):
@@ -1787,8 +1786,8 @@ def ajax_get_course_sections(request):
 
         return JsonResponse({'sections': sections_list})
 
-    except Exception as e:
-        return JsonResponse({'sections': [], 'error': str(e)})
+    except Exception:
+        return JsonResponse({'sections': [], 'error': 'An error occurred retrieving sections.'})
 
 
 def ajax_get_students(request):
@@ -1832,8 +1831,8 @@ def ajax_get_students(request):
 
     except Course.DoesNotExist:
         return JsonResponse({'students': [], 'error': 'Course not found'})
-    except Exception as e:
-        return JsonResponse({'students': [], 'error': str(e)})
+    except Exception:
+        return JsonResponse({'students': [], 'error': 'An error occurred retrieving students.'})
 
 
 def ajax_get_destination_courses(request):
@@ -1859,5 +1858,5 @@ def ajax_get_destination_courses(request):
         return JsonResponse({'course_id': course.CourseID})
     except Course.DoesNotExist:
         return JsonResponse({'course_id': None, 'error': 'Course not found'})
-    except Exception as e:
-        return JsonResponse({'course_id': None, 'error': str(e)})
+    except Exception:
+        return JsonResponse({'course_id': None, 'error': 'An error occurred retrieving destination course.'})

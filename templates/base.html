@@ -1,6 +1,7 @@
 {% load static %}
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -13,13 +14,16 @@
 
   <!-- Set navbar height for CSS layout (adjust if needed) -->
   <style>
-    :root{ --navbar-height: 80px; }
+    :root {
+      --navbar-height: 80px;
+    }
   </style>
 
   {% block styles %}{% endblock styles %}
 </head>
 {% comment %} Add a class to the body when the logged in user is a tutor so we can target CSS behavior {% endcomment %}
-<body {% if user.is_authenticated and user.profile.role == 'tutor' %}class="no-sidebar-scroll"{% endif %}>
+
+<body {% if user.is_authenticated and user.profile.role == 'tutor' %}class="no-sidebar-scroll" {% endif %}>
   <!-- Top block: navbar -->
   <div class="top-block">
     {% include "navbar.html" %}
@@ -28,24 +32,33 @@
   <!-- Bottom block: left sidebar + main -->
   <div class="bottom-block">
     {% if user.is_authenticated and user.profile.role == 'professor' %}
-      {% include "sidebar.html" %}
-      <main class="main" id="page">
-    {% else %}
+    {% include "sidebar.html" %}
+    <main class="main" id="page">
+      {% else %}
       {# No sidebar for non-professors: render a full-width main area #}
       <main class="main full-width" id="page">
-    {% endif %}
-      <header class="page-header">
-        <h1>{% block page_header %}{% endblock page_header %}</h1>
-      </header>
+        {% endif %}
+        <header class="page-header">
+          <h1>{% block page_header %}{% endblock page_header %}</h1>
+        </header>
 
-      <section class="page-content">
-        {% block content %}{% endblock content %}
-      </section>
+        <section class="page-content">
+          {% if messages %}
+          <div class="messages-container">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+              {{ message }}
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% block content %}{% endblock content %}
+        </section>
 
-      <footer class="page-footer">
-        {% block footer %}{% endblock footer %}
-      </footer>
-    </main>
+        <footer class="page-footer">
+          {% block footer %}{% endblock footer %}
+        </footer>
+      </main>
   </div>
 
   <!-- JS: sidebar behaviour and small navbar helper -->
@@ -53,4 +66,5 @@
   <script src="{% static 'js/navbar.js' %}"></script>
   {% block scripts %}{% endblock scripts %}
 </body>
+
 </html>
