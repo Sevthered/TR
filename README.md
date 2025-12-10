@@ -1,7 +1,7 @@
 # TR Project
 
 ## Overview
-**TR** is a comprehensive school management web application built with **Django**. It provides a digital platform for managing the academic lifecycle, including student enrollment, course management, grading, and attendance tracking. The system is designed to serve multiple user roles: Administrators, Professors, Tutors (Parents), and Students.
+My **TR** consists in a comprehensive school management web application built with **Django**. It provides a digital platform for managing the academic lifecycle, including student enrollment, course management, grading, and attendance tracking. The system is designed to serve multiple user roles: Administrators, Professors, Tutors (Parents), and Students.
 
 ## Technology Stack
 -   **Backend Framework**: Python / Django 5.2
