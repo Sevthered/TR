@@ -1,29 +1,60 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock %}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block content %}
-    
-    <h2>
-        {% if is_edit %}
-            Editar Ausencia
-        {% else %}
-            Crear Nueva Ausencia
-        {% endif %}
-    </h2>
+  Same shape as grade_form and as the absence panel in _class_scope.html —
+  this is the single-student sibling of that panel, so it renders its fields
+  the same way rather than inventing a third form dialect.
 
-    <form method="POST">
-        {% csrf_token %} {{ form.as_p }} 
+  No JavaScript at all: AusenciaEditForm has no dependent dropdown. The
+  datetime control carries an explicit format='%Y-%m-%dT%H:%M' in forms.py,
+  without which es-ES renders a value the browser silently blanks.
+{% endcomment %}
 
-        <button type="submit" class="btn-edit">
-            {% if is_edit %}
-                Actualizar Ausencia
-            {% else %}
-                Guardar Ausencia
-            {% endif %}
-        </button>
-    </form>
-{% endblock content %}
+{% block page_title %}{% if is_edit %}Editar ausencia{% else %}Nueva ausencia{% endif %}{% if student %} · {{ student.Name }}{% endif %}{% endblock page_title %}
+
+{% block breadcrumb %}Alumn@s / {% if student %}<a class="hover:text-ink" href="{% url 'student_dashboard_content' student.pk %}">{{ student.Name }}</a> / {% endif %}<b class="text-ink-2 font-medium">{% if is_edit %}Editar ausencia{% else %}Nueva ausencia{% endif %}</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">
+      {% if is_edit %}Editar ausencia{% else %}Nueva ausencia{% endif %}</h1>
+    {% if student %}<span class="text-[13px] text-ink-3">{{ student.Name }}</span>{% endif %}
+  </div>
+
+  <div class="border-y border-line shrink-0"></div>
+
+  <form method="post" novalidate class="flex flex-col gap-[15px] max-w-[520px] px-pad pt-[22px] pb-8">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+    <div class="text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% for field in form.visible_fields %}
+    <div class="flex flex-col gap-[7px]">
+      <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.errors %}
+      <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="flex items-center gap-3.5 mt-1">
+      <button type="submit"
+              class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                     text-[12.5px] font-[650] tracking-[.01em]">
+        {% if is_edit %}Actualizar ausencia{% else %}Guardar ausencia{% endif %}</button>
+      {% if student %}
+      <a href="{% url 'student_dashboard_content' student.pk %}"
+         class="text-[12.5px] text-ink-3 hover:text-ink">Cancelar</a>
+      {% endif %}
+    </div>
+  </form>
+
+</div>
+{% endblock main %}

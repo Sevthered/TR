@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 141 tests in mainapp/tests.py
+# Tests — 158 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -81,7 +81,7 @@ Nearly every list/dashboard view is filtered by school year, passed as the `?sch
 
 ### AJAX cascades
 
-The admin course/subject-assignment forms are dependent dropdowns driven by jQuery hitting dedicated JSON endpoints in `views.py`: `ajax_get_course_numbers`, `ajax_get_course_sections`, `ajax_get_students`, `ajax_get_destination_courses`, `load_course_sections`, `load_trimesters`. Adding a new dependent select means adding an endpoint here plus a `path('ajax/...')` entry.
+The admin course/subject-assignment forms are dependent dropdowns driven by jQuery hitting dedicated JSON endpoints in `views.py`: `ajax_get_course_numbers`, `ajax_get_course_sections`, `ajax_get_students`, `ajax_get_destination_courses`, `load_course_sections`. Adding a new dependent select means adding an endpoint here plus a `path('ajax/...')` entry. `load_trimesters` used to belong to this list; it is now htmx and returns markup — see the v2 section below.
 
 `MAIN_COURSES` in `mainapp/forms.py` defines valid level numbers per course type (`Eso: 1-4`, `Bachillerato: 1-2`, `IB: 1-2`) and drives the two-step course-creation flow (`create_courses_step1.html` → `step2`, rendered via the `_render_step2` helper).
 
@@ -97,11 +97,15 @@ Two roots: project-level `templates/` (`base.html`, `navbar.html`, `sidebar.html
 |---|---|---|
 | Base | `templates/base.html` | `templates/base_v2.html`, plus `templates/base_shell_v2.html` for the nav + top-bar shell |
 | CSS | the four hand-written stylesheets in `static/css/` | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
-| Pages | everything else | `mainapp/templates/mainapp/`: `class_dashboard.html` + `_class_scope.html`, `teacher_dashboard.html`; `templates/`: `mainapp/section_courses.html`, `mainapp/search_results.html`, `forbidden.html` |
+| Pages | `student_dashboard_content.html`, `import_grades.html`, `class_grades_download.html`, `student_file.html` | `mainapp/templates/mainapp/`: `class_dashboard.html` + `_class_scope.html`, `teacher_dashboard.html`, `grade_form.html`, `ausencia_form.html`; `templates/`: `mainapp/section_courses.html`, `mainapp/search_results.html`, `forbidden.html` |
 
 Migrated pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% block breadcrumb %}` / `{% block page_title %}`. Copy the shipped ones rather than inventing a second dialect: 1px rules only (no shadows, no lighter card surfaces), no icon tiles, `lbl` for labels, `fig` reserved for numerals and identifiers, `ctl` on form controls, and the `ruled` filler where a list ends short. A student's initials come from `student_initials()` in `views.py`, so every list marks a person the same way.
 
-> **Migrating a page is not a re-skin — check its JavaScript first.** `base_v2` loads htmx and nothing else, so `static/js/behaviors.js` is absent and every `data-action` / `data-autosubmit` attribute the CSP remediation introduced is **inert** on a v2 page, silently. Both `teacher_dashboard` and `section_courses` had a `<select data-autosubmit>` year filter, and `section_courses` a `data-action="back"` button; the filters became rows of links, which is also what the class dashboard's scope bar does, and the back button gave way to the shell's breadcrumb. Assume any legacy control that submits itself needs rebuilding, not copying. `MigratedPageTemplateTests.assert_no_inert_js_hooks` pins it.
+> **Migrating a page is not a re-skin — check its JavaScript first.** `base_v2` loads htmx and nothing else, so `static/js/behaviors.js` is absent and every `data-action` / `data-autosubmit` attribute the CSP remediation introduced is **inert** on a v2 page, silently. Both `teacher_dashboard` and `section_courses` had a `<select data-autosubmit>` year filter, and `section_courses` a `data-action="back"` button; the filters became rows of links, which is also what the class dashboard's scope bar does, and the back button gave way to the shell's breadcrumb. `grade_form`'s jQuery trimester cascade became htmx, and its `data-action="back"` cancel button a real link. Assume any legacy control that submits itself needs rebuilding, not copying. `V2CascadeAssertions.assert_no_inert_js_hooks` pins it, and `assert_no_leaked_template_comments` pins a mistake the rebuild actually made: **`{# … #}` is single-line only** — spread over two lines Django renders it as visible text, and it still looks like a comment in the editor. Use `{% comment %}` for anything multi-line.
+
+**The write forms are rendered field by field, never `form.as_p`.** `as_p` emits `<p>` wrappers this cascade has no styles for. `grade_form.html`, `ausencia_form.html` and the absence panel in `_class_scope.html` share one dialect: a `lbl` label, the widget, then errors as `text-bad`. Spanish labels and the `ctl` class are attached in `forms.py`, not the template, because Django renders the widget itself — `GradeForm.LABELS` and `AusenciaEditForm.LABELS`.
+
+**`ajax_load_trimesters` returns markup, not JSON.** Same route and same `@role_required('professor')`; it now renders `mainapp/_trimester_options.html`, which htmx swaps into `#id_trimester` when the year select changes (`hx-get`/`hx-target` live on the widget in `GradeForm.__init__`). It accepts the year as `school_year` — the select's own name, which is what htmx sends — or `school_year_id`. Option text must stay in step with `GradeForm.label_from_instance`; the same list is also rendered server-side on first paint, because `GradeForm.__init__` now honours `initial['school_year']` so the form is usable with JavaScript off.
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 

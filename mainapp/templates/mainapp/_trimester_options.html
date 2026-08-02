@@ -1,0 +1,10 @@
+{% comment %}
+  Swapped into #id_trimester by htmx when the school year changes. The option
+  text must match GradeForm.label_from_instance — the same list is rendered
+  server-side on first paint, and two spellings of one trimester would read as
+  two different things.
+{% endcomment %}
+<option value="">---------</option>
+{% for trimester in trimesters %}
+<option value="{{ trimester.pk }}">Trimestre {{ trimester.Name }}</option>
+{% endfor %}

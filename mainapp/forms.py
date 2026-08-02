@@ -1,4 +1,5 @@
 from django import forms
+from django.urls import reverse_lazy
 from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 
 
@@ -18,6 +19,18 @@ class GradeForm(forms.ModelForm):
             'comments': forms.Textarea(attrs={'rows': 3}),
         }
 
+    # Spanish labels: the model fields are English CapitalCase/snake_case and
+    # would otherwise surface untranslated on a Spanish-language page.
+    LABELS = {
+        'school_year': 'Año escolar',
+        'trimester': 'Trimestre',
+        'subject': 'Materia',
+        'grade_type': 'Tipo de nota',
+        'grade_type_number': 'Número',
+        'grade': 'Nota',
+        'comments': 'Comentarios',
+    }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -25,17 +38,24 @@ class GradeForm(forms.ModelForm):
         self.fields['school_year'].queryset = School_year.objects.all().order_by(
             '-year')
 
-        # 2. Trimesters are fetched by AJAX once a school year is picked, so
-        # the queryset has to follow whichever year is in play: the submitted
-        # one when the form is bound, the instance's on edit, none on a blank
-        # create form. Scoping it here is also what stops a crafted POST from
-        # pairing a trimester with a school year it does not belong to.
+        # 2. Trimesters are fetched over the wire once a school year is picked,
+        # so the queryset has to follow whichever year is in play: the
+        # submitted one when the form is bound, the instance's on edit, the
+        # initial the view pre-selects on a blank create form. Scoping it here
+        # is also what stops a crafted POST from pairing a trimester with a
+        # school year it does not belong to.
         school_year = None
         if self.is_bound:
             school_year = School_year.objects.filter(
                 pk=self.data.get('school_year') or None).first()
         elif self.instance and self.instance.pk:
             school_year = self.instance.school_year
+        elif self.initial.get('school_year'):
+            # create_edit_grade pre-selects the latest year. Honouring it here
+            # is what lets the page render a usable trimester list on the first
+            # paint, so the form works with JavaScript off.
+            school_year = School_year.objects.filter(
+                pk=self.initial['school_year']).first()
 
         if school_year:
             self.fields['trimester'].queryset = Trimester.objects.filter(
@@ -43,8 +63,28 @@ class GradeForm(forms.ModelForm):
             ).order_by('Name')
         else:
             self.fields['trimester'].queryset = Trimester.objects.none()
-            self.fields['trimester'].empty_label = "Select a school year"
-            self.fields['trimester'].widget.attrs['disabled'] = True
+            self.fields['trimester'].empty_label = "Seleccione un año escolar"
+
+        # The year is already picked in the select above, so repeating it in
+        # every option is noise. This text must stay in step with
+        # mainapp/_trimester_options.html, which htmx swaps in on a year change
+        # — two renderings of the same list.
+        self.fields['trimester'].label_from_instance = (
+            lambda t: f"Trimestre {t.Name}")
+
+        # v2 control style plus the htmx cascade, attached here because Django
+        # renders these widgets itself. The old page did this with jQuery and
+        # a JSON endpoint; base_v2 ships htmx and nothing else.
+        for name, label in self.LABELS.items():
+            self.fields[name].widget.attrs.setdefault('class', 'ctl')
+            self.fields[name].label = label
+
+        self.fields['school_year'].widget.attrs.update({
+            'hx-get': str(reverse_lazy('ajax_load_trimesters')),
+            'hx-target': '#id_trimester',
+            'hx-swap': 'innerHTML',
+            'hx-trigger': 'change',
+        })
 
 
 class AusenciaEditForm(forms.ModelForm):
@@ -62,6 +102,23 @@ class AusenciaEditForm(forms.ModelForm):
             'date_time': forms.DateTimeInput(
                 attrs={'type': 'datetime-local'}, format='%Y-%m-%dT%H:%M'),
         }
+
+    LABELS = {
+        'subject': 'Materia',
+        'trimester': 'Trimestre',
+        'school_year': 'Año escolar',
+        'Tipo': 'Tipo',
+        'date_time': 'Fecha y hora',
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Same reasoning as AusenciaForm: Spanish labels, and `ctl` attached
+        # here because Django renders the widget, not the template.
+        for name, label in self.LABELS.items():
+            self.fields[name].widget.attrs.setdefault('class', 'ctl')
+            self.fields[name].label = label
 
 
 class AusenciaForm(forms.ModelForm):

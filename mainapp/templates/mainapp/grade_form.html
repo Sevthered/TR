@@ -1,114 +1,75 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock styles %}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block content %}
-<div class="page-root">
-    <div class="page-surface" role="main">
-        
-        <h2>
-            {% if is_edit %}
-                📝 Editar Nota
-            {% else %}
-                ➕ Crear Nota para {{ student.Name }}
-            {% endif %}
-        </h2>
+  Two things changed with the cascade, neither of them cosmetic:
 
-        <form method="POST">
-            {% csrf_token %} 
-            
-            {{ form.as_p }} 
+  * The trimester dropdown was a jQuery cascade against a JSON endpoint.
+    base_v2 loads htmx and nothing else, so the select now carries hx-get /
+    hx-target (attached in GradeForm, since Django renders the widget) and
+    `ajax_load_trimesters` returns the <option> markup instead of JSON.
+  * "Cancelar" was a <button data-action="back"> driven by behaviors.js, which
+    a v2 page does not load — it was dead markup waiting to happen. It is a
+    real link back to the student it came from, which is also where a
+    successful save redirects.
 
-            <button type="submit" class="btn btn-success">
-                {% if is_edit %}
-                    Actualizar Nota
-                {% else %}
-                    Guardar Nota
-                {% endif %}
-            </button>
-            <button type="button" class="btn btn-danger" data-action="back" style="margin-left: 10px;">
-                Cancelar
-            </button>
-        </form>
+  The form renders field by field rather than through form.as_p: as_p emits
+  <p> wrappers this cascade has no styles for, and the errors need to sit
+  under their own control.
+{% endcomment %}
+
+{% block page_title %}{% if is_edit %}Editar nota{% else %}Nueva nota{% endif %} · {{ student.Name }}{% endblock page_title %}
+
+{% block breadcrumb %}Alumn@s / <a class="hover:text-ink" href="{% url 'student_dashboard_content' student.pk %}">{{ student.Name }}</a> / <b class="text-ink-2 font-medium">{% if is_edit %}Editar nota{% else %}Nueva nota{% endif %}</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">
+      {% if is_edit %}Editar nota{% else %}Nueva nota{% endif %}</h1>
+    <span class="text-[13px] text-ink-3">{{ student.Name }}</span>
+  </div>
+
+  <div class="border-y border-line shrink-0"></div>
+
+  <form method="post" novalidate class="flex flex-col gap-[15px] max-w-[520px] px-pad pt-[22px] pb-8">
+    {% csrf_token %}
+
+    {% comment %}
+      The student is a hidden input, and the view ignores it:
+      create_edit_grade takes the student from the URL, so a crafted POST
+      cannot retarget it.
+    {% endcomment %}
+    {{ form.student }}
+
+    {% if form.non_field_errors %}
+    <div class="text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% for field in form.visible_fields %}
+    <div class="flex flex-col gap-[7px]">
+      <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {% if field.name == 'grade_type_number' %}
+      <span class="text-[11.5px] text-ink-3 -mt-1">0 significa sin numerar, no «la primera».</span>
+      {% endif %}
+      {{ field }}
+      {% if field.errors %}
+      <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+      {% endif %}
     </div>
+    {% endfor %}
+
+    <div class="flex items-center gap-3.5 mt-1">
+      <button type="submit"
+              class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                     text-[12.5px] font-[650] tracking-[.01em]">
+        {% if is_edit %}Actualizar nota{% else %}Guardar nota{% endif %}</button>
+      <a href="{% url 'student_dashboard_content' student.pk %}"
+         class="text-[12.5px] text-ink-3 hover:text-ink">Cancelar</a>
+    </div>
+  </form>
+
 </div>
-{% endblock content %}
-
-{% block scripts %}
-<script src="{% static 'js/vendor/jquery-3.6.0.min.js' %}"></script>
-
-<script nonce="{{ request.csp_nonce }}">
-    $(document).ready(function() {
-        // Obtenemos los selectores de los campos
-        var $schoolYearSelect = $('#id_school_year');
-        var $trimesterSelect = $('#id_trimester');
-        var url = "{% url 'ajax_load_trimesters' %}";
-        
-        // Función para cargar los trimestres vía AJAX
-        function loadTrimesters(schoolYearId, selectedTrimesterId) {
-            $trimesterSelect.prop('disabled', true);
-            
-            if (!schoolYearId) {
-                $trimesterSelect.html('<option value="">Seleccione un año escolar</option>');
-                return;
-            }
-
-            $trimesterSelect.html('<option value="">Cargando...</option>');
-
-            $.ajax({
-                url: url,
-                data: {
-                    'school_year_id': schoolYearId
-                },
-                dataType: 'json',
-                // Asegúrate de que la vista AJAX devuelva el número del trimestre (1, 2, 3) en el campo 'name'.
-                success: function(data) {
-                    $trimesterSelect.html('<option value="">---------</option>');
-                    
-                    $.each(data.trimesters, function(key, trimester) {
-                        // Object form, not a concatenated HTML string: .append()
-                        // with a string invokes jQuery's HTML parser, so server
-                        // values would be rendered as markup. `text` sets
-                        // textContent instead.
-                        $trimesterSelect.append($('<option>', {
-                            value: trimester.id,
-                            text: 'Trimestre ' + trimester.name,
-                            selected: trimester.id == selectedTrimesterId
-                        }));
-                    });
-
-                    $trimesterSelect.prop('disabled', false);
-                },
-                error: function() {
-                    console.error("Error en la llamada AJAX a load_trimesters.");
-                    $trimesterSelect.html('<option value="">Error al cargar trimestres</option>');
-                },
-                // Runs on both success and failure: without it a failed load
-                // leaves the select disabled with no way to retry.
-                complete: function() {
-                    $trimesterSelect.prop('disabled', false);
-                }
-            });
-        }
-        
-        // --- 1. Evento de Cambio ---
-        $schoolYearSelect.change(function() {
-            var schoolYearId = $(this).val();
-            loadTrimesters(schoolYearId, null); 
-        });
-        
-        // --- 2. Inicialización (al cargar la página) ---
-        var initialSchoolYearId = $schoolYearSelect.val();
-        
-        if (initialSchoolYearId) {
-            var initialTrimesterId = $trimesterSelect.val();
-            loadTrimesters(initialSchoolYearId, initialTrimesterId);
-        } else {
-             $trimesterSelect.html('<option value="">Seleccione un año escolar</option>').prop('disabled', true);
-        }
-    });
-</script>
-{% endblock scripts %}
+{% endblock main %}

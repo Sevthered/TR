@@ -1523,12 +1523,12 @@ class LocaleTests(AccessControlTestCase):
         self.assertEqual(timezone.localtime(saved.date_time).minute, 15)
 
 
-class MigratedPageTemplateTests(AccessControlTestCase):
-    """Stage 2: three more pages off base.html.
+class V2CascadeAssertions:
+    """The three ways a v2 page breaks without looking broken.
 
-    The cascade assertion is the load-bearing one. Tailwind's Preflight and the
-    four hand-written stylesheets collide, so a page that pulls both renders
-    wrong in ways a screenshot of one viewport can easily miss.
+    A mixin rather than a base class: every migrated page needs these, and
+    inheriting them from a concrete TestCase would re-run that page's own
+    tests once per migration.
     """
 
     LEGACY_CSS = ('css/navbar.css', 'css/sidebar.css',
@@ -1563,6 +1563,21 @@ class MigratedPageTemplateTests(AccessControlTestCase):
         self.assertNotContains(response, 'data-action', status_code=status_code)
         self.assertNotContains(response, 'data-autosubmit', status_code=status_code)
 
+    def assert_no_leaked_template_comments(self, response, status_code=200):
+        """`{# #}` is single-line only — spread it over two and Django renders
+        it as text. It looks like a comment in the editor either way."""
+        self.assertNotContains(response, '{#', status_code=status_code)
+        self.assertNotContains(response, '{%', status_code=status_code)
+
+
+class MigratedPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """Stage 2: three more pages off base.html.
+
+    The cascade assertion is the load-bearing one. Tailwind's Preflight and the
+    four hand-written stylesheets collide, so a page that pulls both renders
+    wrong in ways a screenshot of one viewport can easily miss.
+    """
+
     # --- section_courses ----------------------------------------------------
 
     def test_section_listing_is_built_on_the_v2_cascade_only(self):
@@ -1572,6 +1587,7 @@ class MigratedPageTemplateTests(AccessControlTestCase):
         self.assert_v2_only(response)
         self.assert_scripts_are_self_hosted(response)
         self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
 
     def test_the_year_filter_is_links_rather_than_a_scripted_select(self):
         """The legacy control was a <select data-autosubmit>. Real hrefs need
@@ -1601,6 +1617,7 @@ class MigratedPageTemplateTests(AccessControlTestCase):
         self.assert_v2_only(response)
         self.assert_scripts_are_self_hosted(response)
         self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
 
     def test_a_result_carries_the_same_initials_as_the_register(self):
         """One glyph rule across both lists: direction C has no icon tiles, so
@@ -1641,6 +1658,7 @@ class MigratedPageTemplateTests(AccessControlTestCase):
         self.assert_v2_only(response, status_code=403)
         self.assert_scripts_are_self_hosted(response, status_code=403)
         self.assert_no_inert_js_hooks(response, status_code=403)
+        self.assert_no_leaked_template_comments(response, status_code=403)
 
     def test_the_403_page_still_names_the_account_that_was_refused(self):
         """A wrong account and a wrong URL are different problems, and only
@@ -1744,3 +1762,176 @@ class TeacherDashboardTemplateTests(AccessControlTestCase):
         sections = [c.CourseID for c in response.context['courses']]
         self.assertIn(self.course.CourseID, sections)
         self.assertNotIn(self.other_course.CourseID, sections)
+
+
+class WriteFormTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """`grade_form` and `ausencia_form`, stage 2's write pair.
+
+    They inherit the cascade / CSP / inert-hook assertions rather than
+    restating them: the same three ways a v2 page silently breaks apply to a
+    form, and the trimester cascade is exactly the kind of control the
+    `behaviors.js` note warns about.
+    """
+
+    def grade_url(self):
+        return f'/student/{self.student.pk}/grade/new/'
+
+    def ausencia_url(self):
+        return f'/student/{self.student.pk}/ausencia/new/'
+
+    # --- grade_form ---------------------------------------------------------
+
+    def test_grade_form_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertTemplateUsed(response, 'mainapp/grade_form.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_grade_form_carries_no_jquery(self):
+        """The cascade was jQuery plus a nonce'd inline block. base_v2 loads
+        neither, so leaving the markup would have been dead weight at best."""
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertNotContains(response, 'jquery')
+
+    def test_the_trimester_cascade_is_htmx_against_the_same_endpoint(self):
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertContains(response, 'hx-get="/ajax/load-trimesters/"')
+        self.assertContains(response, 'hx-target="#id_trimester"')
+
+    def test_the_trimester_list_is_usable_before_any_javascript_runs(self):
+        """create_edit_grade pre-selects the newest year, so the first paint
+        can already offer that year's trimesters. Without this the page is
+        unusable with JavaScript off."""
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertContains(response, f'Trimestre {self.trimester.Name}')
+
+    def test_cancel_is_a_link_back_to_the_student_not_an_inert_button(self):
+        """It was `<button data-action="back">`, which needs behaviors.js."""
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertContains(
+            response, f'href="/students/{self.student.pk}/dashboard/"')
+
+    def test_the_form_labels_are_spanish(self):
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertContains(response, 'Año escolar')
+        self.assertContains(response, 'Tipo de nota')
+
+    def test_the_student_stays_a_hidden_input(self):
+        """Rendering it as a select would hand the browser a choice the view
+        deliberately ignores."""
+        response = self.as_(self.professor).get(self.grade_url())
+
+        self.assertContains(response, 'type="hidden" name="student"')
+
+    def test_an_invalid_grade_re_renders_with_its_error_visible(self):
+        response = self.as_(self.professor).post(self.grade_url(), {
+            'student': self.student.pk,
+            'school_year': self.year.pk,
+            'trimester': self.trimester.pk,
+            'subject': self.subject.pk,
+            'grade_type': 'examen',
+            'grade_type_number': 1,
+            'grade': '99',
+            'comments': '',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'text-bad')
+        self.assertFalse(Grade.objects.filter(grade_type_number=1).exists())
+
+    def test_the_happy_path_still_saves_through_the_rebuilt_page(self):
+        response = self.as_(self.professor).post(self.grade_url(), {
+            'student': self.student.pk,
+            'school_year': self.year.pk,
+            'trimester': self.trimester.pk,
+            'subject': self.subject.pk,
+            'grade_type': 'examen',
+            'grade_type_number': 4,
+            'grade': '8.25',
+            'comments': '',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Grade.objects.filter(
+            student=self.student, grade_type_number=4).exists())
+
+    # --- the trimester endpoint ---------------------------------------------
+
+    def test_the_endpoint_returns_options_rather_than_json(self):
+        response = self.as_(self.professor).get(
+            f'/ajax/load-trimesters/?school_year={self.year.pk}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'<option value="{self.trimester.pk}">')
+        self.assertContains(response, f'Trimestre {self.trimester.Name}')
+
+    def test_the_endpoint_names_the_option_the_same_way_the_form_does(self):
+        """Two renderings of one list. If they diverge, changing the year
+        renames every trimester on screen."""
+        page = self.as_(self.professor).get(self.grade_url())
+        fragment = self.as_(self.professor).get(
+            f'/ajax/load-trimesters/?school_year={self.year.pk}')
+
+        label = f'Trimestre {self.trimester.Name}'
+        self.assertContains(page, label)
+        self.assertContains(fragment, label)
+
+    def test_a_blank_year_yields_an_empty_list_rather_than_a_500(self):
+        response = self.as_(self.professor).get('/ajax/load-trimesters/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Trimestre')
+
+    def test_the_endpoint_is_still_professor_only(self):
+        response = self.as_(self.pupil).get(
+            f'/ajax/load-trimesters/?school_year={self.year.pk}')
+
+        self.assertEqual(response.status_code, 403)
+
+    # --- ausencia_form ------------------------------------------------------
+
+    def test_ausencia_form_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get(self.ausencia_url())
+
+        self.assertTemplateUsed(response, 'mainapp/ausencia_form.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_absence_labels_match_the_panel_on_the_class_dashboard(self):
+        """Same model, same words — the single-student form is the panel's
+        sibling, not a second dialect."""
+        response = self.as_(self.professor).get(self.ausencia_url())
+
+        for label in ('Materia', 'Trimestre', 'Año escolar', 'Fecha y hora'):
+            self.assertContains(response, label)
+
+    def test_the_datetime_control_keeps_its_iso_format_on_edit(self):
+        """es-ES renders a value <input type="datetime-local"> silently blanks;
+        LocaleTests pins the widget, this pins the rendered page."""
+        ausencia = Ausencias.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year,
+            Tipo='Falta', date_time=timezone.now())
+
+        response = self.as_(self.professor).get(
+            f'/student/edit/ausencia/{ausencia.pk}/')
+
+        self.assertContains(response, 'type="datetime-local"')
+        self.assertContains(
+            response,
+            f'value="{timezone.localtime(ausencia.date_time).strftime("%Y-%m-%dT%H:%M")}"')
+
+    def test_the_absence_controls_carry_the_v2_control_class(self):
+        response = self.as_(self.professor).get(self.ausencia_url())
+
+        self.assertContains(response, 'class="ctl"')

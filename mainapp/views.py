@@ -1239,23 +1239,25 @@ def create_edit_grade(request, grade_id=None, student_id=None):
 
 @role_required('professor')
 def load_trimesters(request):
+    """Return the trimester <option> list for a school year, as markup.
+
+    This answered JSON for a jQuery cascade while `grade_form` was on
+    `base.html`. `base_v2` loads htmx and nothing else, so the endpoint now
+    returns the fragment htmx swaps straight into `#id_trimester` — same
+    route, same name, same role check, one less client-side parser.
+
+    `school_year` is the select's own name (htmx sends an element's value under
+    it); `school_year_id` is kept because it is the param every other view in
+    this file uses for a year.
     """
-    Returns trimesters for a school year as JSON.
-    """
-    school_year_id = request.GET.get('school_year_id')
+    school_year_id = (request.GET.get('school_year')
+                      or request.GET.get('school_year_id') or None)
 
     trimesters = Trimester.objects.filter(
         school_year_id=school_year_id).order_by('Name')
 
-    trimester_list = [
-        # Use Name (1, 2, 3) as display text.
-        {'id': trimester.pk,
-         'name': trimester.Name
-         }
-        for trimester in trimesters
-    ]
-
-    return JsonResponse({'trimesters': trimester_list})
+    return render(request, 'mainapp/_trimester_options.html',
+                  {'trimesters': trimesters})
 
 
 @teacher_required
