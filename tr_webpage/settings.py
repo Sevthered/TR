@@ -147,6 +147,13 @@ DATABASES = {
         'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
 
         'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+
+        # Django derives the test database name from NAME, so two test runs
+        # against the same Postgres collide. Overridable so a second worktree
+        # can run the suite concurrently.
+        'TEST': {
+            'NAME': os.environ.get('POSTGRES_TEST_DB'),
+        },
     }
 }
 
