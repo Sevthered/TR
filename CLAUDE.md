@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 223 tests in mainapp/tests.py
+# Tests — 231 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -99,7 +99,13 @@ The one survivor is **`static/css/global-styles.css`**, which four `adminage/` t
 | CSS | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
 | Pages | everything under `mainapp/templates/mainapp/` and `templates/mainapp/`, plus `templates/forbidden.html` |
 
-Most pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% block breadcrumb %}` / `{% block page_title %}`. **Two extend `base_v2.html` directly, deliberately:** `login.html` (a signed-out visitor has no nav) and `student_file.html` (every destination in that shell is `@teacher_required`, and the page is served only to students and tutors, so the whole chrome would answer 403). If a second student/tutor page appears, extract a role-aware shell rather than copying `student_file`'s inline one.
+Most pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% block breadcrumb %}` / `{% block page_title %}`. `login.html` extends `base_v2.html` directly, because a signed-out visitor has no nav.
+
+**`base_shell_v2`'s nav is role-aware, and that is load-bearing.** It branches on `user.profile.role` into professor / student+tutor+legal_tutor / administrator, because every destination in the professor's nav is `@teacher_required` — rendering it to anyone else is offering a menu of 403s. Each role's entries stay written out as literals rather than looped over a context variable: the shell is extended by pages that know nothing about the nav, and a missing variable would render an empty one silently. Active state comes from `request.resolver_match`, so a page gets it by existing at that route.
+
+`forbidden.html` extends the shell too, and a denied account keeps **its own** nav there — the 403 is where someone most needs a way back. A role with no branch gets the mark, the identity footer and no links.
+
+The administrator branch is written but **not yet reachable from an administrator page**, since all eight of those templates still extend nothing. It renders today only on `forbidden.html`, and `RoleAwareShellTests.test_the_administrator_branch_renders` pins it there so it cannot rot before stage 3.
 
 Copy the shipped pages rather than inventing a second dialect: 1px rules only (no shadows, no lighter card surfaces), no icon tiles, `lbl` for labels, `fig` reserved for numerals and identifiers, `ctl` on form controls, and the `ruled` filler where a list ends short. A student's initials come from `student_initials()` in `views.py`, so every list marks a person the same way.
 
