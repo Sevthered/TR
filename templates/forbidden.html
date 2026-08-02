@@ -1,21 +1,68 @@
-{%extends "base.html" %}
-{% block page_title %}
+{% extends "base_shell_v2.html" %}
 
-{% endblock page_title %}
-{% block content %}
-<h1>Acceso prohibido</h1>
-{% if unlinked_teacher %}
-    <p>
-        Esta cuenta de profesor no está vinculada a ningún registro de
-        profesorado, por lo que no tiene ninguna clase asignada. Pide a un
-        administrador que enlace tu perfil con tu ficha de profesor.
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
+
+  Rendered by `role_required` and `teacher_required` with status 403, so it is
+  reached by every role, not only professors. It states why access was refused
+  and who the server thinks is asking — the second half is what makes a wrong
+  account distinguishable from a wrong URL.
+
+  No action links: this page cannot know a destination the caller is entitled
+  to, and the shell's nav is already there. `unlinked_teacher` keeps its
+  original wording, since it names the one fix an administrator can apply.
+{% endcomment %}
+
+{% block page_title %}Acceso prohibido{% endblock page_title %}
+
+{% block breadcrumb %}<b class="text-ink-2 font-medium">Acceso prohibido</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Acceso prohibido</h1>
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-bad bg-bad-dim text-bad">403</span>
+  </div>
+
+  <div class="shrink-0 px-pad py-4 border-y border-line">
+    <p class="max-w-[62ch] text-[13px] text-ink-2">
+      {% if unlinked_teacher %}
+      Esta cuenta de profesor no está vinculada a ningún registro de
+      profesorado, por lo que no tiene ninguna clase asignada. Pide a un
+      administrador que enlace tu perfil con tu ficha de profesor.
+      {% else %}
+      Tu cuenta no tiene permiso para ver esta página. Si crees que debería
+      tenerlo, pide a un administrador que revise el rol de tu perfil.
+      {% endif %}
     </p>
-{% endif %}
-{% if user and profile %}
-    <div>
-        <strong>User:</strong> {{ user.username }}<br>
-        <strong>Email:</strong> {{ user.email }}<br>
-        <strong>Profile Role:</strong> {{ profile.role }}<br>
+  </div>
+
+  {% if user and profile %}
+  <section class="shrink-0" aria-labelledby="ident-h">
+    <div class="flex items-center gap-2.5 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="ident-h">Cuenta con la que has entrado</span>
     </div>
-{% endif %}
-{% endblock content %}
+
+    <dl class="grid grid-cols-1 sm:grid-cols-3 border-y border-line">
+      <div class="flex flex-col gap-[5px] px-pad py-3.5">
+        <dt class="lbl">Usuario</dt>
+        <dd class="fig text-[13px] truncate">{{ user.username }}</dd>
+      </div>
+      <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t sm:border-t-0 sm:border-l border-line">
+        <dt class="lbl">Email</dt>
+        <dd class="fig text-[13px] text-ink-2 truncate">{% firstof user.email "—" %}</dd>
+      </div>
+      <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t sm:border-t-0 sm:border-l border-line">
+        <dt class="lbl">Rol del perfil</dt>
+        <dd class="text-[13px] text-ink-2 truncate">{{ profile.get_role_display }}</dd>
+      </div>
+    </dl>
+  </section>
+  {% endif %}
+
+  {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+  <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+
+</div>
+{% endblock main %}

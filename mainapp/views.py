@@ -129,6 +129,18 @@ def teacher_students(teacher):
     ).distinct()
 
 
+def student_initials(name):
+    """Up to two initials, for the 2px left rule that stands in for an avatar.
+
+    Direction C has no icon tiles, so this glyph is the only per-student mark
+    on a row and every list that shows one must derive it the same way. Names
+    here run to five words ("Christian Francisco Gonzalez Di Antonio"), so it
+    takes the first two rather than all of them.
+    """
+    parts = [p for p in (name or '').split() if p]
+    return ''.join(p[0] for p in parts[:2]).upper()
+
+
 class ClassScope:
     """What a class page is currently looking at: year, trimester, subject, roster.
 
@@ -282,11 +294,8 @@ class StudentMetrics:
 
     @property
     def initials(self):
-        """Up to two initials, for the register's left rule. Names here run to
-        five words ("Christian Francisco Gonzalez Di Antonio"), so this takes
-        the first two rather than all of them."""
-        parts = [p for p in self.student.Name.split() if p]
-        return ''.join(p[0] for p in parts[:2]).upper()
+        """Up to two initials, for the register's left rule."""
+        return student_initials(self.student.Name)
 
 
 class ClassMetrics:
@@ -1380,6 +1389,9 @@ def search_students(request):
         results.append({
             'student': s,
             'courses': course_labels,
+            # Same rule as the register's left rule, so the two lists mark a
+            # student identically instead of inventing a second convention.
+            'initials': student_initials(s.Name),
         })
 
     context = {
