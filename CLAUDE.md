@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 257 tests in mainapp/tests.py
+# Tests — 287 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -121,19 +121,23 @@ Copy the shipped pages rather than inventing a second dialect: 1px rules only (n
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
-### The administrator flows — stage 3, in progress
+### The administrator flows — stage 3, one page left
 
 The `adminage/` templates were never in the overhaul's page count, because **none of them extended anything**: each was its own `<!DOCTYPE>` with its own inline `<style>`, so no `{% extends %}` sweep ever listed them.
 
-Migrated so far: `create_school_year`, `create_courses_step1`, `create_courses_step2`, `adminage_dashboard`. Still legacy: `assign_subjects` (435 lines), `create_and_assign_student` (213), `reassign_students` (646).
+Migrated: `adminage_dashboard`, `create_school_year`, `create_courses_step1`, `create_courses_step2`, `create_and_assign_student`, `assign_subjects`.
 
-- **`static/css/global-styles.css` is down to one consumer**, `assign_subjects.html`. `LegacyCascadeTeardownTests.STILL_ON_GLOBAL_STYLES` is the countdown — when it empties, the sheet can be deleted. Do not delete it before then.
-- The remaining three are the **jQuery AJAX-cascade pages**. `grade_form` is the worked example of converting one: the endpoint returns markup, htmx swaps it, the attributes go on the widget in `forms.py`.
-  - `load_course_sections` is shared by `assign_subjects` and `create_and_assign_student` — **redesign its response shape once and convert both**, or neither.
-  - `assign_subjects` expects a third mode, `LEVEL_LOOKUP`, that **`load_course_sections` has never returned** — added template-only in `56978a8` and never implemented. Its "restore the dropdowns from a preselected `?course_id=`" branch has therefore always been dead. Dropping it during migration is not a regression.
-  - `reassign_students` is the odd one: vanilla `fetch()` rather than jQuery, two independent cascades (one repeated per student card), **hardcoded URL strings instead of `{% url %}`**, and a POST backed by no Django form at all (`request.POST.getlist('assignments')`, then `split(':')`).
-- `create_and_assign_student.html` is the app's only light-themed page, and the only admin page whose English `{{ title }}` is actually rendered.
-- **`modify_assignments.html` was deleted.** It was unreachable from birth: added in `cec85d3` alongside the working `reassign_students.html`, rendered by no view, and its two AJAX endpoint names have never appeared in `urls.py` in any commit. It is in `LegacyCascadeTeardownTests.GONE` so it cannot come back.
+**Still legacy: `mainapp/templates/reassign_students.html`** — the last page in the app not on the v2 cascade. Its inline `<script>` carries a CSP nonce, so unlike the `behaviors.js` pages it **works today**; converting it is a rebuild, not a repair. It has two independent cascades (one repeated per dynamically rendered student card), uses vanilla `fetch()` with **hardcoded URL strings instead of `{% url %}`**, and its POST is backed by no Django form (`request.POST.getlist('assignments')`, then `split(':')`). Its four `ajax_get_*` endpoints have no other consumer.
+
+**`static/css/global-styles.css` is gone**, deleted with its last consumer. So is `simple-layout.css`, which nothing ever linked. **Tailwind is the only stylesheet on disk**, and `LegacyCascadeTeardownTests` pins that.
+
+**`load_course_sections` returns markup, not JSON**, and returns **the whole dependent block** (`adminage/_course_dependents.html`), not a bare `<option>` list. Changing the course type must repopulate *Nivel* and clear *Sección* — two targets, and htmx allows one `hx-target` per element. An out-of-band swap cannot do it: htmx wraps a fragment beginning with `<option>` in a `<select>` so the browser will parse it, so an oob `<select>` would end up nested inside one. `views.course_cascade_context()` feeds the same partial on first paint and on swap, so option text cannot drift between them. `hx-include` is scoped by id, not `closest form` — including the form sends a stale `level` and flips the endpoint into the wrong mode.
+
+Arriving at `assign_subjects` with only `?course_id=` recovers the type and level **server-side** from the course row. That is what the never-implemented `LEVEL_LOOKUP` mode was for; the branch is dropped and its job is now the ordinary path.
+
+`create_and_assign_student` deliberately has **no cascade** — one `<select>` with an `<optgroup>` per course type. It is a single POST form, so a GET round trip would either discard the name and e-mail already typed or put a student's personal data in the query string.
+
+**`modify_assignments.html` was deleted.** Unreachable from birth: added in `cec85d3` alongside the working `reassign_students.html`, rendered by no view, and its two AJAX endpoint names have never appeared in `urls.py` in any commit.
 
 Inline `<style>` is not a CSP problem — `style-src` allows `'unsafe-inline'` deliberately and `settings.py` says why. It is a consistency problem. See the *Stage 3* section of `wiki/decisions/ui-overhaul.md`.
 
@@ -170,6 +174,7 @@ The exports are still unaffected by `LANGUAGE_CODE = 'es-es'`: they write `Decim
 
 The four items previously listed here (duplicate `GradeForm`, stray imports, unfinished filename block, hardcoded `DEBUG`/`SECRET_KEY`) were **all fixed** in the 2026-08-02 remediation. What remains:
 
+- **`reassign_students` used to write to an arbitrary year's enrolment.** Fixed 2026-08-03, and worth knowing because the shape recurs: `Students_Courses` is unique on `(student, course_section)` and carries **no year of its own** — the year lives on `Course.school_year`. So a student holds one row per course, and any lookup of "this student's enrolment" that does not filter by year picks an arbitrary one. See `wiki/findings/reassign-writes-to-the-wrong-year.md`.
 - **Aggregates exist in exactly one place: `class_metrics()`.** Everywhere else, any average, total or rate is still a **new backend feature**, not a display change. `class_metrics` is also the pattern to copy: two aggregate queries plus a Python merge, never one annotated queryset over `Students` — `grade` and `ausencias` are both multi-valued, so annotating both at once multiplies rows and each inflates the other's count. Class means there are **weighted by grade count**; a mean of means is a different number. `grade_count` has **no denominator** (see the `Grade` uniqueness note above).
 - **`sort_key_section`** (`views.py:631-641`) raises on any `Section` not shaped `<digit><letter>`.
 - **`views.py:811-815`** swallows every exception in the bulk-absence loop, so an `IntegrityError` and a `ValidationError` look identical to the teacher.
