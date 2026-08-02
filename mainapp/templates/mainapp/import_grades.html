@@ -1,134 +1,241 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block page_title %}
-Importar Notas
-{% endblock page_title %}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock styles %}
+  This page's real job is the error path, not the happy path, so the errors
+  get the register treatment: a real table with the file's row number in its
+  own column and a 2px left rule in `bad`, rather than one message banner per
+  failed row. `import_grades` now hands over a structured `result` instead of
+  pushing a dozen stacked banners through `messages`; whole-file refusals
+  (no file, wrong extension, too big, unreadable) are still messages, because
+  those are one statement about the upload rather than a list.
 
-{% block content %}
-<div class="page-root">
-    <div class="page-surface" role="main" aria-labelledby="page-title">
-        <p>
-            <button type="button" class="btn-back" data-action="back">← Volver</button>
-        </p>
-        
-        <h1 id="page-title" class="page-title">
-            {% if course %}
-                Importar Notas - {{ course.Tipo }} {{ course.Section }}
-            {% else %}
-                Importar Notas
-            {% endif %}
-        </h1>
-        
-        <div class="page-content">
-            <form method="post" enctype="multipart/form-data" class="import-form">
-                {% csrf_token %}
-                
-                <div class="form-group">
-                    <label for="csv_file">Seleccionar archivo CSV:</label>
-                    <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
-                    <div class="file-info">
-                        <small>Formato requerido: CSV con columnas: Nombre_Estudiante, Asignatura, Trimestre, Año_Escolar, Nota, Tipo_Nota, Numero_Tipo_Nota, Comentarios</small>
-                    </div>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">
-                        Importar Notas
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-action="back">
-                        Cancelar
-                    </button>
-                </div>
-                <div class="messages">
-                    {% if error_messages %}
-                        <div class="error-messages">
-                            {% for message in error_messages %}
-                                <p>{{ message }}</p>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
-            </form>
-        </div>
+  Three things the legacy page did that a v2 page cannot:
+
+  * Two "Volver"/"Cancelar" `<button data-action="back">`. base_v2 loads htmx
+    and nothing else, so behaviors.js is absent and both were dead markup —
+    no console error, the click just did nothing. The breadcrumb goes back,
+    and "Cancelar" is a real link to where the upload came from.
+  * A `<style>` block. The cascade owns this now.
+  * No hx-boost anywhere on this page, deliberately. The links beside it are
+    CSV downloads; boosting one would fetch the file over XHR and nothing
+    would ever reach disk.
+
+  Copy note: the header list below is the one `import_grades` actually reads,
+  and it is `download_class_list`'s header set — not the one the two grade
+  *exports* write. Saying otherwise would send teachers round a loop that
+  fails on every row.
+{% endcomment %}
+
+{% block page_title %}Importar notas{% if course %} · {{ course }}{% endif %}{% endblock page_title %}
+
+{% block breadcrumb %}{% if course %}Clases / <a class="hover:text-ink" href="{% url 'class_dashboard' course.CourseID %}">{{ course }}</a> / {% else %}Notas / {% endif %}<b class="text-ink-2 font-medium">Importar notas</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Importar notas</h1>
+    <span class="text-[13px] text-ink-3">
+      {% if course %}{{ course }}{% else %}Cualquiera de tus clases{% endif %}</span>
+  </div>
+
+  {% if result %}
+  {% comment %}
+    The summary strip, same shape as the class register's metrics strip. Every
+    figure here counts what this one upload did — none of them is a claim
+    about the schema, and none carries a denominator it does not have.
+  {% endcomment %}
+  <div class="grid grid-cols-2 md:grid-cols-4 shrink-0 border-y border-line">
+    <div class="flex flex-col gap-[5px] px-pad py-3.5">
+      <span class="lbl">Filas leídas</span>
+      <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ result.rows }}</b>
     </div>
+    <div class="flex flex-col gap-[5px] px-pad py-3.5 md:border-l border-line">
+      <span class="lbl">Notas creadas</span>
+      <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ result.created }}</b>
+    </div>
+    <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t md:border-t-0 md:border-l border-line">
+      <span class="lbl">Notas actualizadas</span>
+      <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ result.updated }}</b>
+    </div>
+    <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t md:border-t-0 md:border-l border-line
+                {% if result.error_count %}shadow-[inset_3px_0_0_var(--color-bad)]{% endif %}">
+      <span class="lbl">Filas con error</span>
+      <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]
+                {% if result.error_count %}text-bad{% endif %}">{{ result.error_count }}</b>
+    </div>
+  </div>
+  {% else %}
+  <div class="border-y border-line shrink-0"></div>
+  {% endif %}
+
+  {% if result.errors %}
+  {% comment %}
+    One table row per failed file row, so the teacher can fix the file rather
+    than re-read a paragraph. Nothing here echoes a student name: these
+    messages are rendered in a browser and a roster is PII, which is why the
+    "alumno no encontrado" wording stays deliberately anonymous.
+  {% endcomment %}
+  <section class="flex flex-col min-w-0 shrink-0" aria-labelledby="err-h">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="err-h">Filas no importadas</span>
+      <span class="ml-auto fig text-[11px] text-bad">{{ result.error_count }}</span>
+    </div>
+
+    <table class="w-full border-collapse">
+      <thead>
+        <tr>
+          <th scope="col" class="w-[80px] text-left pl-pad pr-3 py-2 border-y border-line lbl"
+              title="Número de línea dentro del archivo CSV, contando la cabecera">Fila</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Motivo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for error in result.errors %}
+        <tr>
+          <td class="align-top p-0 border-b border-line">
+            <div class="pl-pad pr-3 py-3.5 fig text-[11.5px] text-ink-3">{% if error.row %}{{ error.row }}{% else %}—{% endif %}</div>
+          </td>
+          <td class="align-top p-0 border-b border-line">
+            <div class="px-3 py-3.5">
+              <span class="block pl-[11px] border-l-2 border-bad text-[12.5px] text-ink-2">
+                {{ error.message }}</span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if result.hidden_errors %}
+        <tr>
+          <td colspan="2" class="px-pad py-3.5 border-b border-line text-[12px] text-ink-3">
+            y {{ result.hidden_errors }} fila{{ result.hidden_errors|pluralize:"s" }} más con
+            errores, no mostrada{{ result.hidden_errors|pluralize:"s" }} aquí.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] flex-1 min-h-0">
+
+    {% comment %} ---------- the upload itself ---------- {% endcomment %}
+    <section class="flex flex-col min-w-0 border-b lg:border-b-0 lg:border-r border-line"
+             aria-labelledby="up-h">
+      <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+        <span class="lbl" id="up-h">
+          {% if result %}Importar otro archivo{% else %}Archivo a importar{% endif %}</span>
+      </div>
+
+      {% comment %}
+        A plain multipart POST with no hx- attributes: the response is this
+        same page re-rendered with a result, and the upload has to be a real
+        form submission for the file to be sent at all.
+
+        `ctl` is written here rather than in `CSVImportForm`, which this view
+        never binds — the size and extension checks live in the view, so the
+        form would be a widget renderer pretending to validate. The rule that
+        puts classes in forms.py holds because Django renders those widgets;
+        this control is hand-written, like the search box in the shell.
+      {% endcomment %}
+      <form method="post" enctype="multipart/form-data"
+            class="flex flex-col gap-[15px] max-w-[520px] px-pad pb-8">
+        {% csrf_token %}
+
+        <div class="flex flex-col gap-[7px]">
+          <label class="lbl" for="csv_file">Archivo CSV</label>
+          <span class="text-[11.5px] text-ink-3 -mt-1">
+            Máximo {{ max_mb }} MB y {{ max_rows }} filas, codificado en UTF-8.</span>
+          <input type="file" id="csv_file" name="csv_file" accept=".csv" required
+                 class="ctl text-[12.5px] file:mr-3 file:py-1 file:px-2.5 file:rounded
+                        file:border file:border-line-2 file:bg-transparent
+                        file:text-ink-2 file:text-[12px] file:font-semibold">
+        </div>
+
+        <div class="flex items-center gap-3.5 mt-1">
+          <button type="submit"
+                  class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                         text-[12.5px] font-[650] tracking-[.01em]">Importar notas</button>
+          <a href="{% if course %}{% url 'class_dashboard' course.CourseID %}{% else %}{% url 'teacher_dashboard' %}{% endif %}"
+             class="text-[12.5px] text-ink-3 hover:text-ink">Cancelar</a>
+        </div>
+      </form>
+    </section>
+
+    {% comment %} ---------- what the file has to look like ---------- {% endcomment %}
+    <aside class="flex flex-col min-w-0" aria-labelledby="fmt-h">
+      <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+        <span class="lbl" id="fmt-h">Formato aceptado</span>
+      </div>
+
+      <div class="px-pad pb-3 text-[12.5px] text-ink-2">
+        La primera línea son las cabeceras. Estas son las que el importador lee:
+      </div>
+
+      <ul class="border-t border-line">
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Nombre_Estudiante</span>
+          <span class="text-[11.5px] text-ink-3">nombre exacto</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Asignatura</span>
+          <span class="text-[11.5px] text-ink-3">nombre exacto</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Trimestre</span>
+          <span class="text-[11.5px] text-ink-3">1, 2 o 3</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Año_Escolar</span>
+          <span class="text-[11.5px] text-ink-3">p. ej. 2025-2026</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Nota</span>
+          <span class="text-[11.5px] text-ink-3">de 0 a 10, con coma o con punto</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Tipo_Nota</span>
+          <span class="text-[11.5px] text-ink-3">en blanco equivale a examen</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Numero_Tipo_Nota</span>
+          <span class="text-[11.5px] text-ink-3">0 significa sin numerar, no «la primera»</span>
+        </li>
+        <li class="flex flex-wrap items-baseline gap-x-3 px-pad py-2 border-b border-line">
+          <span class="fig text-[12px] text-accent-lift">Comentarios</span>
+          <span class="text-[11.5px] text-ink-3">opcional</span>
+        </li>
+      </ul>
+
+      {% comment %}
+        The one thing worth knowing before uploading anything: only ONE of the
+        three CSVs this app produces carries these headers. Both grade exports
+        use a different set and have to be re-headered first.
+      {% endcomment %}
+      <div class="flex flex-col gap-2.5 px-pad py-3.5 border-b border-line text-[12px] text-ink-3">
+        <span>
+          {% if course %}El archivo de
+          <a class="text-accent-lift hover:text-accent"
+             href="{% url 'download_class_list' course_id=course.CourseID %}">Lista de clase</a>
+          ya trae estas cabeceras{% else %}El archivo «Lista de clase» de cada curso ya trae estas
+          cabeceras{% endif %} y se vuelve a importar tal cual: rellena la columna
+          <span class="fig">Nota</span> y súbelo.
+        </span>
+        <span>
+          «Descargar notas» produce una exportación con otras cabeceras
+          (<span class="fig">Estudiante</span>, <span class="fig">Tipo de Nota</span>…),
+          así que hay que renombrarlas antes de volver a importarla.
+        </span>
+        <span>
+          Los cursos, trimestres y asignaturas tienen que existir ya: la importación nunca
+          los crea, y solo escribe notas de alumn@s a quienes das clase.
+        </span>
+      </div>
+
+      <div class="flex-1 min-h-[40px]"></div>
+    </aside>
+  </div>
+
 </div>
-
-<style>
-.import-form {
-    max-width: 600px;
-    margin: 20px 0;
-}
-
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
-}
-
-.form-group input[type="file"] {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #444;
-    border-radius: 4px;
-    background-color: #1e1e1e;
-    color: var(--text-color);
-    font-family: inherit;
-    font-size: 1rem;
-}
-
-.file-info {
-    margin-top: 5px;
-    color: var(--muted-color);
-}
-
-.form-actions {
-    margin-top: 30px;
-    display: flex;
-    gap: 10px;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    text-decoration: none;
-    display: inline-block;
-}
-
-.btn-primary {
-    background-color: #007bff;
-    color: white;
-}
-
-.btn-primary:hover {
-    background-color: #0056b3;
-}
-
-.btn-secondary {
-    background-color: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background-color: #545b62;
-}
-
-pre {
-    color: var(--text-color);
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    line-height: 1.4;
-}
-</style>
-{% endblock content %}
+{% endblock main %}

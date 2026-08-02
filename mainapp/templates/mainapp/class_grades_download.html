@@ -1,149 +1,169 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block page_title %}
-Descargar Notas de Clase
-{% endblock page_title %}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock styles %}
+  A filter form whose POST response is a file, which constrains the markup
+  more than the styling does:
 
-{% block content %}
-<div class="page-root">
-    <div class="page-surface" role="main" aria-labelledby="page-title">
-        <p>
-            <button type="button" class="btn-back" data-action="back">← Volver</button>
-        </p>
-        
-        <h1 id="page-title" class="page-title">Descargar Notas de {{ course.Tipo }} {{ course.Section }}</h1>
-        
-        <div class="page-content">
-            <p>Selecciona los filtros que deseas aplicar para descargar las notas de esta clase:</p>
-            
-            <form method="post" class="filter-form">
-                {% csrf_token %}
-                
-                <div class="form-group">
-                    <label for="subject">Asignatura:</label>
-                    <select id="subject" name="subject">
-                        <option value="">Todas las asignaturas</option>
-                        {% for subject in subjects %}
-                            <option value="{{ subject.SubjectID }}">{{ subject.Name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="trimester">Trimestre:</label>
-                    <select id="trimester" name="trimester">
-                        <option value="">Todos los trimestres</option>
-                        {% for trimester in trimesters %}
-                            <option value="{{ trimester.TrimesterID }}">Trimestre {{ trimester.Name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="school_year">Año Escolar:</label>
-                    <select id="school_year" name="school_year">
-                        <option value="">Todos los años escolares</option>
-                        {% for school_year in school_years %}
-                            <option value="{{ school_year.SchoolYearID }}">{{ school_year.year }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="grade_type">Tipo de Nota:</label>
-                    <select id="grade_type" name="grade_type">
-                        <option value="">Todos los tipos de nota</option>
-                        {% for grade_type in grade_types %}
-                            <option value="{{ grade_type }}">{{ grade_type|title }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">
-                        Descargar Notas
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-action="back">
-                        Cancelar
-                    </button>
-                </div>
-            </form>
-            
+  * No hx-boost, no hx-post, nothing htmx at all. The class dashboard boosts
+    only its scope bar for exactly this reason — an AJAX'd CSV response is
+    read into memory and discarded, so the download silently never happens.
+  * The legacy "Volver" and "Cancelar" were `<button data-action="back">`,
+    inert on a v2 page because base_v2 loads htmx and nothing else. The
+    breadcrumb goes back, and "Cancelar" is a real link to the class.
+  * The four selects are hand-written rather than a Django form: the view
+    reads `request.POST.get(...)` directly and binds no form, so `ctl` goes on
+    the element here. The forms.py rule holds where Django renders the widget.
+
+  Copy note: what this page produces is an *export*, and the export headers
+  (Estudiante, Asignatura, Trimestre, Año Escolar, …) are not the ones
+  `import_grades` reads. The panel on the right says so, because a teacher who
+  assumes otherwise gets a failure on every single row.
+{% endcomment %}
+
+{% block page_title %}Descargar notas · {{ course }}{% endblock page_title %}
+
+{% block breadcrumb %}Clases / <a class="hover:text-ink" href="{% url 'class_dashboard' course.CourseID %}">{{ course }}</a> / <b class="text-ink-2 font-medium">Descargar notas</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Descargar notas</h1>
+    <span class="text-[13px] text-ink-3">{{ course }}</span>
+  </div>
+
+  <div class="border-y border-line shrink-0"></div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] flex-1 min-h-0">
+
+    {% comment %} ---------- the filters ---------- {% endcomment %}
+    <section class="flex flex-col min-w-0 border-b lg:border-b-0 lg:border-r border-line"
+             aria-labelledby="flt-h">
+      <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+        <span class="lbl" id="flt-h">Filtros</span>
+      </div>
+
+      {% if school_years %}
+      {% comment %}
+        "Todas" is the default on every control, so an untouched form is a
+        full export. Saying that once beats four dropdowns the teacher has to
+        reason about.
+      {% endcomment %}
+      <div class="px-pad pb-4 max-w-[560px] text-[12.5px] text-ink-2">
+        Cada filtro es opcional. Sin tocar nada se descargan todas las notas de la clase.
+      </div>
+
+      <form method="post" class="flex flex-col gap-[15px] max-w-[560px] px-pad pb-8">
+        {% csrf_token %}
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-[15px]">
+          <div class="flex flex-col gap-[7px]">
+            <label class="lbl" for="subject">Asignatura</label>
+            <select class="ctl" id="subject" name="subject">
+              <option value="">Todas las asignaturas</option>
+              {% for subject in subjects %}
+              <option value="{{ subject.SubjectID }}">{{ subject.Name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-[7px]">
+            <label class="lbl" for="trimester">Trimestre</label>
+            <select class="ctl" id="trimester" name="trimester">
+              <option value="">Todos los trimestres</option>
+              {% for trimester in trimesters %}
+              <option value="{{ trimester.TrimesterID }}">Trimestre {{ trimester.Name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-[7px]">
+            <label class="lbl" for="school_year">Año escolar</label>
+            <select class="ctl" id="school_year" name="school_year">
+              <option value="">Todos los años</option>
+              {% for school_year in school_years %}
+              <option value="{{ school_year.SchoolYearID }}">{{ school_year.year }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-[7px]">
+            <label class="lbl" for="grade_type">Tipo de nota</label>
+            <select class="ctl" id="grade_type" name="grade_type">
+              <option value="">Todos los tipos</option>
+              {% for grade_type in grade_types %}
+              <option value="{{ grade_type }}">{{ grade_type|title }}</option>
+              {% endfor %}
+            </select>
+          </div>
         </div>
-    </div>
+
+        <div class="flex items-center gap-3.5 mt-1">
+          <button type="submit"
+                  class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                         text-[12.5px] font-[650] tracking-[.01em]">Descargar CSV</button>
+          <a href="{% url 'class_dashboard' course.CourseID %}"
+             class="text-[12.5px] text-ink-3 hover:text-ink">Cancelar</a>
+        </div>
+      </form>
+      {% else %}
+      {% comment %}
+        Every filter list is derived from grades that already exist, so an
+        empty `school_years` means the class holds no grades at all — four
+        dropdowns offering only "Todas" would be a worse way to say that.
+      {% endcomment %}
+      <div class="flex flex-col items-start gap-3.5 px-pad pb-8 max-w-[560px]">
+        <p class="text-[12.5px] text-ink-3">
+          Esta clase todavía no tiene ninguna nota registrada, así que no hay nada que descargar.
+        </p>
+        <a href="{% url 'import_grades_class' course_id=course.CourseID %}"
+           class="py-2.5 px-5 rounded-[5px] border border-line-2 hover:border-accent
+                  text-[12.5px] font-semibold text-ink-2 hover:text-ink">Importar notas</a>
+      </div>
+      {% endif %}
+
+      <div class="flex-1 min-h-[40px]"></div>
+    </section>
+
+    {% comment %} ---------- what comes out ---------- {% endcomment %}
+    <aside class="flex flex-col min-w-0" aria-labelledby="out-h">
+      <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+        <span class="lbl" id="out-h">Columnas del archivo</span>
+      </div>
+
+      <ul class="border-t border-line">
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Estudiante</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Asignatura</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Trimestre</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Año Escolar</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Nota</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Tipo de Nota</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Numero_Tipo_Nota</li>
+        <li class="fig px-pad py-2 border-b border-line text-[12px] text-accent-lift">Comentario</li>
+      </ul>
+
+      <div class="flex flex-col gap-2.5 px-pad py-3.5 border-b border-line text-[12px] text-ink-3">
+        <span>
+          Estas cabeceras <b class="text-ink-2 font-semibold">no</b> son las que acepta
+          <a class="text-accent-lift hover:text-accent"
+             href="{% url 'import_grades_class' course_id=course.CourseID %}">Importar notas</a>.
+          Para editar y volver a subir, descarga
+          <a class="text-accent-lift hover:text-accent"
+             href="{% url 'download_class_list' course_id=course.CourseID %}">Lista de clase</a>,
+          que sí trae las cabeceras del importador.
+        </span>
+        <span>
+          Las notas se escriben en el archivo con punto decimal
+          (<span class="fig">2.66</span>), aunque en pantalla se muestren con coma
+          (<span class="fig">2,66</span>).
+        </span>
+      </div>
+
+      <div class="flex-1 min-h-[40px]"></div>
+    </aside>
+  </div>
+
 </div>
-
-<style>
-.filter-form {
-    max-width: 500px;
-    margin: 20px 0;
-}
-
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
-}
-
-/* Ensure select elements work properly */
-.filter-form select {
-    width: 100%;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    color: var(--text-color) !important;
-    background-color: #1e1e1e !important;
-    border: 1px solid #444 !important;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 1rem;
-}
-
-.filter-form select option {
-    background-color: #1e1e1e !important;
-    color: var(--text-color) !important;
-}
-
-.form-actions {
-    margin-top: 30px;
-    display: flex;
-    gap: 10px;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    text-decoration: none;
-    display: inline-block;
-}
-
-.btn-primary {
-    background-color: #007bff;
-    color: white;
-}
-
-.btn-primary:hover {
-    background-color: #0056b3;
-}
-
-.btn-secondary {
-    background-color: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background-color: #545b62;
-}
-</style>
-{% endblock content %}
+{% endblock main %}
