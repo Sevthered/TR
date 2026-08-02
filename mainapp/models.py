@@ -59,6 +59,15 @@ class Profile(models.Model):
         blank=True,
         on_delete=models.SET_NULL
     )
+    # Identity link for the 'professor' role, mirroring `student` above.
+    # Without it there is no path from request.user to a Teachers row, so
+    # per-teacher data scoping cannot be expressed at all.
+    teacher = models.OneToOneField(
+        'Teachers',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL
+    )
     children = models.ManyToManyField(
         'Students',
         related_name='tutors',

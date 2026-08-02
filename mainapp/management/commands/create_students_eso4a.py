@@ -1,6 +1,5 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from mainapp.models import Students, Course, School_year, Students_Courses
-from faker import Faker
 import unicodedata
 
 class Command(BaseCommand):
@@ -13,9 +12,24 @@ class Command(BaseCommand):
             default='2026-2027',
             help='School year to generate students for (e.g. "2026-2027"). Default: "2026-2027"'
         )
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Unassign students already in the target course before seeding.'
+        )
 
     def handle(self, *args, **options):
         year_input = options['year']
+        # Imported here, not at module level: Faker is a dev-only dependency
+        # (requirements-dev.txt), and a module-level import would make every
+        # `manage.py` command fail on a runtime-only install.
+        try:
+            from faker import Faker
+        except ImportError:
+            raise CommandError(
+                'Faker is not installed. This is a development-only seed '
+                'command; install requirements-dev.txt to use it.')
+
         fake = Faker('es_ES')
         
         try:
@@ -34,12 +48,26 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(f"Course 'Eso 4A' for year '{year_input}' not found."))
             return
 
-        # Cleanup existing students in this course
-        self.stdout.write(f"Cleaning up existing students in {course_obj}...")
-        existing_relations = Students_Courses.objects.filter(course_section=course_obj)
-        student_ids = existing_relations.values_list('student_id', flat=True)
-        count_deleted, _ = Students.objects.filter(StudentID__in=student_ids).delete()
-        self.stdout.write(f"Deleted {count_deleted} existing students.")
+        # Cleanup existing students in this course.
+        #
+        # This used to delete the Students rows themselves. Grade and Ausencias
+        # both cascade from Students, so seeding a course wiped every grade and
+        # absence those students had -- irreversibly, with no confirmation, and
+        # with a default --year that points at a plausible live year.
+        existing_relations = Students_Courses.objects.filter(
+            course_section=course_obj)
+        count = existing_relations.count()
+        if count and not options['force']:
+            self.stdout.write(self.style.ERROR(
+                f"{course_obj} already has {count} student(s). "
+                f"Re-run with --force to unassign them from this course. "
+                f"The student records themselves, and their grades, are kept."))
+            return
+
+        self.stdout.write(f"Unassigning {count} student(s) from {course_obj}...")
+        deleted, _ = existing_relations.delete()
+        self.stdout.write(
+            f"Removed {deleted} course assignment(s). Student records kept.")
 
         self.stdout.write(f"Generating 30 students for {course_obj}...")
 

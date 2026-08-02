@@ -29,7 +29,7 @@
                     Guardar Nota
                 {% endif %}
             </button>
-            <button type="button" class="btn btn-danger" onclick="window.history.back()" style="margin-left: 10px;">
+            <button type="button" class="btn btn-danger" data-action="back" style="margin-left: 10px;">
                 Cancelar
             </button>
         </form>
@@ -38,9 +38,9 @@
 {% endblock content %}
 
 {% block scripts %}
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="{% static 'js/vendor/jquery-3.6.0.min.js' %}"></script>
 
-<script>
+<script nonce="{{ request.csp_nonce }}">
     $(document).ready(function() {
         // Obtenemos los selectores de los campos
         var $schoolYearSelect = $('#id_school_year');
@@ -69,20 +69,27 @@
                     $trimesterSelect.html('<option value="">---------</option>');
                     
                     $.each(data.trimesters, function(key, trimester) {
-                        var trimesterValue = trimester.id; 
-                        var isSelected = (trimesterValue == selectedTrimesterId) ? 'selected' : '';
-                        
-                        // ✅ Usa trimester.name (que ahora es 1, 2, o 3)
-                        $trimesterSelect.append(
-                            '<option value="' + trimesterValue + '" ' + isSelected + '>' + 'Trimestre ' + trimester.name + '</option>'
-                        );
+                        // Object form, not a concatenated HTML string: .append()
+                        // with a string invokes jQuery's HTML parser, so server
+                        // values would be rendered as markup. `text` sets
+                        // textContent instead.
+                        $trimesterSelect.append($('<option>', {
+                            value: trimester.id,
+                            text: 'Trimestre ' + trimester.name,
+                            selected: trimester.id == selectedTrimesterId
+                        }));
                     });
-                    
+
                     $trimesterSelect.prop('disabled', false);
                 },
                 error: function() {
                     console.error("Error en la llamada AJAX a load_trimesters.");
                     $trimesterSelect.html('<option value="">Error al cargar trimestres</option>');
+                },
+                // Runs on both success and failure: without it a failed load
+                // leaves the select disabled with no way to retry.
+                complete: function() {
+                    $trimesterSelect.prop('disabled', false);
                 }
             });
         }

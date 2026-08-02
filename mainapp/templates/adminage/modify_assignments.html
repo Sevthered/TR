@@ -1,3 +1,4 @@
+{% load static %}
 <div class="container mt-4">
     <h2 class="mb-4">🔄 Cambio de Clase de Estudiantes</h2>
     
@@ -80,8 +81,8 @@
 
 </div>
 
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script>
+<script src="{% static 'js/vendor/jquery-3.6.0.min.js' %}"></script>
+<script nonce="{{ request.csp_nonce }}">
     $(document).ready(function() {
         var ajaxFilterUrl = "{% url 'ajax_load_courses_for_filter' %}";
         var ajaxTargetUrl = "{% url 'ajax_load_target_courses' %}";

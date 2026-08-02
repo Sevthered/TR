@@ -4,6 +4,13 @@
 {% endblock page_title %}
 {% block content %}
 <h1>Acceso prohibido</h1>
+{% if unlinked_teacher %}
+    <p>
+        Esta cuenta de profesor no está vinculada a ningún registro de
+        profesorado, por lo que no tiene ninguna clase asignada. Pide a un
+        administrador que enlace tu perfil con tu ficha de profesor.
+    </p>
+{% endif %}
 {% if user and profile %}
     <div>
         <strong>User:</strong> {{ user.username }}<br>

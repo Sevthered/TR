@@ -13,7 +13,7 @@
       <header class="page-header">
         <h1>Cursos - {{ section_label }}</h1>
         {% if user.is_authenticated and user.profile.role == 'professor' %}
-          <a class="btn btn-secondary" href="javascript:history.back()">Volver</a>
+          <a class="btn btn-secondary" href="#" data-action="back">Volver</a>
         {% endif %}
       </header>
       
@@ -21,7 +21,7 @@
         {% if school_years %}
             <form method="GET" id="school-year-filter-form">
                 <label for="school-year-select" style="font-weight: bold;">Seleccionar Año Escolar:</label>
-                <select name="school_year_id" id="school-year-select" class="form-control" onchange="document.getElementById('school-year-filter-form').submit();">
+                <select name="school_year_id" id="school-year-select" class="form-control" data-autosubmit="school-year-filter-form">
                     {% for sy in school_years %}
                         <option value="{{ sy.pk }}" {% if sy.pk == selected_year_id %}selected{% endif %}>
                             {{ sy.year }}

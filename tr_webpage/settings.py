@@ -10,28 +10,41 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+import csp.constants
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Reads BASE_DIR/.env if present. Real deployments inject env vars directly and
+# have no .env file, which is why this is optional rather than required.
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-+jba+8q@85uwmid6z95zitz%3gj*o9+15va+y)0hb4*ucwn#1$'
+# No default on purpose: fail loudly rather than run on a shared placeholder.
+SECRET_KEY = os.environ['SECRET_KEY']
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = []
+# Empty ALLOWED_HOSTS only works while DEBUG is on, where Django substitutes
+# localhost. Both must be set together or turning DEBUG off 400s every request.
+ALLOWED_HOSTS = os.environ.get(
+    'ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
 
 # Application definition
 
 INSTALLED_APPS = [
     'mainapp',
+    'axes',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -48,7 +61,53 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'csp.middleware.CSPMiddleware',
+    'mainapp.middleware.RatelimitTo429Middleware',
+    # Must be last: it needs the authenticated request.
+    'axes.middleware.AxesMiddleware',
 ]
+
+# Content Security Policy. Limits the blast radius of any XSS that gets past
+# output encoding.
+#
+# script-src carries no 'unsafe-inline': the ~20 inline on* handlers were
+# replaced with static/js/behaviors.js, jQuery is self-hosted rather than
+# CDN-loaded, and the five remaining inline <script> blocks each carry a
+# per-response nonce. That combination is what makes the policy meaningful
+# rather than decorative.
+#
+# style-src does allow 'unsafe-inline'. Nine templates carry inline <style>
+# blocks, and style-based injection is far less severe than script execution;
+# removing them is a refactor with no proportional security gain.
+CONTENT_SECURITY_POLICY = {
+    'DIRECTIVES': {
+        'default-src': ["'self'"],
+        'script-src': ["'self'", csp.constants.NONCE],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'img-src': ["'self'", 'data:'],
+        'form-action': ["'self'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'self'"],
+        'object-src': ["'none'"],
+    },
+}
+
+# Login throttling. Without it the login endpoint accepts unlimited attempts.
+AUTHENTICATION_BACKENDS = [
+    # Must come first so it can block before credentials are checked.
+    'axes.backends.AxesStandaloneBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# Lock on either axis independently: attackers rotate IPs against one account,
+# and sweep many accounts from one IP. Tracking only one misses the other.
+AXES_LOCKOUT_PARAMETERS = [['ip_address'], ['username']]
+AXES_FAILURE_LIMIT = 10
+AXES_COOLOFF_TIME = 1          # hours
+AXES_RESET_ON_SUCCESS = True
+# Same generic message as a wrong password: a distinct "locked" response would
+# re-introduce the user-enumeration oracle this phase just removed.
+AXES_LOCKOUT_TEMPLATE = 'mainapp/login.html'
 
 ROOT_URLCONF = 'tr_webpage.urls'
 
@@ -79,15 +138,15 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
 
-        'NAME': 'my_database',
+        'NAME': os.environ.get('POSTGRES_DB', 'my_database'),
 
-        'USER': 'admin',
+        'USER': os.environ.get('POSTGRES_USER', 'admin'),
 
-        'PASSWORD': 'admin',
+        'PASSWORD': os.environ['POSTGRES_PASSWORD'],
 
-        'HOST': '127.0.0.1',
+        'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
 
-        'PORT': '5432',
+        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -130,6 +189,89 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [
     BASE_DIR / 'static'
 ]
+# collectstatic target. Without it, static files only work while DEBUG is on.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Unset, @login_required redirects to /accounts/login/, which is not routed.
+LOGIN_URL = 'login'
+
+
+# Transport security.
+# Tied to DEBUG: these would break local HTTP development, and every one of
+# them is required the moment the app is served over a network.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG
+
+# Explicit rather than relying on the default, which is what tip 2 of the
+# OWASP REST guidance asks for. HttpOnly and Secure are separate controls:
+# HttpOnly stops injected JS reading the cookie, Secure stops it crossing the
+# wire in cleartext. Neither substitutes for the other.
+SESSION_COOKIE_HTTPONLY = True
+
+# Shared school computers: end the session with the browser rather than
+# leaving a 14-day cookie behind on a library machine.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_AGE = 8 * 60 * 60
+
+# HSTS closes the SSL-stripping downgrade that makes a non-Secure cookie
+# interceptable in the first place.
+# Deliberately short to start with. Raise to 31536000 only once every
+# subdomain is confirmed HTTPS-only: browsers honour the longest max-age they
+# have seen, so a premature value cannot be walked back.
+SECURE_HSTS_SECONDS = 0 if DEBUG else 3600
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+
+# Not set: SECURE_PROXY_SSL_HEADER. It is only correct behind a proxy that
+# strips the header from client input; setting it without that makes
+# request.is_secure() trivially spoofable.
+
+
+# Rate-limit counters live here. The default LocMemCache is per-process, so
+# limits would reset on restart and not hold across workers -- a limit that
+# does not actually bind is worse than none, because it reads as protection.
+# Postgres is already a shared store, so this needs no new infrastructure.
+# Requires `manage.py createcachetable` once per environment.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
+}
+
+
+# Logging. There was none at all, so a grade change left no record of who
+# made it. Streams to stdout for a collector to pick up, per the
+# stdout -> router -> aggregator model.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'audit': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'audit',
+        },
+    },
+    'loggers': {
+        # Security-relevant business events: who did what, from where.
+        'mainapp.audit': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -50,7 +50,7 @@
     <div class="page-surface" role="main" aria-labelledby="student-name">
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <p>
-            <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
+            <button type="button" class="btn-back" data-action="back">← Volver</button>
         </p>
         {% endif %}
 
@@ -66,7 +66,7 @@
 
             <div class="form-group">
                 <label for="id_school_year">Año Escolar:</label>
-                <select name="school_year_id" id="id_school_year" onchange="this.form.submit()">
+                <select name="school_year_id" id="id_school_year" data-autosubmit>
                     <option value="">-- Todos los Años --</option>
                     {% if all_school_years %}
                     {% for year in all_school_years %}
@@ -82,7 +82,7 @@
 
             <div class="form-group">
                 <label for="id_trimester">Trimestre:</label>
-                <select name="trimester_id" id="id_trimester" onchange="this.form.submit()" {% if not selected_year_id %}disabled{% endif %}>
+                <select name="trimester_id" id="id_trimester" data-autosubmit {% if not selected_year_id %}disabled{% endif %}>
                     <option value="">-- Todos los Trimestres --</option>
                     {% for trimester in available_trimesters %}
                     <option value="{{ trimester.TrimesterID }}" {% if trimester.TrimesterID == selected_trimester_id %}selected{% endif %}>
@@ -101,11 +101,11 @@
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <div style="margin-bottom: 15px;">
             <button type="button" class="btn btn-success"
-                onclick="window.location.href='{% url 'grade_create' student_id=student.StudentID %}'">
+                data-href="{% url 'grade_create' student_id=student.StudentID %}">
                 Crear Notas
             </button>
             <button type="button" class="btn btn-primary"
-                onclick="window.location.href='{% url 'grades_csv_student' student_id=student.StudentID %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'"
+                data-href="{% url 'grades_csv_student' student_id=student.StudentID %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
                 style="margin-left: 10px;">
                 Descargar Notas CSV
             </button>
@@ -113,14 +113,14 @@
         {% elif user.is_authenticated and user.profile.role == 'student' %}
         <div style="margin-bottom: 15px;">
             <button type="button" class="btn btn-primary"
-                onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
+                data-href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">
                 Descargar Mis Notas CSV
             </button>
         </div>
         {% elif user.is_authenticated and user.profile.role == 'tutor' %}
         <div style="margin-bottom: 15px;">
             <button type="button" class="btn btn-primary"
-                onclick="window.location.href='{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}'">
+                data-href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">
                 Descargar Notas de Mis Hijos CSV
             </button>
         </div>
@@ -159,7 +159,7 @@
                         {% if user.is_authenticated and user.profile.role == 'professor' %}
                         <td>
                             <button type="button" class="btn-edit"
-                                onclick="window.location.href='{% url 'grade_edit' grade_id=grade.id %}'">Editar</button>
+                                data-href="{% url 'grade_edit' grade_id=grade.id %}">Editar</button>
                         </td>
                         {% endif %}
                     </tr>
@@ -176,7 +176,7 @@
         <h2>Ausencias</h2>
         {% if user.is_authenticated and user.profile.role == 'professor' %}
         <button type="button" class="btn btn-success"
-            onclick="window.location.href='{% url 'ausencia_create' student_id=student.StudentID %}'">
+            data-href="{% url 'ausencia_create' student_id=student.StudentID %}">
             Crear Ausencia
         </button>
         <br><br>
@@ -210,7 +210,7 @@
                         {% if user.is_authenticated and user.profile.role == 'professor' %}
                         <td>
                             <button type="button" class="btn-edit"
-                                onclick="window.location.href='{% url 'ausencia_edit' ausencia_id=ausencia.id %}'">Editar</button>
+                                data-href="{% url 'ausencia_edit' ausencia_id=ausencia.id %}">Editar</button>
                         </td>
                         {% endif %}
                     </tr>
