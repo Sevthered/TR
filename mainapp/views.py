@@ -646,12 +646,10 @@ def teacher_dashboard(request):
     # Get user profile.
     profile = request.user.profile
 
-    # Fetch dashboard data, scoped to this teacher's own students.
-    my_students = teacher_students(profile.teacher)
+    # Courses scoped to this teacher. teacher_students() is not called here:
+    # the page lists classes, and the student/grade/absence querysets that
+    # used to be built alongside were never rendered by the template.
     my_courses = teacher_courses(profile.teacher)
-    all_students = my_students.order_by('Name')
-    all_grades = Grade.objects.filter(student__in=my_students)
-    all_ausencias = Ausencias.objects.filter(student__in=my_students)
 
     # Get available school years.
     all_school_years = School_year.objects.all().order_by('-year')
@@ -691,15 +689,28 @@ def teacher_dashboard(request):
         elif course.Tipo == "IB":
             ib_courses.append(course)
 
-    # Prepare context.
+    # Prepare context. `courses` is the sorted list rather than the queryset,
+    # so the template's count costs no second query.
+    #
+    # The teacher's students, grades and absences used to be built here and
+    # were never rendered. They are also not scoped to the selected year,
+    # which is why the page shows no total for them: a figure beside a year
+    # filter that ignores the year states something untrue.
     context = {
-        "students": all_students,
-        "grades": all_grades,
-        "ausencias": all_ausencias,
-        "courses": all_courses,
+        "courses": sorted_courses,
         'eso_courses': eso_courses,
         'bachillerato_courses': bachillerato_courses,
         'ib_courses': ib_courses,
+        # The template renders the three groups in one loop; the labels live
+        # here so the empty states can differ per group.
+        'course_groups': [
+            {'label': 'Eso', 'courses': eso_courses,
+             'empty_label': 'No impartes ninguna clase de Eso este año.'},
+            {'label': 'Bachillerato', 'courses': bachillerato_courses,
+             'empty_label': 'No impartes ninguna clase de Bachillerato este año.'},
+            {'label': 'IB', 'courses': ib_courses,
+             'empty_label': 'No impartes ninguna clase de IB este año.'},
+        ],
         'school_years': all_school_years,
         'selected_school_year': school_year,
     }

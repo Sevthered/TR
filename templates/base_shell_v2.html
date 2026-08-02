@@ -25,18 +25,39 @@
         schema enum. Counts are deliberately absent: nothing in this context
         knows them, and an invented one is how the first mockup went wrong.
       {% endcomment %}
+      {% comment %}
+        Active state is read off the resolved URL rather than a context
+        variable, so a page gets it by existing at that route and no view has
+        to remember to pass a flag. `section_courses` takes its section from
+        the URL kwargs for the same reason.
+      {% endcomment %}
+      {% with url_name=request.resolver_match.url_name section=request.resolver_match.kwargs.section %}
       <a href="{% url 'teacher_dashboard' %}"
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
-                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Mis clases</a>
+         {% if url_name == 'teacher_dashboard' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'teacher_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Mis clases</a>
+      {% comment %}
+        The three literals stay written out rather than looped over a context
+        variable: this shell is extended by pages that do not know about the
+        nav, and a missing variable would silently render an empty one.
+      {% endcomment %}
       <a href="{% url 'section_courses' section='eso' %}"
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
-                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Eso</a>
+         {% if url_name == 'section_courses' and section == 'eso' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'section_courses' and section == 'eso' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Eso</a>
       <a href="{% url 'section_courses' section='bachillerato' %}"
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
-                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Bachillerato</a>
+         {% if url_name == 'section_courses' and section == 'bachillerato' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'section_courses' and section == 'bachillerato' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Bachillerato</a>
       <a href="{% url 'section_courses' section='ib' %}"
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
-                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">IB</a>
+         {% if url_name == 'section_courses' and section == 'ib' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'section_courses' and section == 'ib' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">IB</a>
+      {% endwith %}
     </div>
 
     {% if scope.course %}

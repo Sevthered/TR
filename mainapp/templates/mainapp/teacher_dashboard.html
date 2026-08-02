@@ -1,101 +1,107 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block page_title %}
-Teacher Dashboard
-{% endblock page_title %}
+{% comment %}
+  Direction C · Registro. Second page off base.html.
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock styles %}
+  The year control is a row of links, not the legacy `<select data-autosubmit>`:
+  base_v2 loads htmx and nothing else, so behaviors.js is not there to submit
+  the select, and an inert control is worse than none. Links work with
+  JavaScript off, which is the same rule the class dashboard's scope bar
+  follows.
 
-{% block content %}
-<div class="page-root">
-  <div class="page-surface page-content" role="main" aria-labelledby="page-title">
-  
-    <h1 id="page-title" class="page-title">Listado de Cursos por Tipo</h1>
+  The counts in the strip are `len()` of the three lists the view already
+  builds — nothing here invents a figure. The teacher's student and grade
+  totals are deliberately absent: they are not scoped to the selected year,
+  and a number beside a year filter that ignores the year is a lie.
+{% endcomment %}
 
-    <!-- Filtro de Año Escolar -->
-    <div class="filter-section" style="margin-bottom: 2rem;">
-      <form method="get" class="filter-form" style="display: flex; gap: 1rem; align-items: center;">
-        <label for="school-year-select" style="font-weight: 600;">Año Escolar:</label>
-        <select 
-          id="school-year-select" 
-          name="school_year" 
-          data-autosubmit
-          style="padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc;">
-          {% for sy in school_years %}
-            <option value="{{ sy.SchoolYearID }}" {% if sy.SchoolYearID == selected_school_year.SchoolYearID %}selected{% endif %}>
-              {{ sy.year }}
-            </option>
-          {% empty %}
-            <option value="">No hay años escolares disponibles</option>
-          {% endfor %}
-        </select>
-      </form>
-    </div>
+{% block page_title %}Mis clases{% endblock page_title %}
 
-    <div class="container grid grid-3">
-      <div class="column">
-        <h2>ESO</h2>
-        <div class="table-wrap" role="region" aria-label="Cursos ESO">
-          <table class="course-table" aria-describedby="eso-note">
-            <thead>
-              <tr><th>Sección</th></tr>
-            </thead>
-            <tbody>
-              {% for course in eso_courses %}
-              <tr>
-                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-              </tr>
-              {% empty %}
-              <tr><td colspan="1" id="eso-note">No hay cursos de ESO.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
+{% block breadcrumb %}<b class="text-ink-2 font-medium">Mis clases</b>{% endblock breadcrumb %}
 
-      <div class="column">
-        <h2>Bachillerato</h2>
-        <div class="table-wrap" role="region" aria-label="Cursos Bachillerato">
-          <table class="course-table" aria-describedby="bach-note">
-            <thead>
-              <tr><th>Sección</th></tr>
-            </thead>
-            <tbody>
-              {% for course in bachillerato_courses %}
-              <tr>
-                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-              </tr>
-              {% empty %}
-              <tr><td colspan="1" id="bach-note">No hay cursos de Bachillerato.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
+{% block main %}
+<div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+  <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Mis clases</h1>
+  {% if selected_school_year %}
+  <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+    {{ selected_school_year.year }}
+  </span>
+  {% endif %}
+  {% if user.profile.teacher %}
+  <span class="ml-auto text-[13px] text-ink-3">{{ user.profile.teacher.Name }}</span>
+  {% endif %}
+</div>
 
-      <div class="column">
-        <h2>IB</h2>
-        <div class="table-wrap" role="region" aria-label="Cursos IB">
-          <table class="course-table" aria-describedby="ib-note">
-            <thead>
-              <tr><th>Sección</th></tr>
-            </thead>
-            <tbody>
-              {% for course in ib_courses %}
-              <tr>
-                <td><a href="{% url 'class_dashboard' course.CourseID %}">{{ course.Section }}</a></td>
-              </tr>
-              {% empty %}
-              <tr><td colspan="1" id="ib-note">No hay cursos IB.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+{# ---------- counts, all derived from the three lists ---------- #}
+<div class="grid grid-cols-2 md:grid-cols-4 shrink-0 border-y border-line">
+  <div class="flex flex-col gap-[5px] px-pad py-3.5 shadow-[inset_3px_0_0_var(--color-accent)]">
+    <span class="lbl">Clases este año</span>
+    <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ courses|length }}</b>
+  </div>
+  <div class="flex flex-col gap-[5px] px-pad py-3.5 md:border-l border-line">
+    <span class="lbl">Eso</span>
+    <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ eso_courses|length }}</b>
+  </div>
+  <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t md:border-t-0 md:border-l border-line">
+    <span class="lbl">Bachillerato</span>
+    <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ bachillerato_courses|length }}</b>
+  </div>
+  <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t md:border-t-0 md:border-l border-line">
+    <span class="lbl">IB</span>
+    <b class="fig text-[22px] font-semibold leading-none tracking-[-.03em]">{{ ib_courses|length }}</b>
   </div>
 </div>
-{% endblock %}
+
+{# ---------- year control: real links, no JavaScript required ---------- #}
+<div class="flex flex-wrap items-center gap-3.5 shrink-0 px-pad py-3 border-b border-line">
+  {% if school_years %}
+  <span class="lbl">Año escolar</span>
+  <div class="flex flex-wrap rounded-[5px] border border-line-2 overflow-hidden" role="group"
+       aria-label="Año escolar">
+    {% for sy in school_years %}
+    <a href="?school_year={{ sy.SchoolYearID }}"
+       class="fig px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+              {% if sy.SchoolYearID == selected_school_year.SchoolYearID %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+       {% if sy.SchoolYearID == selected_school_year.SchoolYearID %}aria-current="true"{% endif %}>{{ sy.year }}</a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <span class="text-[12.5px] text-ink-3">No hay años escolares dados de alta.</span>
+  {% endif %}
+  <span class="ml-auto text-[12px] text-ink-3">Solo las clases que impartes</span>
+</div>
+
+{# ---------- the three course lists ---------- #}
+<div class="grid grid-cols-1 lg:grid-cols-3 flex-1 min-h-0">
+  {% for group in course_groups %}
+  <section class="flex flex-col min-w-0 border-b lg:border-b-0 lg:border-r last:border-r-0 border-line"
+           aria-labelledby="grp-{{ forloop.counter }}">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3 border-b border-line">
+      <span class="lbl" id="grp-{{ forloop.counter }}">{{ group.label }}</span>
+      <span class="ml-auto fig text-[11px] text-ink-3">{{ group.courses|length }}</span>
+    </div>
+
+    {% for course in group.courses %}
+    <a class="group flex items-center gap-[13px] h-row shrink-0 px-pad border-b border-line
+              hover:bg-white/[.03]"
+       href="{% url 'class_dashboard' course.CourseID %}">
+      <span aria-hidden="true"
+            class="shrink-0 pl-[11px] border-l-2 border-line-2 fig text-[13px] font-semibold
+                   text-ink-2 group-hover:border-accent group-hover:text-accent-lift">{{ course.Section }}</span>
+      <span class="min-w-0">
+        <b class="block text-[13.5px] font-semibold tracking-[-.01em] truncate">{{ course }}</b>
+        <span class="block text-[11px] text-ink-3 truncate">{{ course.school_year.year }}</span>
+      </span>
+    </a>
+    {% empty %}
+    <div class="shrink-0 px-pad py-[15px] border-b border-line text-[12.5px] text-ink-3">
+      {{ group.empty_label }}
+    </div>
+    {% endfor %}
+
+    {# Ruled blank lines, as on the register — the list continues, unfilled. #}
+    <div class="flex-1 min-h-[90px] ruled" aria-hidden="true"></div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock main %}
