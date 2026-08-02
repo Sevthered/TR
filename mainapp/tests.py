@@ -2595,20 +2595,19 @@ class StudentFileMigrationTests(V2CascadeAssertions, AccessControlTestCase):
     # --- cascade ------------------------------------------------------------
 
     def assert_v2_cascade_without_the_teacher_shell(self, response):
-        """`V2CascadeAssertions.assert_v2_only` also asserts `base_shell_v2`.
+        """The shell is shared now; what must be absent is the teacher's nav.
 
-        This page deliberately extends `base_v2` directly: it is served to
-        students and tutors, and every destination in that shell's nav is
-        `@teacher_required`, so its whole chrome would answer 403 here. The
-        load-bearing half of the assertion — Tailwind present, none of the four
-        legacy stylesheets — is asserted in full; only the shell is not. The
-        mixin is used unmodified for everything else.
+        This page first shipped on `base_v2` with an inline header, because
+        `base_shell_v2` was the professor's unconditionally and every
+        destination in it is `@teacher_required` — a chrome whose every control
+        answers 403 for this page's only audience. The shell branches on the
+        role now, so `assert_v2_only` applies in full; this adds the part that
+        stopped being structural and became a matter of what is rendered.
         """
-        self.assertTemplateUsed(response, 'base_v2.html')
-        self.assertTemplateNotUsed(response, 'base_shell_v2.html')
-        self.assertContains(response, 'css/tailwind.css')
-        for legacy in self.LEGACY_CSS:
-            self.assertNotContains(response, legacy)
+        self.assert_v2_only(response)
+        for teacher_only in ('Mis clases', 'Bachillerato',
+                             'Buscar alumn@', '/search/', '/teacher/'):
+            self.assertNotContains(response, teacher_only)
 
     def test_the_student_record_is_built_on_the_v2_cascade_only(self):
         response = self.as_(self.pupil).get(self.URL)
@@ -2808,3 +2807,104 @@ class LegacyCascadeTeardownTests(TestCase):
             for path in (self.TEMPLATES / root).rglob('*.html'):
                 with self.subTest(template=path.name):
                     self.assertNotIn("js/behaviors.js'", path.read_text())
+
+
+class RoleAwareShellTests(V2CascadeAssertions, AccessControlTestCase):
+    """`base_shell_v2` branches on the role, and that is not cosmetic.
+
+    It used to render the professor's nav to everyone. "Mis clases", the three
+    section links and the search box are all `@teacher_required`, so a student
+    or a tutor extending the shell got a chrome whose every control answers
+    403. `student_file.html` sidestepped it with an inline header of its own;
+    the administrator flows would have been a third copy.
+
+    The nav is also the only place in the app that states what a role may do,
+    so a link leaking across roles is worth a test even though the view behind
+    it would refuse anyway.
+    """
+
+    TEACHER_NAV = ('Mis clases', 'Bachillerato', '/teacher/', '/section/eso/')
+    ADMIN_NAV = ('Administración', '/adminage/', 'Reasignar alumn@s')
+    STUDENT_NAV = ('/student/',)
+
+    def test_a_professor_gets_the_teaching_nav_and_nothing_elses(self):
+        response = self.as_(self.professor).get('/teacher/')
+
+        for entry in self.TEACHER_NAV:
+            self.assertContains(response, entry)
+        for entry in self.ADMIN_NAV:
+            self.assertNotContains(response, entry)
+
+    def test_a_student_gets_no_teaching_nav_and_no_search_box(self):
+        """`search_students` is @teacher_required and scoped to the teacher's
+        own students — not a search this account has any use for."""
+        response = self.as_(self.pupil).get('/student/')
+
+        for entry in self.TEACHER_NAV:
+            self.assertNotContains(response, entry)
+        for entry in self.ADMIN_NAV:
+            self.assertNotContains(response, entry)
+        self.assertNotContains(response, 'Buscar alumn@')
+        self.assertContains(response, '/student/')
+
+    def test_a_tutor_gets_the_same_nav_as_a_student(self):
+        """One destination serves both: `student_dashboard` decides from the
+        profile whose record to show. The child picker belongs to the page —
+        the nav does not know how many children the account has."""
+        response = self.as_(self.tutor).get('/student/')
+
+        for entry in self.TEACHER_NAV:
+            self.assertNotContains(response, entry)
+        self.assertContains(response, 'Seguimiento')
+        self.assertContains(response, '/student/')
+
+    def test_every_role_can_sign_out(self):
+        """There was no logout control in this shell at all — the legacy
+        navbar had one and it did not survive the rebuild."""
+        for user, url in ((self.professor, '/teacher/'),
+                          (self.pupil, '/student/'),
+                          (self.tutor, '/student/')):
+            with self.subTest(user=user.username):
+                response = self.as_(user).get(url)
+
+                self.assertContains(response, '/logout/')
+                self.assertContains(response, 'Salir')
+
+    def test_the_identity_block_names_a_student_not_just_a_username(self):
+        """`firstof` read only `profile.teacher.Name`, so two of the four roles
+        fell through to a bare username."""
+        response = self.as_(self.pupil).get('/student/')
+
+        self.assertContains(response, self.student.Name)
+
+    def test_the_403_page_offers_the_nav_the_account_does_have(self):
+        """`forbidden.html` extends this shell, so a denied account keeps its
+        own nav there — not the one it was just refused. The 403 is where
+        someone most needs a way back to where they are allowed to be."""
+        response = self.as_(self.pupil).get('/teacher/')
+
+        self.assertEqual(response.status_code, 403)
+        for entry in self.TEACHER_NAV + self.ADMIN_NAV:
+            self.assertNotContains(response, entry, status_code=403)
+        self.assertContains(response, '/student/', status_code=403)
+        self.assertContains(response, '/logout/', status_code=403)
+
+    def test_the_administrator_branch_renders(self):
+        """All eight administrator templates are still standalone documents
+        that extend nothing, so no admin page reaches this shell yet. The one
+        route that does is the 403 — which is enough to keep the branch from
+        rotting silently before stage 3 gets to it."""
+        response = self.as_(self.admin).get('/teacher/')
+
+        self.assertEqual(response.status_code, 403)
+        for entry in self.ADMIN_NAV:
+            self.assertContains(response, entry, status_code=403)
+        for entry in self.TEACHER_NAV:
+            self.assertNotContains(response, entry, status_code=403)
+
+    def test_the_nav_marks_the_page_you_are_on_for_a_student_too(self):
+        """Active state is read off the resolved URL, so a page gets it by
+        existing at that route rather than by a view passing a flag."""
+        response = self.as_(self.pupil).get('/student/')
+
+        self.assertContains(response, 'aria-current="page"')

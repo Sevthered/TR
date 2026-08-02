@@ -5,6 +5,30 @@
   pages extend this; base_v2 stays a bare document for anything that wants no
   chrome. Nothing here invents a count — the legacy sidebar's hardcoded lists
   are exactly what this replaces.
+
+  The nav is role-aware, and that is load-bearing rather than cosmetic. It used
+  to be the professor's nav unconditionally: "Mis clases" and the three section
+  links are @teacher_required and the search box is too, so a student or a
+  tutor extending this shell got a chrome whose every control answers 403.
+  student_file.html sidestepped it with an inline shell of its own; the
+  administrator flows would have been the third copy, which is the point at
+  which copying stops being cheaper than branching.
+
+  Each role's entries stay written out as literals rather than looped over a
+  context variable, for the same reason the professor's three always were: this
+  shell is extended by pages that know nothing about the nav, and a missing
+  variable would render an empty one silently.
+
+  A role with no branch gets the mark and the identity footer and no links.
+  That is the fallback, not the norm: forbidden.html extends this shell too,
+  and a denied account with a known role keeps its *own* nav there — which is
+  the point, since the 403 page is where someone most needs a way back to
+  where they are actually allowed to be.
+
+  The administrator branch is written but not yet reachable from an
+  administrator page: all eight of those templates are still standalone
+  documents that extend nothing (stage 3). Today it renders only on
+  forbidden.html, which is where its test exercises it.
 {% endcomment %}
 
 {% block shell %}
@@ -18,6 +42,15 @@
       <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
     </div>
 
+    {% comment %}
+      Active state is read off the resolved URL rather than a context variable,
+      so a page gets it by existing at that route and no view has to remember
+      to pass a flag. `section_courses` takes its section from the URL kwargs
+      for the same reason. The `with` spans every role's block.
+    {% endcomment %}
+    {% with url_name=request.resolver_match.url_name section=request.resolver_match.kwargs.section role=user.profile.role %}
+
+    {% if role == 'professor' %}
     <div class="hidden md:block pt-[18px] pb-1.5">
       <span class="lbl block px-pad pb-2.5">Docencia</span>
       {% comment %}
@@ -25,13 +58,6 @@
         schema enum. Counts are deliberately absent: nothing in this context
         knows them, and an invented one is how the first mockup went wrong.
       {% endcomment %}
-      {% comment %}
-        Active state is read off the resolved URL rather than a context
-        variable, so a page gets it by existing at that route and no view has
-        to remember to pass a flag. `section_courses` takes its section from
-        the URL kwargs for the same reason.
-      {% endcomment %}
-      {% with url_name=request.resolver_match.url_name section=request.resolver_match.kwargs.section %}
       <a href="{% url 'teacher_dashboard' %}"
          {% if url_name == 'teacher_dashboard' %}aria-current="page"{% endif %}
          class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
@@ -57,8 +83,71 @@
          class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
                 border-l-2 hover:text-ink hover:bg-white/[.03]
                 {% if url_name == 'section_courses' and section == 'ib' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">IB</a>
-      {% endwith %}
     </div>
+
+    {% elif role == 'student' or role == 'tutor' or role == 'legal_tutor' %}
+    {% comment %}
+      One destination, because there is genuinely one: `student_dashboard`
+      serves both roles and decides from the profile which record to show. The
+      tutor's child picker belongs to that page, not to the nav — the nav does
+      not know how many children the account has, and inventing a count here is
+      the mistake the professor's block already refuses to make.
+
+      'legal_tutor' is listed because `student_detail` is decorated with it.
+      It is not one of Profile.ROLE_CHOICES, so no account currently holds it;
+      the branch matches the decorator rather than the enum on purpose, so the
+      shell does not go blank if that role is ever finished.
+    {% endcomment %}
+    <div class="hidden md:block pt-[18px] pb-1.5">
+      <span class="lbl block px-pad pb-2.5">{% if role == 'student' %}Mi expediente{% else %}Seguimiento{% endif %}</span>
+      <a href="{% url 'student_dashboard' %}"
+         {% if url_name == 'student_dashboard' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'student_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">{% if role == 'student' %}Notas y ausencias{% else %}Alumn@s a mi cargo{% endif %}</a>
+    </div>
+
+    {% elif role == 'administrator' %}
+    {% comment %}
+      The six administrator destinations, in the order the flows actually run:
+      a school year exists before courses do, courses before subject
+      assignments, and a student is created before being moved. Every one is a
+      real route in urls.py; none is a placeholder.
+    {% endcomment %}
+    <div class="hidden md:block pt-[18px] pb-1.5">
+      <span class="lbl block px-pad pb-2.5">Administración</span>
+      <a href="{% url 'adminage_dashboard' %}"
+         {% if url_name == 'adminage_dashboard' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'adminage_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Panel</a>
+      <a href="{% url 'create_school_year' %}"
+         {% if url_name == 'create_school_year' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'create_school_year' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Años escolares</a>
+      <a href="{% url 'create_courses_sections' %}"
+         {% if url_name == 'create_courses_sections' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'create_courses_sections' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Cursos</a>
+      <a href="{% url 'assign_subjects' %}"
+         {% if url_name == 'assign_subjects' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'assign_subjects' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Asignaturas</a>
+      <a href="{% url 'create_and_assign_student' %}"
+         {% if url_name == 'create_and_assign_student' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'create_and_assign_student' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Alta de alumn@</a>
+      <a href="{% url 'reassign_students' %}"
+         {% if url_name == 'reassign_students' %}aria-current="page"{% endif %}
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+                border-l-2 hover:text-ink hover:bg-white/[.03]
+                {% if url_name == 'reassign_students' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Reasignar alumn@s</a>
+    </div>
+    {% endif %}
 
     {% if scope.course %}
     <div class="hidden md:block pt-[18px] pb-1.5">
@@ -72,21 +161,40 @@
     </div>
     {% endif %}
 
+    {% comment %}
+      firstof walks every role's own name before falling back: a student
+      account has no `teacher`, and reading only that one left the identity
+      block showing a bare username for two of the four roles.
+
+      "Salir" lives here rather than in the top bar because the top bar is the
+      page's, not the account's. There was no logout control in this shell at
+      all — the legacy navbar had one, and it did not survive the rebuild.
+    {% endcomment %}
     <div class="hidden md:flex items-center gap-2.5 mt-auto px-pad py-[13px] border-t border-line">
       <span class="grid place-items-center w-[26px] h-[26px] rounded shrink-0 border border-line-2
                    text-ink-2 text-[10px] font-bold">{{ user.username|slice:":2"|upper }}</span>
       <span class="min-w-0">
         <b class="block text-[12.5px] font-semibold truncate">
-          {% firstof user.profile.teacher.Name user.get_full_name user.username %}</b>
+          {% firstof user.profile.teacher.Name user.profile.student.Name user.get_full_name user.username %}</b>
         <span class="block text-[11.5px] text-ink-3 truncate">@{{ user.username }} · {{ user.profile.get_role_display }}</span>
       </span>
+      <a href="{% url 'logout' %}" title="Cerrar sesión"
+         class="ml-auto shrink-0 px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+                text-ink-2 hover:text-ink hover:border-accent">Salir</a>
     </div>
+    {% endwith %}
   </nav>
 
   <div class="flex flex-col min-w-0">
     <header class="sticky top-0 z-10 flex items-center gap-3.5 h-[52px] shrink-0 px-pad
                    border-b border-line bg-ground">
       <span class="text-[12.5px] text-ink-3 truncate">{% block breadcrumb %}{% endblock breadcrumb %}</span>
+      {% comment %}
+        `search_students` is @teacher_required, so offering the box to anyone
+        else is offering a 403. It is also scoped to the teacher's own
+        students, which is not a search a student or a tutor has any use for.
+      {% endcomment %}
+      {% if user.profile.role == 'professor' %}
       <form action="{% url 'search_students' %}" method="get"
             class="ml-auto hidden sm:flex items-center gap-2 w-[250px] px-2.5 py-1.5
                    border border-line-2 rounded-[5px] focus-within:border-accent">
@@ -94,6 +202,7 @@
                class="flex-1 min-w-0 bg-transparent text-[12.5px] text-ink outline-none
                       placeholder:text-ink-3">
       </form>
+      {% endif %}
     </header>
 
     {% if messages %}
