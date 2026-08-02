@@ -180,7 +180,15 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+# The UI is Spanish. Under 'en-us' a grade rendered 2.66 on a page that says
+# "Media de las notas"; it renders 2,66 now. This also switches date and time
+# formats app-wide, which is why it was held back for a verification pass of
+# its own rather than shipped with the class-dashboard rebuild.
+#
+# Django has no es_ES format module — 'es-es' falls back to the 'es' one,
+# which is the peninsular format set. CSV exports are unaffected: they write
+# Decimals through csv.writer, which calls str(), never the locale.
+LANGUAGE_CODE = 'es-es'
 
 TIME_ZONE = 'Europe/Madrid'
 

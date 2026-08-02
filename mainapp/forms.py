@@ -53,7 +53,14 @@ class AusenciaEditForm(forms.ModelForm):
         model = Ausencias
         fields = ['subject', 'trimester', 'school_year', 'Tipo', 'date_time']
         widgets = {
-            'date_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
+            # <input type="datetime-local"> only accepts an ISO value. Without
+            # an explicit format Django renders DATETIME_INPUT_FORMATS[0] of
+            # the active locale — '%Y-%m-%d %H:%M:%S' under en-us, '%d/%m/%Y
+            # %H:%M:%S' under es — and the browser silently blanks the control,
+            # so editing an absence lost its date. Parsing was never the
+            # problem: DateTimeField accepts the ISO value the browser posts.
+            'date_time': forms.DateTimeInput(
+                attrs={'type': 'datetime-local'}, format='%Y-%m-%dT%H:%M'),
         }
 
 
@@ -71,7 +78,10 @@ class AusenciaForm(forms.ModelForm):
     date_time = forms.DateTimeField(
         required=False,
         widget=forms.DateTimeInput(
-            attrs={'type': 'datetime-local', 'class': 'ctl'}),
+            attrs={'type': 'datetime-local', 'class': 'ctl'},
+            # See AusenciaEditForm: the control needs an ISO value, which is
+            # not what the locale's first input format is in either language.
+            format='%Y-%m-%dT%H:%M'),
         label='Fecha y hora'
     )
 
@@ -134,11 +144,13 @@ class AusenciaForm(forms.ModelForm):
             if scope.trimester is not None:
                 self.fields['trimester'].initial = scope.trimester.pk
 
-        # Set default date/time to now.
+        # Set default date/time to now. The widget carries the ISO format, so
+        # the datetime goes in as a datetime rather than a pre-formatted
+        # string — one place deciding how a datetime is written, not two.
         if 'initial' not in kwargs or 'date_time' not in kwargs.get('initial', {}):
             from django.utils import timezone
-            now = timezone.localtime(timezone.now())
-            self.fields['date_time'].initial = now.strftime('%Y-%m-%dT%H:%M')
+            self.fields['date_time'].initial = timezone.localtime(
+                timezone.now())
 
 
 MAIN_COURSES = {

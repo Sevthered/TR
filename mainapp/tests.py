@@ -1271,3 +1271,86 @@ class ClassDashboardCostTests(AccessControlTestCase):
             client.get(url, HTTP_HX_REQUEST='true')
 
         self.assertLessEqual(len(fragment), len(full))
+
+
+class LocaleTests(AccessControlTestCase):
+    """LANGUAGE_CODE is es-es. The app is Spanish, so a grade must read 2,66 —
+    but the comma must not reach a CSV, and it must not reach a form control
+    the browser parses."""
+
+    def test_a_grade_renders_with_a_decimal_comma_on_the_page(self):
+        Grade.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year,
+            grade=Decimal('2.66'), grade_type='examen', grade_type_number=0)
+
+        response = self.as_(self.professor).get(
+            f'/class/{self.course.pk}/dashboard/')
+
+        self.assertContains(response, '2,66')
+        self.assertNotContains(response, '2.66')
+
+    def test_the_csv_export_still_uses_a_decimal_point(self):
+        """The exports write Decimals through csv.writer, which calls str().
+        A localized number here would move the column separator into the
+        value and break every consumer."""
+        Grade.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year,
+            grade=Decimal('2.66'), grade_type='examen', grade_type_number=0)
+
+        body = self.as_(self.professor).get('/grades/csv/').content.decode()
+
+        self.assertIn('2.66', body)
+        self.assertNotIn('2,66', body)
+
+    def test_the_datetime_control_receives_an_iso_value(self):
+        """<input type="datetime-local"> only accepts ISO. Without an explicit
+        widget format Django renders DATETIME_INPUT_FORMATS[0] of the active
+        locale — '%d/%m/%Y %H:%M:%S' under es — and the browser silently
+        blanks the control."""
+        response = self.as_(self.professor).get(
+            f'/class/{self.course.pk}/dashboard/')
+
+        field = response.context['ausencia_form']['date_time']
+        value = field.value()
+        rendered = str(field)
+
+        self.assertRegex(
+            rendered, r'value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"')
+        self.assertNotIn('/', rendered.split('value="')[1].split('"')[0])
+        self.assertIsNotNone(value)
+
+    def test_editing_an_absence_keeps_its_date_in_the_control(self):
+        """The edit form had the same defect, and there it lost a stored
+        value rather than a default."""
+        from .forms import AusenciaEditForm
+
+        ausencia = Ausencias.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year, Tipo='Ausencia',
+            date_time=timezone.now())
+
+        rendered = str(AusenciaEditForm(instance=ausencia)['date_time'])
+
+        self.assertRegex(
+            rendered, r'value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"')
+
+    def test_a_browser_posted_iso_datetime_is_still_accepted(self):
+        """Parsing was never the problem, but the locale switch is exactly the
+        kind of change that would break it silently."""
+        response = self.as_(self.professor).post(
+            f'/class/{self.course.pk}/dashboard/',
+            {
+                'students': [self.student.pk],
+                'subject': self.subject.pk,
+                'trimester': self.trimester.pk,
+                'school_year': self.year.pk,
+                'Tipo': 'Retraso',
+                'date_time': '2026-03-04T09:15',
+            })
+
+        self.assertEqual(response.status_code, 302)
+        saved = Ausencias.objects.get(student=self.student, Tipo='Retraso')
+        self.assertEqual(timezone.localtime(saved.date_time).hour, 9)
+        self.assertEqual(timezone.localtime(saved.date_time).minute, 15)
