@@ -1941,3 +1941,231 @@ class WriteFormTemplateTests(V2CascadeAssertions, AccessControlTestCase):
         response = self.as_(self.professor).get(self.ausencia_url())
 
         self.assertContains(response, 'class="ctl"')
+
+
+class CsvPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """Stage 2: the two CSV pages off base.html.
+
+    `CsvImportTests` and `CsvRoundTripTests` already pin what the importer
+    *does*; this class pins what the teacher is shown. The error path gets the
+    attention, because it is this page's real job and the one part of it a
+    green import never exercises.
+    """
+
+    HEADER = ('Nombre_Estudiante,Asignatura,Trimestre,Año_Escolar,'
+              'Nota,Tipo_Nota,Numero_Tipo_Nota,Comentarios')
+
+    def import_url(self, scoped=True):
+        if scoped:
+            return f'/import/grades/{self.course.CourseID}/'
+        return '/import/grades/'
+
+    def download_url(self):
+        return f'/class/{self.course.CourseID}/grades/download/'
+
+    def a_grade(self):
+        return Grade.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year,
+            grade=Decimal('7.5'), grade_type='examen', grade_type_number=1)
+
+    def good_row(self):
+        return f'{self.student.Name},{self.subject.Name},1,2025-2026,7.5,examen,1,'
+
+    def row_with_unknown_year(self):
+        return f'{self.student.Name},{self.subject.Name},1,9999-0000,6,examen,2,'
+
+    def blank_grade_row(self):
+        return f'{self.student.Name},{self.subject.Name},1,2025-2026,,examen,3,'
+
+    def upload(self, *rows):
+        """Post a CSV and return the rendered page.
+
+        Deliberately not `follow=True`: the result is rendered in place rather
+        than redirected to, so following would hide a regression that turned
+        it back into a redirect.
+        """
+        body = '\n'.join([self.HEADER, *rows]).encode('utf-8')
+        upload = SimpleUploadedFile('grades.csv', body, content_type='text/csv')
+        return self.as_(self.professor).post(
+            self.import_url(), {'csv_file': upload})
+
+    # --- import_grades ------------------------------------------------------
+
+    def test_the_import_page_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get(self.import_url())
+
+        self.assertTemplateUsed(response, 'mainapp/import_grades.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_unscoped_import_page_is_on_the_v2_cascade_too(self):
+        """`import_grades` serves two routes and only one carries a course, so
+        the course-less one is its own render path."""
+        response = self.as_(self.professor).get(self.import_url(scoped=False))
+
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+        # No course, so there is no class list to offer a template for.
+        self.assertNotContains(response, 'download/class-list')
+
+    def test_a_class_scoped_import_offers_that_class_own_template(self):
+        response = self.as_(self.professor).get(self.import_url())
+
+        self.assertContains(
+            response, f'/download/class-list/{self.course.CourseID}/')
+
+    def test_the_error_page_is_still_on_the_v2_cascade_only(self):
+        """The POST response is a full page render rather than a redirect, so
+        it is its own migration surface — and the one a clean upload hides."""
+        response = self.upload(self.row_with_unknown_year())
+
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_a_failed_row_is_named_by_its_line_number_and_its_reason(self):
+        """A teacher fixes a file, not a paragraph: the file's own row number
+        is a column and the reason sits beside it."""
+        response = self.upload(self.blank_grade_row(),
+                               self.row_with_unknown_year())
+
+        self.assertContains(response, 'Filas no importadas')
+        self.assertContains(response, 'Falta la nota.')
+        self.assertContains(response, '9999-0000')
+        # Row 2 is the first data line, row 3 the second — the header is 1.
+        self.assertContains(response, '>2</div>')
+        self.assertContains(response, '>3</div>')
+
+    def test_an_error_never_echoes_the_student_name_from_the_file(self):
+        """Re-pinned at the template: the row is rendered in a browser and a
+        roster is PII. `CsvImportTests` pins the message, this pins the page."""
+        response = self.upload(
+            f'Nombre Inventado,{self.subject.Name},1,2025-2026,6,examen,1,')
+
+        self.assertNotContains(response, 'Nombre Inventado')
+        self.assertContains(response, 'Alumno no encontrado')
+
+    def test_the_summary_counts_every_outcome_of_the_upload(self):
+        response = self.upload(self.good_row(), self.row_with_unknown_year())
+
+        self.assertContains(response, 'Filas leídas')
+        self.assertContains(response, 'Notas creadas')
+        self.assertContains(response, 'Notas actualizadas')
+        self.assertContains(response, 'Filas con error')
+
+    def test_an_error_free_import_shows_no_error_table(self):
+        """An empty "Filas no importadas" heading reads as a failed import."""
+        response = self.upload(self.good_row())
+
+        self.assertNotContains(response, 'Filas no importadas')
+        self.assertContains(response, 'Filas leídas')
+
+    def test_a_first_visit_shows_no_summary_at_all(self):
+        """Zeroes on a GET would claim an import ran and did nothing."""
+        response = self.as_(self.professor).get(self.import_url())
+
+        self.assertNotContains(response, 'Filas leídas')
+        self.assertNotContains(response, 'Filas no importadas')
+
+    def test_row_errors_are_not_also_repeated_as_message_banners(self):
+        """They used to be: one banner per row, capped at ten. Rendering both
+        the table and the banners is the wall of text the table replaces."""
+        response = self.upload(self.row_with_unknown_year())
+
+        self.assertEqual(response.content.count(b'9999-0000'), 1)
+
+    def test_a_whole_file_refusal_is_a_message_rather_than_a_table(self):
+        """"Wrong extension" is one statement about the upload — no row was
+        ever parsed, so there is nothing to tabulate."""
+        bad = SimpleUploadedFile('grades.txt', b'x', content_type='text/plain')
+        response = self.as_(self.professor).post(
+            self.import_url(), {'csv_file': bad})
+
+        self.assertContains(response, 'El archivo debe ser un CSV.')
+        self.assertNotContains(response, 'Filas no importadas')
+        self.assertNotContains(response, 'Filas leídas')
+
+    def test_the_import_page_names_the_headers_the_importer_reads(self):
+        """Three header sets exist and only `download_class_list`'s is
+        accepted. Copy naming the wrong one costs a whole round trip."""
+        response = self.as_(self.professor).get(self.import_url())
+
+        for header in ('Nombre_Estudiante', 'Asignatura', 'Trimestre',
+                       'Año_Escolar', 'Nota', 'Tipo_Nota',
+                       'Numero_Tipo_Nota', 'Comentarios'):
+            with self.subTest(header=header):
+                self.assertContains(response, header)
+        self.assertContains(response, 'Lista de clase')
+
+    # --- class_grades_download ---------------------------------------------
+
+    def test_the_download_page_is_built_on_the_v2_cascade_only(self):
+        self.a_grade()
+        response = self.as_(self.professor).get(self.download_url())
+
+        self.assertTemplateUsed(response, 'mainapp/class_grades_download.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_empty_download_page_is_on_the_v2_cascade_too(self):
+        """The empty state is a different branch of the same template."""
+        response = self.as_(self.professor).get(self.download_url())
+
+        self.assert_v2_only(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_download_form_is_never_boosted(self):
+        """Boosting a CSV response fetches it over XHR and discards it, so the
+        file silently never reaches disk. The class dashboard scopes its boost
+        to the scope bar for exactly this reason."""
+        self.a_grade()
+        response = self.as_(self.professor).get(self.download_url())
+
+        self.assertNotContains(response, 'hx-boost')
+        self.assertNotContains(response, 'hx-post')
+        self.assertNotContains(response, 'hx-get')
+
+    def test_the_filter_controls_carry_the_v2_control_class(self):
+        self.a_grade()
+        response = self.as_(self.professor).get(self.download_url())
+
+        for field in ('subject', 'trimester', 'school_year', 'grade_type'):
+            with self.subTest(field=field):
+                self.assertContains(response, f'class="ctl" id="{field}"')
+
+    def test_a_class_with_no_grades_says_so_instead_of_empty_filters(self):
+        """Every filter list is derived from grades that already exist, so with
+        none the form can only offer four "Todas" and a button that yields a
+        file holding one header line."""
+        response = self.as_(self.professor).get(self.download_url())
+
+        self.assertContains(response, 'no tiene ninguna nota registrada')
+        self.assertNotContains(response, 'Descargar CSV')
+
+    def test_the_download_page_says_its_headers_are_not_reimportable(self):
+        """This export and the importer do not share a header set. The page
+        used to say nothing at all, which reads as though they do."""
+        self.a_grade()
+        response = self.as_(self.professor).get(self.download_url())
+
+        self.assertContains(response, 'Estudiante')
+        self.assertContains(response, 'no</b> son las que acepta')
+        self.assertContains(response, 'Lista de clase')
+
+    def test_the_download_itself_still_returns_a_csv(self):
+        """The migration must not have turned the POST into a page render."""
+        self.a_grade()
+        response = self.as_(self.professor).post(self.download_url(), {})
+
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('attachment;', response['Content-Disposition'])
+        self.assertIn(b'Estudiante', response.content)

@@ -1434,6 +1434,18 @@ def import_grades(request, course_id=None):
         importable_students = importable_students.filter(
             students_courses__course_section=course)
 
+    # Whole-file refusals stay in `messages` — they are one statement about the
+    # upload, not a list. Per-row failures go in `result` and are tabulated.
+    def page(result=None):
+        return render(request, 'mainapp/import_grades.html', {
+            'course': course,
+            'result': result,
+            'max_rows': MAX_IMPORT_ROWS,
+            'max_mb': MAX_IMPORT_BYTES // 1024 // 1024,
+        })
+
+    result = None
+
     # Handle POST (CSV upload).
     if request.method == 'POST':
         csv_file = request.FILES.get('csv_file')
@@ -1441,11 +1453,11 @@ def import_grades(request, course_id=None):
         # Basic validation.
         if not csv_file:
             messages.error(request, 'Por favor selecciona un archivo CSV.')
-            return render(request, 'mainapp/import_grades.html', {'course': course})
+            return page()
 
         if not csv_file.name.endswith('.csv'):
             messages.error(request, 'El archivo debe ser un CSV.')
-            return render(request, 'mainapp/import_grades.html', {'course': course})
+            return page()
 
         # Django's upload settings do not cap file size: DATA_UPLOAD_MAX_
         # MEMORY_SIZE excludes files and FILE_UPLOAD_MAX_MEMORY_SIZE is only a
@@ -1456,13 +1468,25 @@ def import_grades(request, course_id=None):
                 request,
                 f'El archivo supera el límite de '
                 f'{MAX_IMPORT_BYTES // 1024 // 1024} MB.')
-            return render(request, 'mainapp/import_grades.html', {'course': course})
+            return page()
 
         # Counters.
         created_count = 0
         updated_count = 0
         error_count = 0
         errors = []
+
+        # Errors used to be pushed into `messages` one banner per row, capped
+        # at ten, which is the page's actual job rendered as a wall of text.
+        # They are structured instead and rendered as a table, so the row
+        # number is a column rather than a prefix. The limit is a display
+        # limit only — `error_count` still counts every failed row.
+        ERROR_DISPLAY_LIMIT = 50
+
+        def add_error(message, row_num=None):
+            """Record one row failure. Messages must never echo a student
+            name: they are shown in the browser and a roster is PII."""
+            errors.append({'row': row_num, 'message': message})
 
         try:
             # Streamed, not read() into memory. iterdecode keeps peak memory
@@ -1472,7 +1496,9 @@ def import_grades(request, course_id=None):
             # Iterate rows.
             for row_num, row in enumerate(reader, start=2):
                 if row_num - 1 > MAX_IMPORT_ROWS:
-                    errors.append(
+                    # Not row-scoped: it is a statement about the file, so it
+                    # carries no row number.
+                    add_error(
                         f'Se ha alcanzado el límite de {MAX_IMPORT_ROWS} filas; '
                         f'el resto del archivo se ha ignorado.')
                     error_count += 1
@@ -1493,7 +1519,7 @@ def import_grades(request, course_id=None):
                     # A blank grade used to import as 0.0, silently recording a
                     # zero for every row the teacher left empty in the template.
                     if not grade_raw:
-                        errors.append(f'Fila {row_num}: falta la nota.')
+                        add_error('Falta la nota.', row_num)
                         error_count += 1
                         continue
                     grade_value = float(grade_raw.replace(',', '.'))
@@ -1532,63 +1558,64 @@ def import_grades(request, course_id=None):
                         updated_count += 1
 
                 except Students.DoesNotExist:
-                    errors.append(
-                        f'Fila {row_num}: alumno no encontrado o fuera de tu clase.')
+                    add_error(
+                        'Alumno no encontrado o fuera de tu clase.', row_num)
                     error_count += 1
                 except Subjects.DoesNotExist:
-                    errors.append(f'Fila {row_num}: asignatura no encontrada.')
+                    add_error('Asignatura no encontrada.', row_num)
                     error_count += 1
                 except School_year.DoesNotExist:
                     # Name the value. Years and trimesters are not PII, and a
                     # bare "no encontrado" gave the teacher nothing to act on —
                     # this is the error the broken template used to raise on
                     # every single row.
-                    errors.append(
-                        f'Fila {row_num}: año escolar "{school_year_str}" '
-                        f'no encontrado.')
+                    # The lowercase "año escolar" is load-bearing: the
+                    # round-trip test asserts a *successful* import never says
+                    # it, and capitalising here would make that test vacuous.
+                    add_error(
+                        f'El año escolar «{school_year_str}» no existe.',
+                        row_num)
                     error_count += 1
                 except Trimester.DoesNotExist:
-                    errors.append(
-                        f'Fila {row_num}: trimestre "{trimester_name}" no '
-                        f'encontrado en el año escolar "{school_year_str}".')
+                    add_error(
+                        f'El trimestre «{trimester_name}» no existe en el '
+                        f'año escolar «{school_year_str}».', row_num)
                     error_count += 1
                 except ValidationError:
-                    errors.append(
-                        f'Fila {row_num}: valores no válidos '
-                        f'(nota fuera de 0-10, o tipo de nota incorrecto).')
+                    add_error(
+                        'Valores no válidos (nota fuera de 0-10, o tipo de '
+                        'nota incorrecto).', row_num)
                     error_count += 1
                 except (ValueError, TypeError):
-                    errors.append(f'Fila {row_num}: formato numérico no válido.')
+                    add_error('Formato numérico no válido.', row_num)
                     error_count += 1
                 except Exception:
-                    errors.append(f'Fila {row_num}: error al procesar la fila.')
+                    add_error('Error al procesar la fila.', row_num)
                     error_count += 1
 
             audit(request, 'grades.import', created=created_count,
                   updated=updated_count, errors=error_count,
                   course_id=course.pk if course else None)
 
-            # Show summary.
-            if created_count > 0:
-                messages.success(request, f'✓ Created: {created_count}')
-            if updated_count > 0:
-                messages.info(
-                    request, f'↻ Updated: {updated_count}')
-            if error_count > 0:
-                messages.error(request, f'❌ Errors: {error_count}')
-                for error in errors[:10]:
-                    messages.error(request, error)
-                if len(errors) > 10:
-                    messages.error(
-                        request, f'... and {len(errors) - 10} more errors')
+            # The summary is rendered on the page rather than pushed through
+            # `messages`: three counters and a table read at a glance, where
+            # thirteen stacked banners did not.
+            result = {
+                'created': created_count,
+                'updated': updated_count,
+                'error_count': error_count,
+                'rows': created_count + updated_count + error_count,
+                'errors': errors[:ERROR_DISPLAY_LIMIT],
+                'hidden_errors': max(len(errors) - ERROR_DISPLAY_LIMIT, 0),
+            }
 
         except Exception:
-            messages.error(request, 'Error processing file. Please ensure it is a valid CSV.')
+            messages.error(
+                request,
+                'No se ha podido leer el archivo. Comprueba que es un CSV '
+                'válido codificado en UTF-8.')
 
-    context = {
-        'course': course,
-    }
-    return render(request, 'mainapp/import_grades.html', context)
+    return page(result)
 
 
 @role_required('administrator')
