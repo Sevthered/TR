@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 158 tests in mainapp/tests.py
+# Tests — 223 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -87,19 +87,25 @@ The admin course/subject-assignment forms are dependent dropdowns driven by jQue
 
 ### Templates
 
-Two roots: project-level `templates/` (`base.html`, `navbar.html`, `sidebar.html`, `forbidden.html`) and app-level `mainapp/templates/` split into `mainapp/` (professor/student/tutor pages) and `adminage/` (administrator flows). `base.html` includes navbar + sidebar; static CSS/JS in `static/css/`, `static/js/`.
+Two roots: project-level `templates/` (`base_v2.html`, `base_shell_v2.html`, `forbidden.html`) and app-level `mainapp/templates/` split into `mainapp/` (professor/student/tutor pages) and `adminage/` (administrator flows). Static CSS/JS in `static/css/`, `static/js/`.
 
-`templates/sidebar.html` is entirely hardcoded — no loop, no context variable, no template tag. (`mainapp/templatetags/sidebar_extras.py` and its partial were deleted; only an `__init__.py` remains.)
+**`base.html` is gone**, along with `navbar.html`, `sidebar.html`, `navbar.css`, `sidebar.css`, `site-pages.css` and `behaviors.js` — every `mainapp` page is on the v2 cascade. Do not reintroduce any of them; `LegacyCascadeTeardownTests` asserts they stay deleted and that nothing extends `base.html`.
 
-**Two cascades coexist, on purpose.** A UI overhaul is migrating pages one at a time:
+The one survivor is **`static/css/global-styles.css`**, which four `adminage/` templates link directly. It is not dead code and the same test class pins that too — see *the administrator flows* below.
 
-| | Legacy | v2 |
-|---|---|---|
-| Base | `templates/base.html` | `templates/base_v2.html`, plus `templates/base_shell_v2.html` for the nav + top-bar shell |
-| CSS | the four hand-written stylesheets in `static/css/` | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
-| Pages | `student_dashboard_content.html`, `import_grades.html`, `class_grades_download.html`, `student_file.html` | `mainapp/templates/mainapp/`: `class_dashboard.html` + `_class_scope.html`, `teacher_dashboard.html`, `grade_form.html`, `ausencia_form.html`; `templates/`: `mainapp/section_courses.html`, `mainapp/search_results.html`, `forbidden.html` |
+| | v2 |
+|---|---|
+| Base | `templates/base_v2.html` — bare document; `templates/base_shell_v2.html` adds the teacher's nav + top-bar shell |
+| CSS | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
+| Pages | everything under `mainapp/templates/mainapp/` and `templates/mainapp/`, plus `templates/forbidden.html` |
 
-Migrated pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% block breadcrumb %}` / `{% block page_title %}`. Copy the shipped ones rather than inventing a second dialect: 1px rules only (no shadows, no lighter card surfaces), no icon tiles, `lbl` for labels, `fig` reserved for numerals and identifiers, `ctl` on form controls, and the `ruled` filler where a list ends short. A student's initials come from `student_initials()` in `views.py`, so every list marks a person the same way.
+Most pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% block breadcrumb %}` / `{% block page_title %}`. **Two extend `base_v2.html` directly, deliberately:** `login.html` (a signed-out visitor has no nav) and `student_file.html` (every destination in that shell is `@teacher_required`, and the page is served only to students and tutors, so the whole chrome would answer 403). If a second student/tutor page appears, extract a role-aware shell rather than copying `student_file`'s inline one.
+
+Copy the shipped pages rather than inventing a second dialect: 1px rules only (no shadows, no lighter card surfaces), no icon tiles, `lbl` for labels, `fig` reserved for numerals and identifiers, `ctl` on form controls, and the `ruled` filler where a list ends short. A student's initials come from `student_initials()` in `views.py`, so every list marks a person the same way.
+
+**`_student_record.html` is a shell-free partial, and two pages include it.** It holds the filter bar and the grades and absences tables, and carries no `{% extends %}`, no blocks and no `<h1>` — each including page supplies its own heading. `student_dashboard_content.html` includes it for a professor; `student_file.html` includes it for a student, and for a tutor with `with student=… grades=… ausencias=…` overriding the three so the selected child's record renders. Its filter links must stay path-relative (`href="?school_year_id=…"`), never `{% url %}`-built, because it renders under two different routes. The contract is written at the top of the file.
+
+> This split exists because `student_file.html` used to `{% include %}` `student_dashboard_content.html` — **including a template that `{% extends %}` another renders the entire extended document inline.** The page emitted its own markup before any doctype and then a complete second `<html>` document nested inside a `<div>`. Quirks mode, empty `<title>`. If you ever include a page template, that is what you get.
 
 > **Migrating a page is not a re-skin — check its JavaScript first.** `base_v2` loads htmx and nothing else, so `static/js/behaviors.js` is absent and every `data-action` / `data-autosubmit` attribute the CSP remediation introduced is **inert** on a v2 page, silently. Both `teacher_dashboard` and `section_courses` had a `<select data-autosubmit>` year filter, and `section_courses` a `data-action="back"` button; the filters became rows of links, which is also what the class dashboard's scope bar does, and the back button gave way to the shell's breadcrumb. `grade_form`'s jQuery trimester cascade became htmx, and its `data-action="back"` cancel button a real link. Assume any legacy control that submits itself needs rebuilding, not copying. `V2CascadeAssertions.assert_no_inert_js_hooks` pins it, and `assert_no_leaked_template_comments` pins a mistake the rebuild actually made: **`{# … #}` is single-line only** — spread over two lines Django renders it as visible text, and it still looks like a comment in the editor. Use `{% comment %}` for anything multi-line.
 
@@ -109,11 +115,17 @@ Migrated pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% blo
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
-Tailwind's Preflight collides with the legacy stylesheets, which is why the bases are kept apart.
+### The administrator flows — still legacy, and never in the page count
 
-**`base.html` dies when the last page extending it migrates — but the legacy stylesheets do not all die with it.** Verified by grep, not recalled: `navbar.css`, `sidebar.css`, `site-pages.css`, `templates/navbar.html`, `templates/sidebar.html` and `static/js/behaviors.js` are referenced by `base.html` **and nothing else**, so they go together. `global-styles.css` does **not** — four `adminage/` templates pull it directly and survive `base.html`.
+Eight templates (`mainapp/templates/adminage/*.html` plus `mainapp/templates/reassign_students.html`, ~1,850 lines) are untouched by the overhaul. **None of them extends anything**, which is exactly why no `{% extends %}` sweep ever listed them: each is its own `<!DOCTYPE>` with its own inline `<style>`. Tailwind's Preflight would collide with those blocks, so they are not on the v2 cascade and must not be half-migrated.
 
-**The eight administrator templates were never in the overhaul's page count**, because none of them extends `base.html`, so no `{% extends %}` sweep listed them. Each is its own `<!DOCTYPE>` with its own inline `<style>` (`style-src` allows `'unsafe-inline'` deliberately — see `settings.py`), they are the jQuery AJAX-cascade pages, `modify_assignments.html` has no doctype at all, and `create_and_assign_student.html` is the app's only light-themed page. See the *Stage 3* section of `wiki/decisions/ui-overhaul.md`.
+- Four link `static/css/global-styles.css` — the reason that sheet outlived `base.html`.
+- These are the jQuery AJAX-cascade pages (`ajax_get_course_numbers`, `ajax_get_course_sections`, `ajax_get_students`, `ajax_get_destination_courses`, `load_course_sections`). `grade_form` is the worked example of converting one: the endpoint returns markup, htmx swaps it, the attributes go on the widget in `forms.py`.
+- `modify_assignments.html` has **no doctype at all** — the same defect `student_file.html` had, found independently.
+- `create_and_assign_student.html` is the app's only light-themed page.
+- `adminage_dashboard.html` still carries `/* ... (TUS ESTILOS CSS COMPLETOS AQUÍ) ... */` where its stylesheet was meant to go.
+
+Inline `<style>` is not a CSP problem — `style-src` allows `'unsafe-inline'` deliberately and `settings.py` says why. It is a consistency problem. See the *Stage 3* section of `wiki/decisions/ui-overhaul.md`.
 
 ```bash
 npm run css          # rebuild static/css/tailwind.css — REQUIRED after editing any template

@@ -10,9 +10,11 @@ requires a `request` argument that `client.login()` does not supply.
 
 import csv
 import io
+import pathlib
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
@@ -2744,3 +2746,65 @@ class StudentFileMigrationTests(V2CascadeAssertions, AccessControlTestCase):
 
     def test_an_anonymous_caller_is_redirected(self):
         self.assertEqual(self.client.get(self.URL).status_code, 302)
+
+
+class LegacyCascadeTeardownTests(TestCase):
+    """`base.html` is gone. Three of the four legacy stylesheets went with it.
+
+    The fourth did not, and that is the whole point of this class. The plan
+    said "delete base.html when the last page migrates", which reads as though
+    the four hand-written stylesheets die together. `global-styles.css` does
+    not: the `adminage/` templates never extended `base.html` — each is its own
+    `<!DOCTYPE>` — so no `{% extends %}` sweep ever listed them, and four of
+    them link that sheet directly. Deleting it with the rest would have left
+    the administrator flows unstyled, silently and only for administrators.
+    """
+
+    TEMPLATES = pathlib.Path(settings.BASE_DIR)
+    GONE = (
+        'templates/base.html',
+        'templates/navbar.html',
+        'templates/sidebar.html',
+        'static/css/navbar.css',
+        'static/css/sidebar.css',
+        'static/css/site-pages.css',
+        'static/js/behaviors.js',
+    )
+    STILL_ON_GLOBAL_STYLES = (
+        'mainapp/templates/adminage/assign_subjects.html',
+        'mainapp/templates/adminage/create_courses_step1.html',
+        'mainapp/templates/adminage/create_courses_step2.html',
+        'mainapp/templates/adminage/create_school_year.html',
+    )
+
+    def test_the_legacy_cascade_is_gone(self):
+        for relative in self.GONE:
+            with self.subTest(path=relative):
+                self.assertFalse((self.TEMPLATES / relative).exists())
+
+    def test_nothing_extends_base_html_any_more(self):
+        """A stray `{% extends "base.html" %}` would now be a
+        TemplateDoesNotExist at render time rather than a wrong-looking page,
+        but only on the route that renders it. This states it once."""
+        for root in ('templates', 'mainapp/templates'):
+            for path in (self.TEMPLATES / root).rglob('*.html'):
+                with self.subTest(template=path.name):
+                    self.assertNotIn('extends "base.html"', path.read_text())
+                    self.assertNotIn("extends 'base.html'", path.read_text())
+
+    def test_global_styles_survives_because_the_admin_pages_still_need_it(self):
+        self.assertTrue((self.TEMPLATES / 'static/css/global-styles.css').exists())
+
+        for relative in self.STILL_ON_GLOBAL_STYLES:
+            with self.subTest(template=relative):
+                self.assertIn('global-styles.css',
+                              (self.TEMPLATES / relative).read_text())
+
+    def test_no_migrated_page_reaches_for_behaviors_js(self):
+        """It is deleted, so a reference is now a 404 rather than a hook that
+        merely does nothing. Comments naming it are fine; a `<script src>` is
+        not."""
+        for root in ('templates', 'mainapp/templates'):
+            for path in (self.TEMPLATES / root).rglob('*.html'):
+                with self.subTest(template=path.name):
+                    self.assertNotIn("js/behaviors.js'", path.read_text())
