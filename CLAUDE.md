@@ -109,7 +109,11 @@ Migrated pages extend `base_shell_v2.html` and fill `{% block main %}` / `{% blo
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
-Tailwind's Preflight collides with the legacy stylesheets, which is why the bases are kept apart. Delete `base.html` when the last page migrates.
+Tailwind's Preflight collides with the legacy stylesheets, which is why the bases are kept apart.
+
+**`base.html` dies when the last page extending it migrates — but the legacy stylesheets do not all die with it.** Verified by grep, not recalled: `navbar.css`, `sidebar.css`, `site-pages.css`, `templates/navbar.html`, `templates/sidebar.html` and `static/js/behaviors.js` are referenced by `base.html` **and nothing else**, so they go together. `global-styles.css` does **not** — four `adminage/` templates pull it directly and survive `base.html`.
+
+**The eight administrator templates were never in the overhaul's page count**, because none of them extends `base.html`, so no `{% extends %}` sweep listed them. Each is its own `<!DOCTYPE>` with its own inline `<style>` (`style-src` allows `'unsafe-inline'` deliberately — see `settings.py`), they are the jQuery AJAX-cascade pages, `modify_assignments.html` has no doctype at all, and `create_and_assign_student.html` is the app's only light-themed page. See the *Stage 3* section of `wiki/decisions/ui-overhaul.md`.
 
 ```bash
 npm run css          # rebuild static/css/tailwind.css — REQUIRED after editing any template
