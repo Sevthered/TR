@@ -1254,7 +1254,7 @@ def create_edit_grade(request, grade_id=None, student_id=None):
                   student_id=g.student_id, value=g.grade,
                   created=grade_instance is None)
 
-            messages.success(request, "Grade saved successfully.")
+            messages.success(request, "Nota guardada correctamente.")
             return redirect('student_dashboard_content', student_id=student_instance.pk)
     else:
         # GET request.
@@ -1333,7 +1333,7 @@ def create_edit_ausencia(request, ausencia_id=None, student_id=None):
             audit(request, 'absence.save', absence_id=ausencia.pk,
                   student_id=ausencia.student_id)
 
-            messages.success(request, "Absence saved successfully.")
+            messages.success(request, "Ausencia guardada correctamente.")
             return redirect('student_dashboard_content',
                             student_id=student_instance.pk)
     else:
@@ -1719,7 +1719,7 @@ def create_courses_sections_view(request):
 
     # Validate flow.
     if not school_year_id:
-        messages.error(request, "Start by defining a School Year.")
+        messages.error(request, "Empieza por dar de alta un año escolar.")
         return redirect('adminage_dashboard')
 
     # Get School Year object.
@@ -1794,7 +1794,7 @@ def create_courses_sections_view(request):
             return redirect('adminage_dashboard')
 
         else:
-            messages.error(request, "Please correct errors.")
+            messages.error(request, "Corrige los errores del formulario.")
             return _render_step2(request, course_tipo, school_year, form_main, formset=formset)
 
     # --- STEP 1 GET (Initial Load) ---
@@ -1867,7 +1867,7 @@ def assign_subjects_view(request):
                 'Name')
 
         except School_year.DoesNotExist:
-            messages.error(request, "Invalid School Year.")
+            messages.error(request, "El año escolar no es válido.")
             return redirect('assign_subjects')
 
     # Get student links if course selected.
@@ -1879,7 +1879,7 @@ def assign_subjects_view(request):
             ).select_related('student').order_by('student__Name')
         except Course.DoesNotExist:
             messages.warning(
-                request, "Invalid Course ID.")
+                request, "El identificador de curso no es válido.")
             selected_course_id = None
 
     # 2. HANDLE POST (Create/Update Assignment)
@@ -1897,7 +1897,7 @@ def assign_subjects_view(request):
         try:
             target_course = Course.objects.get(pk=selected_course_id)
         except Course.DoesNotExist:
-            messages.error(request, "Invalid Course.")
+            messages.error(request, "El curso no es válido.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
         form = SubjectAssignmentForm(request.POST)

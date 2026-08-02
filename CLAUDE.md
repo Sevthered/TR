@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 231 tests in mainapp/tests.py
+# Tests — 257 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -121,17 +121,25 @@ Copy the shipped pages rather than inventing a second dialect: 1px rules only (n
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
-### The administrator flows — still legacy, and never in the page count
+### The administrator flows — stage 3, in progress
 
-Eight templates (`mainapp/templates/adminage/*.html` plus `mainapp/templates/reassign_students.html`, ~1,850 lines) are untouched by the overhaul. **None of them extends anything**, which is exactly why no `{% extends %}` sweep ever listed them: each is its own `<!DOCTYPE>` with its own inline `<style>`. Tailwind's Preflight would collide with those blocks, so they are not on the v2 cascade and must not be half-migrated.
+The `adminage/` templates were never in the overhaul's page count, because **none of them extended anything**: each was its own `<!DOCTYPE>` with its own inline `<style>`, so no `{% extends %}` sweep ever listed them.
 
-- Four link `static/css/global-styles.css` — the reason that sheet outlived `base.html`.
-- These are the jQuery AJAX-cascade pages (`ajax_get_course_numbers`, `ajax_get_course_sections`, `ajax_get_students`, `ajax_get_destination_courses`, `load_course_sections`). `grade_form` is the worked example of converting one: the endpoint returns markup, htmx swaps it, the attributes go on the widget in `forms.py`.
-- `modify_assignments.html` has **no doctype at all** — the same defect `student_file.html` had, found independently.
-- `create_and_assign_student.html` is the app's only light-themed page.
-- `adminage_dashboard.html` still carries `/* ... (TUS ESTILOS CSS COMPLETOS AQUÍ) ... */` where its stylesheet was meant to go.
+Migrated so far: `create_school_year`, `create_courses_step1`, `create_courses_step2`, `adminage_dashboard`. Still legacy: `assign_subjects` (435 lines), `create_and_assign_student` (213), `reassign_students` (646).
+
+- **`static/css/global-styles.css` is down to one consumer**, `assign_subjects.html`. `LegacyCascadeTeardownTests.STILL_ON_GLOBAL_STYLES` is the countdown — when it empties, the sheet can be deleted. Do not delete it before then.
+- The remaining three are the **jQuery AJAX-cascade pages**. `grade_form` is the worked example of converting one: the endpoint returns markup, htmx swaps it, the attributes go on the widget in `forms.py`.
+  - `load_course_sections` is shared by `assign_subjects` and `create_and_assign_student` — **redesign its response shape once and convert both**, or neither.
+  - `assign_subjects` expects a third mode, `LEVEL_LOOKUP`, that **`load_course_sections` has never returned** — added template-only in `56978a8` and never implemented. Its "restore the dropdowns from a preselected `?course_id=`" branch has therefore always been dead. Dropping it during migration is not a regression.
+  - `reassign_students` is the odd one: vanilla `fetch()` rather than jQuery, two independent cascades (one repeated per student card), **hardcoded URL strings instead of `{% url %}`**, and a POST backed by no Django form at all (`request.POST.getlist('assignments')`, then `split(':')`).
+- `create_and_assign_student.html` is the app's only light-themed page, and the only admin page whose English `{{ title }}` is actually rendered.
+- **`modify_assignments.html` was deleted.** It was unreachable from birth: added in `cec85d3` alongside the working `reassign_students.html`, rendered by no view, and its two AJAX endpoint names have never appeared in `urls.py` in any commit. It is in `LegacyCascadeTeardownTests.GONE` so it cannot come back.
 
 Inline `<style>` is not a CSP problem — `style-src` allows `'unsafe-inline'` deliberately and `settings.py` says why. It is a consistency problem. See the *Stage 3* section of `wiki/decisions/ui-overhaul.md`.
+
+**Named groups (`group/act` + `group-hover/act:`) entered the dialect on `adminage_dashboard`.** A row there holds *two* independent links, and a plain row-wide `group` lights both on hovering either, reading as one target where there are two. Use a named group only for that case; a row with one link stays on plain `group`, as `section_courses` does.
+
+**Django emits `aria-describedby="id_<field>_helptext"` on any widget whose field has help text.** If a rebuilt template renders `{{ field.help_text }}` without `id="{{ field.auto_id }}_helptext"` on the element, every such control points at nothing. It renders identically for a sighted reader, so only reading the markup catches it — `AdminFlowTemplateTests.test_the_help_text_is_actually_addressable` pins it.
 
 ```bash
 npm run css          # rebuild static/css/tailwind.css — REQUIRED after editing any template

@@ -11,6 +11,7 @@ requires a `request` argument that `client.login()` does not supply.
 import csv
 import io
 import pathlib
+import re
 from datetime import timedelta
 from decimal import Decimal
 
@@ -1681,6 +1682,179 @@ class LoginPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
         self.assertNotContains(response, 'Cuenta bloqueada')
 
 
+class AdminFlowTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """Stage 3: the three script-free administrator forms.
+
+    These were standalone `<!DOCTYPE>` documents that extended nothing, which
+    is why no `{% extends %}` sweep ever counted them. They are the cheapest of
+    the eight — no jQuery, no AJAX, no dependent selects — so they are what
+    establishes that an administrator page can sit on the shared shell at all.
+
+    Placed here rather than at the end of the file on purpose: parallel slices
+    append their classes at EOF, and this one does not need to be among them.
+    """
+
+    def year_url(self):
+        return '/adminage/create-school-year/'
+
+    def courses_url(self):
+        return '/adminage/create-courses/'
+
+    # --- create_school_year -------------------------------------------------
+
+    def test_the_school_year_form_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.admin).get(self.year_url())
+
+        self.assertTemplateUsed(response, 'adminage/create_school_year.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_admin_pages_no_longer_carry_their_own_document(self):
+        """Each of these was a full <!DOCTYPE> with its own inline <style>."""
+        response = self.as_(self.admin).get(self.year_url())
+        body = response.content.decode()
+
+        self.assertEqual(body.lower().count('<!doctype'), 1)
+        self.assertNotIn('<style', body)
+        self.assertNotIn('global-styles.css', body)
+
+    def test_the_admin_nav_marks_the_page_you_are_on(self):
+        """The shell's administrator branch was written before any admin page
+        could reach it. This is the first page that actually does."""
+        response = self.as_(self.admin).get(self.year_url())
+
+        self.assertContains(response, 'Administración')
+        self.assertContains(response, 'aria-current="page"')
+
+    def test_the_school_year_field_is_spanish_and_carries_the_control_class(self):
+        """Django renders the widget, so `ctl` is set in forms.py — a class
+        written into the template would never reach the input."""
+        response = self.as_(self.admin).get(self.year_url())
+
+        self.assertContains(response, 'Año escolar')
+        self.assertContains(response, 'class="ctl"')
+        self.assertNotContains(response, 'Define School Year')
+
+    def test_creating_a_school_year_still_works_through_the_rebuilt_page(self):
+        response = self.as_(self.admin).post(
+            self.year_url(), {'year': '2031-2032'})
+
+        self.assertTrue(School_year.objects.filter(year='2031-2032').exists())
+        self.assertEqual(response.status_code, 302)
+
+    def test_an_invalid_year_re_renders_with_its_error_visible(self):
+        response = self.as_(self.admin).post(self.year_url(), {'year': ''})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'text-bad')
+
+    def test_the_admin_forms_are_still_administrator_only(self):
+        """The rebuild must not widen what the security work narrowed."""
+        for user in (self.professor, self.pupil, self.tutor):
+            with self.subTest(user=user.username):
+                self.assertEqual(
+                    self.as_(user).get(self.year_url()).status_code, 403)
+
+    # --- create_courses, both steps -----------------------------------------
+
+    def test_step_one_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.admin).get(
+            f'{self.courses_url()}?school_year_id={self.year.pk}')
+
+        self.assertTemplateUsed(response, 'adminage/create_courses_step1.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+        self.assertContains(response, 'Tipo de curso')
+        self.assertNotContains(response, 'Course Type')
+
+    def test_step_one_keeps_the_hidden_step_the_view_branches_on(self):
+        """`step=select_type` is not decoration — the view reads it to decide
+        which half of create_courses_sections_view runs."""
+        response = self.as_(self.admin).get(
+            f'{self.courses_url()}?school_year_id={self.year.pk}')
+
+        self.assertContains(response, 'name="step" value="select_type"')
+        self.assertContains(response, f'school_year_id={self.year.pk}')
+
+    def test_step_two_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.admin).post(
+            f'{self.courses_url()}?school_year_id={self.year.pk}',
+            {'step': 'select_type', 'course_tipo': 'Eso',
+             'school_year': self.year.pk})
+
+        self.assertTemplateUsed(response, 'adminage/create_courses_step2.html')
+        self.assert_v2_only(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_step_two_offers_one_row_per_level_and_keeps_its_hidden_names(self):
+        """MAIN_COURSES fixes the levels per type — Eso is 1-4. Dropping
+        `main_course_name` would lose which level each row belongs to."""
+        response = self.as_(self.admin).post(
+            f'{self.courses_url()}?school_year_id={self.year.pk}',
+            {'step': 'select_type', 'course_tipo': 'Eso',
+             'school_year': self.year.pk})
+        body = response.content.decode()
+
+        self.assertEqual(body.count('name="form-'), body.count('name="form-'))
+        self.assertContains(response, 'main_course_name')
+        self.assertContains(response, 'name="course_tipo" value="Eso"')
+        self.assertContains(response, 'name="step" value="confirm_sections"')
+        self.assertContains(response, 'Nº de secciones')
+        self.assertNotContains(response, 'No. of Sections')
+
+    def test_the_help_text_is_actually_addressable(self):
+        """Django emits aria-describedby="id_..._helptext" on any widget whose
+        field has help text. The first draft rendered the text in a span with
+        no id, so every control pointed at nothing — invisible to a sighted
+        reader, and caught by reading the markup rather than by a test."""
+        response = self.as_(self.admin).post(
+            f'{self.courses_url()}?school_year_id={self.year.pk}',
+            {'step': 'select_type', 'course_tipo': 'Eso',
+             'school_year': self.year.pk})
+        body = response.content.decode()
+
+        for described in re.findall(r'aria-describedby="([^"]+)"', body):
+            with self.subTest(target=described):
+                self.assertIn(f'id="{described}"', body)
+
+    def test_step_two_help_text_is_spanish(self):
+        response = self.as_(self.admin).post(
+            f'{self.courses_url()}?school_year_id={self.year.pk}',
+            {'step': 'select_type', 'course_tipo': 'Eso',
+             'school_year': self.year.pk})
+
+        self.assertContains(response, 'creará 1A, 1B y 1C')
+        self.assertNotContains(response, 'will create')
+
+    def test_the_flow_still_creates_the_courses_it_promises(self):
+        """The whole point of the two steps. Eso 1-4, two sections each."""
+        payload = {
+            'step': 'confirm_sections',
+            'course_tipo': 'Eso',
+            'school_year': self.year.pk,
+            'form-TOTAL_FORMS': '4',
+            'form-INITIAL_FORMS': '0',
+            'form-MIN_NUM_FORMS': '0',
+            'form-MAX_NUM_FORMS': '1000',
+        }
+        for i, level in enumerate((1, 2, 3, 4)):
+            payload[f'form-{i}-main_course_name'] = str(level)
+            payload[f'form-{i}-num_subsections'] = '2'
+
+        self.as_(self.admin).post(
+            f'{self.courses_url()}?school_year_id={self.year.pk}', payload)
+
+        self.assertTrue(Course.objects.filter(
+            Tipo='Eso', Section='1A', school_year=self.year).exists())
+        self.assertTrue(Course.objects.filter(
+            Tipo='Eso', Section='4B', school_year=self.year).exists())
+
+
 class MigratedPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
     """Stage 2: three more pages off base.html.
 
@@ -2768,12 +2942,17 @@ class LegacyCascadeTeardownTests(TestCase):
         'static/css/sidebar.css',
         'static/css/site-pages.css',
         'static/js/behaviors.js',
+        # Born unreachable, not superseded: added in the same commit as the
+        # working reassign_students.html, with no view rendering it and both
+        # its AJAX endpoints undefined. `ajax_load_courses_for_filter` has
+        # never appeared in urls.py in any commit.
+        'mainapp/templates/adminage/modify_assignments.html',
     )
+    # Was four. `create_school_year`, `create_courses_step1` and
+    # `create_courses_step2` migrated in stage 3 and dropped it; this list is
+    # the countdown, and `global-styles.css` can be deleted when it empties.
     STILL_ON_GLOBAL_STYLES = (
         'mainapp/templates/adminage/assign_subjects.html',
-        'mainapp/templates/adminage/create_courses_step1.html',
-        'mainapp/templates/adminage/create_courses_step2.html',
-        'mainapp/templates/adminage/create_school_year.html',
     )
 
     def test_the_legacy_cascade_is_gone(self):
@@ -2908,3 +3087,145 @@ class RoleAwareShellTests(V2CascadeAssertions, AccessControlTestCase):
         response = self.as_(self.pupil).get('/student/')
 
         self.assertContains(response, 'aria-current="page"')
+
+
+class AdminDashboardV2Tests(V2CascadeAssertions, AccessControlTestCase):
+    """The first administrator page on the v2 cascade (stage 3).
+
+    `adminage_dashboard.html` was a standalone <!DOCTYPE> with a 157-line
+    inline <style> block — the one still carrying the
+    `/* ... (TUS ESTILOS CSS COMPLETOS AQUÍ) ... */` placeholder. It now
+    extends `base_shell_v2`, which makes it the first page to reach that
+    shell's administrator branch for real rather than via forbidden.html.
+
+    The migration's substantive decision is subtractive: four of the page's
+    action buttons were, one for one, four of the six entries in the nav
+    beside it, so they are gone. What is left is the school-year list, which
+    is the one thing the nav cannot express — see
+    `test_the_year_rows_are_the_only_working_route_into_course_creation`.
+    """
+
+    URL = '/adminage/'
+
+    # The four legacy button labels. Every destination behind them is a nav
+    # entry now, so their absence is what "not a second copy of the menu"
+    # means concretely.
+    LEGACY_BUTTONS = (
+        'Iniciar: Crear y Configurar Nuevo Año Escolar',
+        'Crear y Asignar Estudiante a Clase',
+        'Reasignar Estudiantes de Clase',
+        'Asignar Asignaturas a Cursos',
+    )
+
+    def test_the_panel_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertTemplateUsed(response, 'adminage/adminage_dashboard.html')
+        self.assert_v2_only(response)
+
+    def test_the_standalone_document_and_its_inline_stylesheet_are_gone(self):
+        """The page used to ship its own <head> and its own :root palette.
+        A second <html> inside the shell's would be quirks mode, silently."""
+        response = self.as_(self.admin).get(self.URL)
+        html = response.content.decode()
+
+        self.assertEqual(html.lower().count('<!doctype'), 1)
+        self.assertEqual(html.lower().count('<html'), 1)
+        self.assertNotIn('<style', html.lower())
+        self.assertNotIn('TUS ESTILOS CSS COMPLETOS', html)
+
+    def test_its_scripts_are_self_hosted_and_it_needs_none_of_its_own(self):
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assert_scripts_are_self_hosted(response)
+
+    def test_it_carries_no_inert_hooks_and_leaks_no_template_comments(self):
+        """A prior slice shipped a two-line `{# #}` as visible page text past
+        a fully green suite."""
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_an_administrator_reaches_it_and_no_other_role_does(self):
+        """`@role_required('administrator')` is unchanged by the migration."""
+        self.assertEqual(self.as_(self.admin).get(self.URL).status_code, 200)
+        for user in (self.professor, self.pupil, self.tutor):
+            with self.subTest(user=user.username):
+                self.assertEqual(
+                    self.as_(user).get(self.URL).status_code, 403)
+
+    def test_the_nav_marks_the_panel_as_the_page_you_are_on(self):
+        """Active state comes from `request.resolver_match`, so the page gets
+        it by existing at this route — no view passes a flag."""
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertContains(response, 'aria-current="page"')
+        self.assertContains(response, 'Administración')
+
+    def test_it_lists_the_school_years_the_view_actually_passes(self):
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertContains(response, self.year.year)
+
+    def test_the_year_rows_are_the_only_working_route_into_course_creation(self):
+        """`create_courses_sections_view` requires ?school_year_id= and
+        redirects straight back here when it is missing (views.py:1721), so
+        the nav's unparameterised "Cursos" entry cannot reach it. These rows
+        carry the param; that is why the list is not redundant with the nav."""
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertContains(
+            response, f'/adminage/create-courses/?school_year_id={self.year.pk}')
+        self.assertContains(
+            response,
+            f'/adminage/assign-subjects/?school_year_id={self.year.pk}')
+
+    def test_it_does_not_restate_the_nav(self):
+        """The four action buttons are gone, and the two destinations with no
+        per-year form appear exactly once in the response — in the nav."""
+        response = self.as_(self.admin).get(self.URL)
+        html = response.content.decode()
+
+        for label in self.LEGACY_BUTTONS:
+            with self.subTest(label=label):
+                self.assertNotContains(response, label)
+        self.assertEqual(html.count('/adminage/create-student-class/'), 1)
+        self.assertEqual(html.count('/reassign-students/'), 1)
+
+    def test_only_the_newest_year_is_marked_and_it_is_the_one_assign_falls_back_to(self):
+        """Not a status field — School_year has none. The marker is the
+        ordering stated: the view passes order_by('-year'), and
+        `assign_subjects_view` defaults to School_year.objects.order_by(
+        '-year').first() when given no param (views.py:1845), which is that
+        same first row."""
+        newer = School_year.objects.create(year='2099-2100')
+
+        response = self.as_(self.admin).get(self.URL)
+        html = response.content.decode()
+
+        self.assertEqual(html.count('Más reciente'), 1)
+        # The marker sits in the newest row, not the fixture's older one.
+        newest_row = html.index(newer.year)
+        self.assertLess(newest_row, html.index('Más reciente'))
+        self.assertLess(html.index('Más reciente'), html.index(self.year.year))
+
+    def test_the_empty_state_offers_the_one_action_that_unblocks(self):
+        """Nothing in the administrator flows works before a school year
+        exists — both per-year links need one — so the empty table names the
+        step rather than being a dead end. It is the single nav destination
+        this page deliberately repeats."""
+        School_year.objects.all().delete()
+
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertContains(response, 'No hay años escolares dados de alta')
+        self.assertContains(response, '/adminage/create-school-year/')
+
+    def test_the_headings_stay_spanish_and_the_english_title_stays_ignored(self):
+        """The view passes 'School Admin Dashboard'; LANGUAGE_CODE is es-es
+        and the legacy template ignored it too."""
+        response = self.as_(self.admin).get(self.URL)
+
+        self.assertNotContains(response, 'School Admin Dashboard')
+        self.assertContains(response, '<title>Panel de administración</title>')

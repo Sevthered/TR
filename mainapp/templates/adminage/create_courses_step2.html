@@ -1,46 +1,94 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Crear Cursos - Paso 2</title>
-    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-</head>
-<body>
-    <div class="form-container">
-        <h1>3. Definir Secciones</h1>
-        <p><strong>Tipo:</strong> {{ course_tipo }} | <strong>Año Escolar:</strong> {{ school_year }}</p>
+{% extends "base_shell_v2.html" %}
 
-        <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}" method="post">
-            {% csrf_token %}
-            <input type="hidden" name="step" value="confirm_sections">
-            
-            <input type="hidden" name="course_tipo" value="{{ course_tipo }}">
-            <input type="hidden" name="school_year" value="{{ school_year.pk }}">
+{% comment %}
+  Direction C · Registro. Step 3 of the course-creation flow, migrated in
+  stage 3.
 
-            {{ formset.management_form }}
-            
-            <p>Define el número de secciones (A, B, C...) para cada nivel:</p>
+  This one already rendered field by field rather than through as_p, so the
+  no-as_p rule cost nothing here — only the document, the stylesheet link and
+  the two inline `style=` attributes went.
 
-            {% for form_section in formset %}
-                <div class="form-row">
-                    <label>{{ form_section.display_name.value }}</label>
-                    {{ form_section.main_course_name }} 
-                    
-                    <div style="flex-grow: 1;">
-                        {{ form_section.num_subsections.label_tag }}
-                        {{ form_section.num_subsections }}
-                        <small style="display: block; color: #777;">{{ form_section.num_subsections.help_text }}</small>
-                    </div>
-                    
-                    {% if form_section.num_subsections.errors %}
-                        <ul class="errorlist"><li>{{ form_section.num_subsections.errors|striptags }}</li></ul>
-                    {% endif %}
-                </div>
-            {% endfor %}
-            
-            <button type="submit">Crear Cursos y Finalizar</button>
-        </form>
+  The three hidden inputs (step, course_tipo, school_year) are what the view
+  branches on. They stay exactly as they were.
+
+  `display_name` is a readonly text input carrying the level's name, so it is
+  rendered as the row's label rather than as a control a user could mistake
+  for editable. `main_course_name` is hidden and must still be emitted, or the
+  formset loses which level each row belongs to — {{ form_section.main_course_name }}
+  below is not decoration.
+
+  The rows are ruled like the register: one 56px line per level, the number to
+  its right. No count is invented — the rows are the formset's own.
+{% endcomment %}
+
+{% block page_title %}Crear cursos · Secciones{% endblock page_title %}
+
+{% block breadcrumb %}Administración / Cursos / <b class="text-ink-2 font-medium">Secciones</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <span class="lbl">Paso 3 de 3</span>
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Definir secciones</h1>
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+      {{ course_tipo }} · {{ school_year }}</span>
+  </div>
+
+  <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}"
+        method="post" novalidate class="flex flex-col flex-1 min-h-0">
+    {% csrf_token %}
+    <input type="hidden" name="step" value="confirm_sections">
+    <input type="hidden" name="course_tipo" value="{{ course_tipo }}">
+    <input type="hidden" name="school_year" value="{{ school_year.pk }}">
+    {{ formset.management_form }}
+
+    <div class="flex items-center gap-2.5 shrink-0 px-pad py-3 border-y border-line">
+      <span class="lbl" id="sec-h">Secciones por nivel</span>
+      <span class="ml-auto text-[12px] text-ink-3">
+        Cuántas secciones (A, B, C…) tendrá cada nivel</span>
     </div>
-</body>
-</html>
+
+    <div role="group" aria-labelledby="sec-h">
+      {% for form_section in formset %}
+      <div class="flex flex-wrap items-center gap-x-3.5 gap-y-2 min-h-row px-pad py-2.5
+                  border-b border-line">
+        <b class="min-w-[120px] pl-[11px] border-l-2 border-line-2 text-[13.5px] font-semibold
+                  tracking-[-.01em]">{{ form_section.display_name.value }}</b>
+        {{ form_section.main_course_name }}
+
+        {% comment %}
+          The label and the help text come from the field, not from here:
+          CourseSectionForm owns both, and hardcoding them in the template is
+          how the Spanish in forms.py stopped reaching the page in the first
+          draft of this file.
+        {% endcomment %}
+        <label class="lbl" for="{{ form_section.num_subsections.id_for_label }}">
+          {{ form_section.num_subsections.label }}</label>
+        <div class="w-[90px]">{{ form_section.num_subsections }}</div>
+        {% comment %}
+          The id is required, not cosmetic: Django emits
+          aria-describedby="id_..._helptext" on any widget whose field has
+          help text, so without the matching id the control points at nothing.
+        {% endcomment %}
+        <span id="{{ form_section.num_subsections.auto_id }}_helptext"
+              class="text-[11.5px] text-ink-3">{{ form_section.num_subsections.help_text }}</span>
+
+        {% if form_section.num_subsections.errors %}
+        <span class="w-full text-[11.5px] text-bad">{{ form_section.num_subsections.errors|striptags }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="px-pad pt-[22px] pb-8">
+      <button type="submit"
+              class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift
+                     text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+        Crear cursos y finalizar</button>
+    </div>
+
+    <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+  </form>
+</div>
+{% endblock main %}

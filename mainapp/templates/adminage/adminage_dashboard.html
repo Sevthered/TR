@@ -1,235 +1,126 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Panel de Administración Escolar</title>
-    
-    <style>
-        /* ... (TUS ESTILOS CSS COMPLETOS AQUÍ) ... */
-        :root {
-            --background-color: #121212;
-            --text-color: #e0e0e0;
-            --primary-color: #ff3e00;
-            --secondary-color: #ff9800;
-            --muted-color: #757575;
-            --font-primary: 'Inter', system-ui, sans-serif;
-            --config-button-color: #007bff;
-            --assign-button-color: #28a745;
-            --student-button-color: #ff3e00; 
-            --promote-button-color: #ffc107; 
-            --modify-button-color: #004d99; /* 🆕 Nuevo color para Modificar Asignación */
-            --logout-color: #dc3545;
-        }
+{% extends "base_shell_v2.html" %}
 
-        body {
-            font-family: var(--font-primary);
-            color: var(--text-color);
-            background-color: var(--background-color);
-            margin: 0;
-            padding: 0;
-            line-height: 1.6;
-            min-height: 100vh;
-        }
-        
-        .main-layout {
-            display: flex; 
-            min-height: 100vh;
-        }
+{% comment %}
+  Direction C · Registro. The first administrator page off its own standalone
+  <!DOCTYPE>, and the first one to reach base_shell_v2's administrator branch —
+  until now that branch rendered only on forbidden.html.
 
-        .container {
-            max-width: 1400px;
-            padding: 2rem;
-            flex-grow: 1;
-            margin: 0; 
-        }
+  Dropped wholesale: the 157-line inline <style> block (five button colours, a
+  gradient-free but shadowed button set, .main-layout, .utility-nav), the
+  hand-rolled messages list the shell already renders, and the logout link the
+  shell's identity footer now carries.
 
-        .utility-nav {
-            flex-shrink: 0; 
-            width: 150px; 
-            padding: 2rem;
-            align-self: flex-start;
-            text-align: right;
-        }
-        
-        h1, h2, h3 {
-            color: var(--text-color);
-            margin: 0 0 1em 0;
-            font-weight: 700;
-        }
+  Dropped as duplication: the four action buttons. "Crear y Configurar Nuevo Año
+  Escolar", "Crear y Asignar Estudiante", "Reasignar Estudiantes" and "Asignar
+  Asignaturas" are, one for one, four of the six entries in the nav beside this
+  page. Restating them here would make the panel a second copy of the menu.
 
-        a {
-            color: var(--primary-color);
-            text-decoration: none;
-            transition: color 0.3s ease;
-        }
+  What is left is the one thing the nav genuinely cannot say: which school years
+  exist, and the per-year links into their configuration. That is not padding —
+  `create_courses_sections_view` *requires* ?school_year_id= and redirects
+  straight back here with an error when it is missing (views.py:1721), so the
+  nav's unparameterised "Cursos" entry cannot reach it at all. These rows are
+  the only working route in. `assign_subjects_view` is laxer: it falls back to
+  School_year.objects.order_by('-year').first(), which is exactly this list's
+  first row — hence the marker on it, which is what the legacy page's "El botón
+  de Asignación utiliza el año más reciente" sentence was really saying.
 
-        a:hover {
-            color: var(--secondary-color);
-        }
+  No counts beyond `school_years|length`, which is the length of the one list
+  the view passes. `adminage_dashboard_view` computes nothing else — no course,
+  student or subject totals exist in this context, and a dashboard is the most
+  tempting place in the app to invent one.
 
-        .messages {
-            list-style: none;
-            padding: 1rem;
-            background-color: #2e4d4d;
-            color: var(--text-color);
-            border-radius: 4px;
-            margin-bottom: 1.5rem;
-            border: 1px solid #4d8080;
-        }
+  `title` ("School Admin Dashboard") stays ignored, as the legacy template
+  ignored it: LANGUAGE_CODE is es-es and every other heading here is Spanish.
+{% endcomment %}
 
-        .action-container {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 25px;
-            flex-wrap: wrap; 
-        }
-        
-        .action-button,
-        .assign-button,
-        .student-button,
-        .promote-button,
-        .modify-button { /* Añadido .modify-button */
-            padding: 0.75em 1.5em;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-            text-decoration: none;
-            font-weight: 600;
-            transition: background-color 0.3s ease;
-        }
+{% block page_title %}Panel de administración{% endblock page_title %}
 
-        .action-button {
-            background-color: var(--config-button-color);
-            color: #ffffff;
-        }
+{% block breadcrumb %}Administración / <b class="text-ink-2 font-medium">Panel</b>{% endblock breadcrumb %}
 
-        .assign-button {
-            background-color: var(--assign-button-color);
-            color: #ffffff;
-        }
-        
-        .student-button {
-            background-color: var(--student-button-color); 
-            color: #333; 
-        }
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
 
-        .promote-button {
-            background-color: var(--promote-button-color);
-            color: #333; 
-        }
-        
-        /* 🆕 Estilo para la nueva página */
-        .modify-button {
-            background-color: var(--modify-button-color);
-            color: #ffffff;
-        }
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Panel</h1>
+    <span class="text-[13px] text-ink-3">Cada año escolar se configura por separado</span>
+  </div>
 
-
-        .action-button:hover {
-            background-color: #0056b3;
-        }
-        .assign-button:hover {
-            background-color: #1e7e34;
-        }
-        .student-button:hover {
-            background-color: #e0a800;
-        }
-        .promote-button:hover {
-            background-color: #e0a800; 
-        }
-        .modify-button:hover {
-            background-color: #003366; /* Tono más oscuro al pasar el ratón */
-        }
-
-
-        .logout {
-            color: var(--logout-color);
-            font-weight: 500;
-        }
-        .logout:hover {
-            color: var(--secondary-color);
-        }
-        
-        .section-list {
-            padding-top: 10px;
-            border-top: 1px solid #333;
-        }
-        .section-list ul {
-            list-style: disc;
-            padding-left: 20px;
-        }
-        .section-list li {
-            margin-bottom: 5px;
-        }
-    </style>
-</head>
-<body class="main-layout"> 
-    
-    <div class="container">
-        <h1>
-            Panel de Administración Escolar
-        </h1>
-
-        {% if messages %}
-            <ul class="messages">
-                {% for message in messages %}
-                <li class="{{ message.tags }}">{{ message }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-
-        <h2>Configuración de Cursos y Asignaturas</h2>
-        
-        <div class="action-container">
-            
-            <a href="{% url 'create_school_year' %}" class="action-button">
-                Iniciar: Crear y Configurar Nuevo Año Escolar
-            </a>
-            
-            <a href="{% url 'create_and_assign_student' %}" class="student-button"> 
-                Crear y Asignar Estudiante a Clase 
-            </a>
-            <a href="{% url 'reassign_students' %}" class="modify-button">
-                Reasignar Estudiantes de Clase
-            </a>
-            {% if school_years %}
-                {% with current_school_year_id=school_years.0.pk %}
-                    <a href="{% url 'assign_subjects' %}?school_year_id={{ current_school_year_id }}" class="assign-button">
-                        Asignar Asignaturas a Cursos
-                    </a>
-                {% endwith %}
-            {% else %}
-                <button class="assign-button" disabled title="Crea un Año Escolar primero">
-                    Asignar Asignaturas a Cursos
-                </button>
-            {% endif %}
-
-        </div>
-
-        <div class="section-list">
-            <h2>Años Escolares Existentes</h2>
-            {% if school_years %}
-                <p>El botón de Asignación utiliza el año más reciente: <strong>{{ school_years.0.year }}</strong>.</p>
-                <ul>
-                    {% for sy in school_years %}
-                        <li>
-                            {{ sy.year }} 
-                            - 
-                            <a href="{% url 'create_courses_sections' %}?school_year_id={{ sy.pk }}">Continuar Configuración</a> 
-                            | 
-                            <a href="{% url 'assign_subjects' %}?school_year_id={{ sy.pk }}">Asignar Asignaturas</a>
-                        </li>
-                    {% endfor %}
-                </ul>
-            {% else %}
-                <p>No hay años escolares creados.</p>
-            {% endif %}
-        </div>
+  <section class="flex flex-col min-w-0 flex-1" aria-labelledby="sy-h">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="sy-h">Años escolares</span>
+      {# A count of the rows below, not a claim about the schema. #}
+      <span class="ml-auto text-[12px] text-ink-3">
+        {{ school_years|length }} año{{ school_years|length|pluralize:"s" }}
+      </span>
     </div>
-    
-    <div class="utility-nav"> 
-        <a class="logout" href="{% url 'logout' %}">Cerrar Sesión</a>
-    </div>
-</body>
-</html>
+
+    <table class="w-full border-collapse shrink-0">
+      <thead>
+        <tr>
+          <th scope="col" class="text-left pl-pad pr-3 py-2 border-y border-line lbl">Año escolar</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Cursos y secciones</th>
+          <th scope="col" class="text-left pl-3 pr-pad py-2 border-y border-line lbl">Asignaturas</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sy in school_years %}
+        <tr>
+          <td class="h-row p-0 border-b border-line">
+            <div class="flex items-center gap-2.5 pl-pad pr-3">
+              <b class="fig text-[13.5px] font-semibold tracking-[-.01em]">{{ sy.year }}</b>
+              {% if forloop.first %}
+              {% comment %}
+                Not a status field: School_year has none. It is the ordering,
+                stated — order_by('-year') is also the fallback assign_subjects
+                picks when no year is given, so this row is the one the nav's
+                "Asignaturas" entry lands on.
+              {% endcomment %}
+              <span class="text-[10.5px] px-2 py-[2px] rounded border border-accent
+                           bg-accent-dim text-accent-lift">Más reciente</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            {% comment %}
+              A named group per cell, not the row: there are two links in a row
+              and a row-wide `group` would light both at once, which reads as
+              one target where there are two.
+            {% endcomment %}
+            <a class="group/act flex items-center min-w-0 px-3"
+               href="{% url 'create_courses_sections' %}?school_year_id={{ sy.pk }}">
+              <span class="min-w-0 pl-[11px] border-l-2 border-line-2 text-[13px] text-ink-2 truncate
+                           group-hover/act:border-accent group-hover/act:text-accent-lift">Continuar configuración</span>
+            </a>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <a class="group/act flex items-center min-w-0 pl-3 pr-pad"
+               href="{% url 'assign_subjects' %}?school_year_id={{ sy.pk }}">
+              <span class="min-w-0 pl-[11px] border-l-2 border-line-2 text-[13px] text-ink-2 truncate
+                           group-hover/act:border-accent group-hover/act:text-accent-lift">Asignar asignaturas</span>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="3" class="h-row px-pad border-b border-line text-[12.5px] text-ink-3">
+            {% comment %}
+              The one link this page keeps that the nav also carries. An empty
+              table is a dead end otherwise, and nothing else in the admin flows
+              works until a school year exists — create_courses_sections and
+              assign_subjects both need one.
+            {% endcomment %}
+            No hay años escolares dados de alta.
+            <a class="text-accent-lift hover:text-ink" href="{% url 'create_school_year' %}">Crear el primero</a>.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+    <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+  </section>
+
+</div>
+{% endblock main %}

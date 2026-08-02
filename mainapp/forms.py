@@ -220,14 +220,19 @@ MAIN_COURSES = {
 
 class SchoolYearForm(forms.ModelForm):
     # Form for creating a new School Year.
+    #
+    # Labels are Spanish and `ctl` is on the widget rather than in the
+    # template, for the same reason as GradeForm: Django renders the widget
+    # itself, so a class written in the template never reaches it.
     class Meta:
         model = School_year
         fields = ['year']
         labels = {
-            'year': 'Define School Year (e.g., 2025-2026)',
+            'year': 'Año escolar',
         }
         widgets = {
-            'year': forms.TextInput(attrs={'placeholder': 'e.g., 2025-2026'}),
+            'year': forms.TextInput(
+                attrs={'placeholder': 'p. ej. 2025-2026', 'class': 'ctl'}),
         }
 
 
@@ -239,15 +244,17 @@ class CourseSectionForm(forms.Form):
     display_name = forms.CharField(
         label="",
         required=False,
-        widget=forms.TextInput(attrs={'readonly': 'readonly'})
+        widget=forms.TextInput(
+            attrs={'readonly': 'readonly', 'class': 'ctl'})
     )
 
     num_subsections = forms.IntegerField(
-        label="No. of Sections (A, B, C...)",
+        label="Nº de secciones (A, B, C…)",
         min_value=1,
         max_value=26,
         initial=3,
-        help_text="e.g., 3 will create 1A, 1B, 1C."
+        help_text="Por ejemplo, 3 creará 1A, 1B y 1C.",
+        widget=forms.NumberInput(attrs={'class': 'ctl'})
     )
 
 
@@ -256,13 +263,15 @@ class CourseCreationForm(forms.Form):
 
     course_tipo = forms.ChoiceField(
         choices=Course.COURSE_TYPE_CHOICES,
-        label="Course Type"
+        label="Tipo de curso",
+        widget=forms.Select(attrs={'class': 'ctl'})
     )
 
     school_year = forms.ModelChoiceField(
         queryset=School_year.objects.all().order_by('-year'),
-        label="School Year",
-        required=False
+        label="Año escolar",
+        required=False,
+        widget=forms.Select(attrs={'class': 'ctl'})
     )
 
     def __init__(self, *args, **kwargs):
@@ -293,7 +302,7 @@ class CourseCreationForm(forms.Form):
                         pk=school_year_value)
                 except School_year.DoesNotExist:
                     raise forms.ValidationError(
-                        "Invalid school year.")
+                        "El año escolar seleccionado no existe.")
 
         return cleaned_data
 

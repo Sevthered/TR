@@ -1,84 +1,66 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Crear Año Escolar</title>
-    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-    
-    <style>
-        /* Asegura que el contenedor del formulario no sea demasiado grande y esté centrado */
-        .form-container {
-            max-width: 500px;
-            margin: 50px auto;
-            padding: 20px;
-            background-color: #1e1e1e;
-            border-radius: 8px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
-        }
-        
-        /* Ajuste para que los mensajes de Django se vean bien en el tema oscuro */
-        .messages {
-            list-style: none;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 1.5rem;
-        }
-        /* Estilos de mensajes */
-        .messages li.success { 
-            background-color: #004d40;
-            color: #ccff90; 
-            border: 1px solid #388e3c; 
-        }
-        .messages li.error { 
-            background-color: #3b0d0d;
-            color: #ffcdd2;
-            border: 1px solid #d32f2f; 
-        }
-        .messages li.warning { 
-            background-color: #5d4037;
-            color: #ffeb3b; 
-            border: 1px solid #ff9800; 
-        }
+{% extends "base_shell_v2.html" %}
 
-        /* 🚀 SOLUCIÓN DEFINITIVA Y LOCAL AL DESBORDAMIENTO: */
-        
-        /* 1. Aplicamos box-sizing SOLO a los inputs dentro del contenedor para corregir el width: 100% */
-        .form-container input,
-        .form-container select,
-        .form-container textarea {
-            /* ESTA REGLA es la que corrige el cálculo del 100% */
-            box-sizing: border-box;
-        }
+{% comment %}
+  Direction C · Registro. First of the administrator pages off its own
+  standalone document, in stage 3.
 
-        /* 2. Aseguramos que las etiquetas <p> de Django no introduzcan un padding extra */
-        .form-container form p {
-            padding: 0; 
-            margin: 0 0 1rem 0;
-        }
+  What went: a whole <!DOCTYPE>/<head>, a link to global-styles.css, and a
+  ~50-line inline <style> block whose entire job was a centred card with a
+  drop shadow, dark message chips, and two box-sizing patches undoing the
+  legacy stylesheet's own `width: 100%`. Direction C has no card surfaces and
+  no shadows, so all of it is a 1px rule now, and the shell renders messages.
 
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="form-container">
-            <h1>1. Crear Año Escolar</h1>
-            
-            {% if messages %}
-                <ul class="messages">
-                    {% for message in messages %}
-                        <li class="{{ message.tags }}">{{ message }}</li>
-                    {% endfor %}
-                </ul>
-            {% endif %}
+  `form.as_p` went with it: it emits <p> wrappers this cascade has no styles
+  for, which is what those two box-sizing patches were fighting. The field
+  renders on its own, in the same dialect as grade_form.html.
 
-            <form method="post">
-                {% csrf_token %}
-                {{ form.as_p }}
-                
-                <button type="submit">Crear Año Escolar y Continuar</button>
-            </form>
-        </div>
+  The heading keeps its "1." — this is step 1 of a three-step flow
+  (año escolar → cursos → secciones) and the numbers are how an administrator
+  knows where they are. The breadcrumb says the same thing in the shell.
+{% endcomment %}
+
+{% block page_title %}Crear año escolar{% endblock page_title %}
+
+{% block breadcrumb %}Administración / <b class="text-ink-2 font-medium">Año escolar</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <span class="lbl">Paso 1 de 3</span>
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Crear año escolar</h1>
+  </div>
+
+  <div class="border-y border-line shrink-0"></div>
+
+  <form method="post" novalidate class="flex flex-col gap-[15px] max-w-[420px] px-pad pt-[22px] pb-8">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+    <div class="text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% for field in form.visible_fields %}
+    <div class="flex flex-col gap-[7px]">
+      <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}
+      {# The id matches the aria-describedby Django emits for any field with help text. #}
+      <span id="{{ field.auto_id }}_helptext"
+            class="text-[11.5px] text-ink-3">{{ field.help_text }}</span>
+      {% endif %}
+      {% if field.errors %}
+      <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+      {% endif %}
     </div>
-</body>
-</html>
+    {% endfor %}
+
+    <button type="submit"
+            class="mt-1 py-2.5 px-5 self-start rounded-[5px] bg-accent hover:bg-accent-lift
+                   text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+      Crear y continuar</button>
+  </form>
+
+  <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+</div>
+{% endblock main %}

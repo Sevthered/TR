@@ -1,24 +1,66 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Crear Cursos - Paso 1</title>
-    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-</head>
-<body>
-    <div class="form-container">
-        <h1>2. Seleccionar Tipo de Curso</h1>
-        <p>Año Escolar: <strong>{{ school_year }}</strong></p>
-        
-        {% if messages %}<ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>{% endif %}
+{% extends "base_shell_v2.html" %}
 
-        <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}" method="post">
-            {% csrf_token %}
-            <input type="hidden" name="step" value="select_type">
-            {{ form.as_p }}
-            <button type="submit">Continuar y Definir Secciones</button>
-        </form>
+{% comment %}
+  Direction C · Registro. Step 2 of the three-step course-creation flow,
+  migrated in stage 3.
+
+  The form still posts to create_courses_sections with ?school_year_id= and a
+  hidden step=select_type — the view branches on that string, so it is load
+  bearing and stays exactly as it was. Only the chrome changed.
+
+  The year is stated rather than offered: the flow arrives here with one
+  already chosen, and CourseCreationForm disables its school_year widget and
+  recovers the value in clean(). Restating it in the heading is what tells an
+  administrator which year they are about to add courses to.
+{% endcomment %}
+
+{% block page_title %}Crear cursos · Tipo{% endblock page_title %}
+
+{% block breadcrumb %}Administración / Cursos / <b class="text-ink-2 font-medium">Tipo de curso</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <span class="lbl">Paso 2 de 3</span>
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Seleccionar tipo de curso</h1>
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+      {{ school_year }}</span>
+  </div>
+
+  <div class="border-y border-line shrink-0"></div>
+
+  <form action="{% url 'create_courses_sections' %}?school_year_id={{ school_year.pk }}"
+        method="post" novalidate
+        class="flex flex-col gap-[15px] max-w-[420px] px-pad pt-[22px] pb-8">
+    {% csrf_token %}
+    <input type="hidden" name="step" value="select_type">
+
+    {% if form.non_field_errors %}
+    <div class="text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% for field in form.visible_fields %}
+    <div class="flex flex-col gap-[7px]">
+      <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}
+      {# The id matches the aria-describedby Django emits for any field with help text. #}
+      <span id="{{ field.auto_id }}_helptext"
+            class="text-[11.5px] text-ink-3">{{ field.help_text }}</span>
+      {% endif %}
+      {% if field.errors %}
+      <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+      {% endif %}
     </div>
-</body>
-</html>
+    {% endfor %}
+
+    <button type="submit"
+            class="mt-1 py-2.5 px-5 self-start rounded-[5px] bg-accent hover:bg-accent-lift
+                   text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+      Continuar y definir secciones</button>
+  </form>
+
+  <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+</div>
+{% endblock main %}
