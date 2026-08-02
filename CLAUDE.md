@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 120 tests in mainapp/tests.py
+# Tests — 128 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -97,7 +97,9 @@ Two roots: project-level `templates/` (`base.html`, `navbar.html`, `sidebar.html
 |---|---|---|
 | Base | `templates/base.html` | `templates/base_v2.html`, plus `templates/base_shell_v2.html` for the nav + top-bar shell |
 | CSS | the four hand-written stylesheets in `static/css/` | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
-| Pages | everything else | `mainapp/templates/mainapp/class_dashboard.html` + `_class_scope.html` |
+| Pages | everything else | `class_dashboard.html` + `_class_scope.html`, `teacher_dashboard.html` |
+
+> **Migrating a page is not a re-skin — check its JavaScript first.** `base_v2` loads htmx and nothing else, so `static/js/behaviors.js` is absent and every `data-action` / `data-autosubmit` attribute the CSP remediation introduced is **inert** on a v2 page, silently. `teacher_dashboard`'s year filter was a `<select data-autosubmit>`; it became a row of links, which is also what the class dashboard's scope bar does. Assume any legacy control that submits itself needs rebuilding, not copying.
 
 **`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
