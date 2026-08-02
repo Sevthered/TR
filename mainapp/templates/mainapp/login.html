@@ -1,41 +1,98 @@
-{% load static %}
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Login Page</title>
+{% extends "base_v2.html" %}
 
-  <link rel="stylesheet" href="{% static 'css/login.css' %}">
-</head>
-<body>
-  <div class="login-page">
-    <div class="login-card" role="main" aria-labelledby="login-title">
-      <header class="login-header">
-        <h1 id="login-title">Acceder</h1>
-        <p class="login-sub">Introduce tus credenciales</p>
-      </header>
+{% comment %}
+  Direction C · Registro. Migrated off its own standalone document in stage 2.
 
-      <div>
-        <form method="POST" action="" class="login-form" novalidate>
-          {% csrf_token %}
+  This page never extended base.html — it carried its own <head> and its own
+  stylesheet, static/css/login.css, a fifth hand-written sheet outside the four
+  the overhaul is replacing. It extends base_v2 directly rather than
+  base_shell_v2: the shell's nav is the teacher's ("Mis clases / Eso /
+  Bachillerato / IB") and a signed-out visitor has no business seeing it, let
+  alone a student-search box.
 
-          <label for="username">Usuario:</label>
-          <input type="text" id="username" name="username" placeholder="Introduce el usuario" required>
+  static/js/login.js went with it. It shook the card when a field was empty,
+  which the browser already prevents — both inputs are `required`, and
+  constraint validation runs before the submit event, so that branch was
+  unreachable. The rest of it wrote inline styles for a focus glow, which is
+  what :focus-visible in app.css already does, without a script.
 
-          <label for="password">Contraseña:</label>
-          <input type="password" id="password" name="password" placeholder="Introduce la contraseña" required>
+  No card surface: direction C's elevation is 1px rules, so the box is a
+  border on the page background rather than a lighter panel floating over it.
+{% endcomment %}
 
-          <button type="submit" class="btn-submit">Iniciar Sesión</button>
+{% block page_title %}Acceder · Instituto{% endblock page_title %}
 
-          {% if error %}
-            <p class="error-msg">{{ error }}</p>
-          {% endif %}
-        </form>
-      </div>
+{% block content %}
+<div class="grid place-items-center min-h-screen px-pad py-10">
+  {# base_v2 already emits <main id="page">; a second main landmark here would be one too many. #}
+  <div class="w-full max-w-[380px]" aria-labelledby="login-title">
+
+    <div class="flex items-center gap-2.5 pb-[26px]">
+      <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                   text-accent-lift text-[10px] font-bold">TR</span>
+      <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
     </div>
-  </div>
 
-  <script src="{% static 'js/login.js' %}"></script>
-</body>
-</html>
+    <div class="border border-line rounded-[6px] px-[26px] pt-[26px] pb-7">
+      <h1 id="login-title" class="text-[24px] font-[650] leading-none tracking-[-.03em]">Acceder</h1>
+      <p class="pt-2.5 pb-[26px] text-[12.5px] text-ink-3">Introduce tus credenciales</p>
+
+      {% if failure_limit %}
+      {% comment %}
+        settings.AXES_LOCKOUT_TEMPLATE points at this very file, and
+        django-axes renders it with `failure_limit` / `username` / `cooloff_*`
+        and no `error` at all. Without this block a locked-out account got a
+        blank form back and no reason — indistinguishable from a mistyped
+        password, so the obvious response was to keep retrying.
+
+        `cooloff_time` is an ISO-8601 duration string and `cooloff_timedelta`
+        a timedelta; neither reads as Spanish prose in a template, so the
+        message states the rule rather than a countdown.
+      {% endcomment %}
+      <p role="alert"
+         class="mb-[22px] px-3.5 py-3 rounded-[5px] border border-bad bg-bad-dim text-[12px] text-bad">
+        Cuenta bloqueada temporalmente tras {{ failure_limit }} intentos fallidos.
+        Vuelve a intentarlo más tarde o avisa a administración.
+      </p>
+      {% endif %}
+
+      {% comment %}
+        `novalidate` is deliberately absent, unlike the write forms: those
+        re-render server-side errors beside each field, this one has nothing
+        to say until the credentials are checked. The browser's own required
+        check is the only client-side validation here, and it is also what
+        made login.js's empty-field branch unreachable.
+      {% endcomment %}
+      <form method="post" action="" class="flex flex-col gap-[15px]">
+        {% csrf_token %}
+
+        <div class="flex flex-col gap-[7px]">
+          <label class="lbl" for="username">Usuario</label>
+          <input class="ctl" type="text" id="username" name="username"
+                 autocomplete="username" placeholder="Introduce el usuario" required>
+        </div>
+
+        <div class="flex flex-col gap-[7px]">
+          <label class="lbl" for="password">Contraseña</label>
+          <input class="ctl" type="password" id="password" name="password"
+                 autocomplete="current-password" placeholder="Introduce la contraseña" required>
+        </div>
+
+        {% if error %}
+        {% comment %}
+          role="alert" because the message arrives on a fresh page load in
+          place of the previous one — without it a screen reader announces
+          nothing at all, and a wrong password is silent.
+        {% endcomment %}
+        <p role="alert" class="text-[12px] text-bad">{{ error }}</p>
+        {% endif %}
+
+        <button type="submit"
+                class="mt-1 py-2.5 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                       text-[12.5px] font-[650] tracking-[.01em]">Iniciar sesión</button>
+      </form>
+    </div>
+
+  </div>
+</div>
+{% endblock content %}

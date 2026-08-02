@@ -1576,6 +1576,109 @@ class V2CascadeAssertions:
         self.assertNotContains(response, '{%', status_code=status_code)
 
 
+class LoginPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """The one page that never extended base.html in the first place.
+
+    It carried its own <head> and a fifth hand-written stylesheet, so it was
+    outside the two-cascade split entirely. It extends base_v2 directly rather
+    than base_shell_v2: the shell's nav is the teacher's, and a signed-out
+    visitor has no business being offered it.
+
+    Deliberately placed here rather than at the end of the file — parallel
+    migration branches all append their own class at EOF, and this one does
+    not need to be among them.
+    """
+
+    URL = '/'
+
+    def test_the_login_page_is_built_on_the_v2_cascade_only(self):
+        response = self.client.get(self.URL)
+
+        self.assertTemplateUsed(response, 'mainapp/login.html')
+        self.assertTemplateUsed(response, 'base_v2.html')
+        self.assertContains(response, 'css/tailwind.css')
+        for legacy in self.LEGACY_CSS:
+            self.assertNotContains(response, legacy)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_it_does_not_pull_the_teachers_shell(self):
+        """base_shell_v2's nav is "Mis clases / Eso / …" plus a student
+        search. Every one of those is role-guarded, so an anonymous visitor
+        would be looking at a menu of 403s."""
+        response = self.client.get(self.URL)
+
+        self.assertTemplateNotUsed(response, 'base_shell_v2.html')
+        self.assertNotContains(response, 'Mis clases')
+
+    def test_the_bespoke_login_assets_are_gone(self):
+        """login.css was a fifth hand-written stylesheet; login.js shook the
+        card on an empty field, which constraint validation already prevents
+        because both inputs are `required`."""
+        response = self.client.get(self.URL)
+
+        self.assertNotContains(response, 'css/login.css')
+        self.assertNotContains(response, 'js/login.js')
+
+    def test_both_fields_keep_their_ids_and_the_form_still_posts(self):
+        """The view reads request.POST['username'] / ['password'], and the
+        labels are wired to those ids."""
+        response = self.client.get(self.URL)
+
+        self.assertContains(response, 'id="username"')
+        self.assertContains(response, 'id="password"')
+        self.assertContains(response, 'name="csrfmiddlewaretoken"')
+
+    def test_a_wrong_password_says_so_in_spanish_and_announces_it(self):
+        response = self.client.post(
+            self.URL, {'username': 'nadie', 'password': 'incorrecta'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Usuario o contraseña incorrectos')
+        self.assertContains(response, 'role="alert"')
+
+    def test_the_failure_message_does_not_distinguish_the_two_cases(self):
+        """Telling "no such user" apart from "wrong password" is a user
+        enumeration oracle. The view already refuses to; so must the page."""
+        unknown = self.client.post(
+            self.URL, {'username': 'nadie', 'password': 'incorrecta'})
+        known = self.client.post(
+            self.URL, {'username': self.professor.username,
+                       'password': 'not-the-password'})
+
+        self.assertContains(unknown, 'Usuario o contraseña incorrectos')
+        self.assertContains(known, 'Usuario o contraseña incorrectos')
+
+    def test_a_missing_field_gets_its_own_spanish_message(self):
+        response = self.client.post(self.URL, {'username': '', 'password': ''})
+
+        self.assertContains(response, 'Introduce el usuario y la contraseña')
+
+    def test_a_correct_password_still_routes_by_role(self):
+        """Guard against over-tightening: the happy path must survive."""
+        response = self.client.post(
+            self.URL, {'username': self.professor.username, 'password': PW})
+
+        self.assertRedirects(response, '/teacher/')
+
+    def test_the_lockout_state_explains_itself(self):
+        """settings.AXES_LOCKOUT_TEMPLATE is this same file, and axes renders
+        it with `failure_limit` and no `error`. Before this block a locked-out
+        account got a blank form back and no reason — which reads exactly like
+        a mistyped password, so the obvious response was to keep retrying."""
+        from django.template.loader import render_to_string
+
+        html = render_to_string('mainapp/login.html',
+                                {'failure_limit': 10, 'username': 'prof1'})
+
+        self.assertIn('Cuenta bloqueada temporalmente tras 10', html)
+
+    def test_the_ordinary_page_makes_no_lockout_claim(self):
+        response = self.client.get(self.URL)
+
+        self.assertNotContains(response, 'Cuenta bloqueada')
+
+
 class MigratedPageTemplateTests(V2CascadeAssertions, AccessControlTestCase):
     """Stage 2: three more pages off base.html.
 

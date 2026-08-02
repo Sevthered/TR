@@ -226,3 +226,6 @@ node_modules/
 # main checkout rather than installing its own, and "node_modules/" does not
 # match a symlink.
 node_modules
+
+# Agent Teams worktrees — real git worktrees, never repo content
+.claude/worktrees/

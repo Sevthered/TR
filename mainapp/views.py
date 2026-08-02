@@ -440,7 +440,8 @@ def loginPage(request):
         password = request.POST.get("password")
 
         if not username or not password:
-            return render(request, "mainapp/login.html", {"error": "Please provide both username and password."})
+            return render(request, "mainapp/login.html",
+                          {"error": "Introduce el usuario y la contraseña."})
 
         # No existence pre-check: distinguishing "no such user" from "wrong
         # password" is a user-enumeration oracle, and skipping the password
@@ -470,7 +471,10 @@ def loginPage(request):
             # Invalid credentials. Logged without the attempted username:
             # failed-login volume is the signal, not who was targeted.
             audit(request, 'login.failure', reason='invalid_credentials')
-            return render(request, "mainapp/login.html", {"error": "Invalid username or password"})
+            # One message for both "no such user" and "wrong password" — the
+            # same reason the view does not pre-check existence above.
+            return render(request, "mainapp/login.html",
+                          {"error": "Usuario o contraseña incorrectos."})
 
     return render(request, "mainapp/login.html")
 
