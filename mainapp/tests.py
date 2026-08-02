@@ -967,3 +967,110 @@ class ClassDashboardTemplateTests(AccessControlTestCase):
 
         self.assertContains(response, 'Notas registradas')
         self.assertNotContains(response, '1 de 3')
+
+
+class ClassDashboardHtmxTests(AccessControlTestCase):
+    """Step 4: changing the trimester or the subject swaps the register in
+    place. The links stay real <a href> and the page keeps working with
+    JavaScript off, so every assertion here is about the boost being a layer
+    on top rather than a replacement."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.sc_t1 = Subjects_Courses.objects.get(
+            course=cls.course, trimester=cls.trimester)
+
+    def get(self, query='', htmx=False):
+        headers = {'HTTP_HX_REQUEST': 'true'} if htmx else {}
+        return self.as_(self.professor).get(
+            f'/class/{self.course.pk}/dashboard/{query}', **headers)
+
+    def test_a_scope_change_returns_the_fragment_alone(self):
+        """A boosted request pays for the register, not for the shell."""
+        response = self.get(f'?trimester_id={self.trimester.pk}', htmx=True)
+
+        self.assertTemplateUsed(response, 'mainapp/_class_scope.html')
+        self.assertTemplateNotUsed(response, 'base_v2.html')
+        self.assertContains(response, 'id="class-scope"')
+        self.assertNotContains(response, '<!doctype')
+        self.assertNotContains(response, 'css/tailwind.css')
+
+    def test_a_normal_request_still_returns_the_whole_page(self):
+        response = self.get()
+
+        self.assertTemplateUsed(response, 'base_v2.html')
+        self.assertTemplateUsed(response, 'mainapp/_class_scope.html')
+        self.assertContains(response, 'id="class-scope"')
+        self.assertContains(response, 'css/tailwind.css')
+
+    def test_the_swap_target_survives_the_swap(self):
+        """hx-swap="outerHTML" replaces the target with the response, so the
+        fragment has to carry the id it is replacing or the second swap has
+        nowhere to land."""
+        first = self.get(f'?trimester_id={self.trimester.pk}', htmx=True)
+
+        self.assertContains(first, 'id="class-scope"')
+        self.assertContains(first, 'hx-target="#class-scope"')
+
+    def test_the_nav_count_is_swapped_out_of_band(self):
+        """metrics.enrolled also appears in the shell's "Esta clase" block,
+        outside the fragment; without the out-of-band swap it goes stale the
+        moment a subject narrows the roster."""
+        fragment = self.get(f'?subject_courses_id={self.sc_t1.pk}', htmx=True)
+
+        self.assertContains(fragment, 'hx-swap-oob="true"')
+        self.assertContains(fragment, 'id="class-enrolled"')
+
+    def test_a_full_page_does_not_emit_the_out_of_band_element(self):
+        """It would be a second element with id="class-enrolled" — invalid
+        HTML, and htmx ignores oob on a full page load anyway."""
+        response = self.get()
+
+        self.assertNotContains(response, 'hx-swap-oob')
+        self.assertEqual(response.content.count(b'id="class-enrolled"'), 1)
+
+    def test_the_scope_links_are_real_hrefs(self):
+        """No JavaScript, no swap, but the filters must still work."""
+        response = self.get()
+
+        self.assertContains(response, f'href="?trimester_id={self.trimester.pk}')
+        self.assertContains(
+            response, f'subject_courses_id={self.sc_t1.pk}')
+
+    def test_the_boost_does_not_reach_the_download_links(self):
+        """Boosting the operations bar would AJAX the CSV downloads and swap
+        the file into the page."""
+        response = self.get()
+
+        body = response.content.decode()
+        boost_at = body.index('hx-boost')
+        scope_bar_end = body.index('Lista de clase')
+        self.assertLess(boost_at, scope_bar_end)
+        self.assertEqual(body.count('hx-boost'), 1)
+
+    def test_no_inline_event_attributes_anywhere(self):
+        """hx-on: evals strings and violates script-src 'self'."""
+        body = self.get().content.decode()
+
+        self.assertNotIn('hx-on', body)
+        self.assertNotIn('onclick=', body)
+        self.assertNotIn('onchange=', body)
+
+    def test_the_fragment_honours_the_scope_it_was_asked_for(self):
+        """The swap is only worth anything if the fragment is actually
+        re-scoped, not just re-rendered."""
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        fragment = self.get(f'?subject_courses_id={self.sc_t1.pk}', htmx=True)
+
+        self.assertContains(fragment, 'Lista propia')
+
+    def test_a_post_is_never_answered_with_a_fragment(self):
+        """The absence write stays a plain form submit; only GETs are boosted.
+        An invalid POST must re-render the whole page, header or no header."""
+        response = self.as_(self.professor).post(
+            f'/class/{self.course.pk}/dashboard/', {}, HTTP_HX_REQUEST='true')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'base_v2.html')

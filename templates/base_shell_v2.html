@@ -45,7 +45,8 @@
       <span class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] font-semibold
                    text-ink bg-accent-dim border-l-2 border-accent" aria-current="page">
         {{ scope.course }}
-        <span class="ml-auto fig text-[11px] text-accent-lift">{{ metrics.enrolled }}</span>
+        {# Swapped out-of-band from _class_scope.html: the roster narrows with the subject. #}
+        <span id="class-enrolled" class="ml-auto fig text-[11px] text-accent-lift">{{ metrics.enrolled }}</span>
       </span>
     </div>
     {% endif %}

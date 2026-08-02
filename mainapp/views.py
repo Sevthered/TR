@@ -831,6 +831,12 @@ def class_dashboard(request, course_id):
     else:
         form = AusenciaForm(course=course)
 
+    # A scope change arrives as a boosted GET from the scope bar and only needs
+    # the fragment back. Anything else — a first load, a POST that failed
+    # validation, JavaScript off — gets the whole page, which is why the scope
+    # links stay real <a href>.
+    is_hx = request.method == 'GET' and request.headers.get('HX-Request') == 'true'
+
     context = {
         "course": course,
         "scope": scope,
@@ -839,8 +845,10 @@ def class_dashboard(request, course_id):
         "subjects_courses": scope.subjects_courses,
         "students": scope.students,
         "ausencia_form": form,
+        "hx_request": is_hx,
     }
-    return render(request, "mainapp/class_dashboard.html", context)
+    template = "mainapp/_class_scope.html" if is_hx else "mainapp/class_dashboard.html"
+    return render(request, template, context)
 
 
 @teacher_required
