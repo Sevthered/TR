@@ -1523,6 +1523,147 @@ class LocaleTests(AccessControlTestCase):
         self.assertEqual(timezone.localtime(saved.date_time).minute, 15)
 
 
+class MigratedPageTemplateTests(AccessControlTestCase):
+    """Stage 2: three more pages off base.html.
+
+    The cascade assertion is the load-bearing one. Tailwind's Preflight and the
+    four hand-written stylesheets collide, so a page that pulls both renders
+    wrong in ways a screenshot of one viewport can easily miss.
+    """
+
+    LEGACY_CSS = ('css/navbar.css', 'css/sidebar.css',
+                  'css/site-pages.css', 'css/global-styles.css')
+
+    def assert_v2_only(self, response, status_code=200):
+        self.assertTemplateUsed(response, 'base_v2.html')
+        self.assertTemplateUsed(response, 'base_shell_v2.html')
+        self.assertContains(response, 'css/tailwind.css',
+                            status_code=status_code)
+        for legacy in self.LEGACY_CSS:
+            self.assertNotContains(response, legacy, status_code=status_code)
+
+    def assert_scripts_are_self_hosted(self, response, status_code=200):
+        """CSP is script-src 'self' with no unsafe-inline and no CDN."""
+        self.assertContains(response, 'js/vendor/htmx', status_code=status_code)
+        self.assertNotContains(response, '//unpkg.com', status_code=status_code)
+        self.assertNotContains(response, '//cdn.', status_code=status_code)
+        # hx-on: evals its attribute value, which the policy forbids.
+        self.assertNotContains(response, 'hx-on', status_code=status_code)
+        self.assertNotContains(response, 'onclick=', status_code=status_code)
+        self.assertNotContains(response, 'onchange=', status_code=status_code)
+
+    def assert_no_inert_js_hooks(self, response, status_code=200):
+        """base_v2 loads htmx and nothing else — `behaviors.js` is not there.
+
+        So a `data-action` or `data-autosubmit` attribute on a v2 page is dead
+        markup: the click or change does nothing, and nothing says so. No
+        console error, no failed request, no visual difference.
+        """
+        self.assertNotContains(response, 'behaviors.js', status_code=status_code)
+        self.assertNotContains(response, 'data-action', status_code=status_code)
+        self.assertNotContains(response, 'data-autosubmit', status_code=status_code)
+
+    # --- section_courses ----------------------------------------------------
+
+    def test_section_listing_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get('/section/eso/courses/')
+
+        self.assertTemplateUsed(response, 'mainapp/section_courses.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+
+    def test_the_year_filter_is_links_rather_than_a_scripted_select(self):
+        """The legacy control was a <select data-autosubmit>. Real hrefs need
+        no JavaScript at all, and produce the same URL the view already reads."""
+        response = self.as_(self.professor).get('/section/eso/courses/')
+
+        self.assertContains(response, f'?school_year_id={self.year.pk}')
+        self.assertNotContains(response, 'data-autosubmit')
+
+    def test_the_section_listing_shows_the_courses_it_counts(self):
+        response = self.as_(self.professor).get('/section/eso/courses/')
+
+        self.assertContains(response, str(self.course))
+        self.assertContains(response, '1 curso')
+
+    def test_an_empty_section_says_so_instead_of_rendering_a_bare_table(self):
+        response = self.as_(self.professor).get('/section/ib/courses/')
+
+        self.assertContains(response, 'No hay cursos en esta sección')
+
+    # --- search_results -----------------------------------------------------
+
+    def test_search_results_are_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get('/search/?q=ana')
+
+        self.assertTemplateUsed(response, 'mainapp/search_results.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+
+    def test_a_result_carries_the_same_initials_as_the_register(self):
+        """One glyph rule across both lists: direction C has no icon tiles, so
+        the initials are the only per-student mark and must not diverge."""
+        response = self.as_(self.professor).get('/search/?q=ana')
+
+        self.assertContains(response, self.student.Name)
+        self.assertContains(response, '>AL<')
+
+    def test_a_course_scoped_search_keeps_its_scope_in_the_form(self):
+        """Losing the hidden field would silently widen the next query."""
+        response = self.as_(self.professor).get(
+            f'/search/?q=ana&course={self.course.pk}')
+
+        self.assertContains(
+            response, f'name="course" value="{self.course.pk}"')
+
+    def test_an_empty_query_prompts_rather_than_reporting_no_matches(self):
+        """`search_students` returns nothing at all without a query, which is
+        not the same statement as "this student does not exist"."""
+        response = self.as_(self.professor).get('/search/')
+
+        self.assertContains(response, 'Escribe un nombre')
+        self.assertNotContains(response, 'No se encontraron estudiantes')
+
+    def test_a_query_with_no_matches_says_so(self):
+        response = self.as_(self.professor).get('/search/?q=zzzzz')
+
+        self.assertContains(response, 'No se encontraron estudiantes')
+
+    # --- forbidden ----------------------------------------------------------
+
+    def test_the_403_page_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.pupil).get('/teacher/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, 'forbidden.html')
+        self.assert_v2_only(response, status_code=403)
+        self.assert_scripts_are_self_hosted(response, status_code=403)
+        self.assert_no_inert_js_hooks(response, status_code=403)
+
+    def test_the_403_page_still_names_the_account_that_was_refused(self):
+        """A wrong account and a wrong URL are different problems, and only
+        this block tells them apart."""
+        response = self.as_(self.pupil).get('/teacher/')
+
+        self.assertContains(response, self.pupil.username, status_code=403)
+        self.assertContains(response, 'Acceso prohibido', status_code=403)
+
+    def test_the_unlinked_teacher_keeps_its_own_explanation(self):
+        """It names the one fix an administrator can actually apply."""
+        response = self.as_(self.unlinked_professor).get('/teacher/')
+
+        self.assertContains(
+            response, 'no está vinculada a ningún registro', status_code=403)
+
+    def test_a_plain_role_denial_does_not_claim_a_missing_teacher_link(self):
+        response = self.as_(self.pupil).get('/teacher/')
+
+        self.assertNotContains(
+            response, 'no está vinculada a ningún registro', status_code=403)
+
+
 class TeacherDashboardTemplateTests(AccessControlTestCase):
     """The professor's landing page, second off base.html.
 

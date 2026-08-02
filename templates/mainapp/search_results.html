@@ -1,37 +1,117 @@
-{% extends 'base.html' %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{#
-  Template: search_results.html
-  Purpose: display student search results returned by the search_students view.
-  Notes:
-  - Shows the search query and list of matching students.
-  - If a course_id was provided, indicates the search was limited to that class.
-#}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block page_title %}Resultados de búsqueda{% endblock %}
+  Search results are a register of people, so they are built exactly like the
+  class register: 1px rules, a 2px left rule carrying the initials instead of
+  an avatar tile, ruled blank lines below the last row.
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock %}
+  The shell's top bar already carries a search field, but it is hidden below
+  the `sm` breakpoint, so the page repeats the form. It is the same GET to the
+  same view, and it carries `course` through as a hidden field — dropping it
+  would silently widen a class-scoped search on the first re-query.
 
-{% block content %}
-  <div class="container">
-    <h1>Resultados de búsqueda</h1>
-    <p>Consulta: "{{ query }}" {% if course_id %}(limitada a la clase {{ course_id }}){% endif %}</p>
+  "{{ results|length }} resultado(s)" counts the rows printed below it. It is
+  not a claim about how many students exist.
+{% endcomment %}
 
-    {% if results %}
-      <ul class="search-results">
-        {% for item in results %}
-          <li>
-            <a href="{% url 'student_dashboard_content' item.student.StudentID %}?course={{ course_id }}">
-              {{ item.student.Name }} — {{ item.student.Email }}{% if item.courses %} — {{ item.courses|join:", " }}{% endif %}
-            </a>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <div class="empty">No se encontraron estudiantes para la búsqueda.</div>
+{% block page_title %}Búsqueda{% if query %} · {{ query }}{% endif %}{% endblock page_title %}
+
+{% block breadcrumb %}Alumn@s / <b class="text-ink-2 font-medium">Búsqueda</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Búsqueda</h1>
+    {% if query %}
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+      {{ query }}
+    </span>
+    {% endif %}
+    {% if course_id %}
+    <span class="text-[13px] text-ink-3">Limitada a la clase {{ course_id }}</span>
     {% endif %}
   </div>
-{% endblock %}
+
+  {# ---------- the query itself, re-editable on every width ---------- #}
+  <div class="flex flex-wrap items-center gap-3.5 shrink-0 px-pad py-3 border-y border-line">
+    <form action="{% url 'search_students' %}" method="get"
+          class="flex items-center gap-2.5 w-full sm:w-[360px]">
+      <label class="lbl shrink-0" for="q">Buscar</label>
+      <input type="search" name="q" id="q" value="{{ query }}" class="ctl"
+             placeholder="Nombre o email" aria-label="Nombre o email de alumn@">
+      {% if course_id %}
+      <input type="hidden" name="course" value="{{ course_id }}">
+      {% endif %}
+      <button type="submit"
+              class="shrink-0 px-3.5 py-2 rounded-[5px] bg-accent hover:bg-accent-lift text-[#0C1017]
+                     text-[12.5px] font-[650] tracking-[.01em]">Buscar</button>
+    </form>
+
+    <span class="ml-auto text-[12px] text-ink-3">
+      {{ results|length }} resultado{{ results|length|pluralize:"s" }}
+    </span>
+  </div>
+
+  {# ---------- results ---------- #}
+  <section class="flex flex-col min-w-0 flex-1" aria-labelledby="res-h">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="res-h">Alumn@s encontrad@s</span>
+    </div>
+
+    <table class="w-full border-collapse shrink-0">
+      <thead>
+        <tr>
+          <th scope="col" class="w-[60px] text-left pl-pad pr-3 py-2 border-y border-line lbl"
+              title="Posición en la lista alfabética; no es un dato almacenado">Nº</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Alumn@</th>
+          <th scope="col" class="text-left pl-3 pr-pad py-2 border-y border-line lbl">Clases</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in results %}
+        <tr class="group">
+          <td class="h-row p-0 border-b border-line">
+            <div class="pl-pad pr-3 fig text-[11.5px] text-ink-3">{{ forloop.counter|stringformat:"02d" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <a class="flex items-center gap-[13px] min-w-0 px-3"
+               href="{% url 'student_dashboard_content' item.student.StudentID %}?course={{ course_id }}">
+              <span aria-hidden="true"
+                    class="shrink-0 pl-[11px] border-l-2 border-line-2 text-[11px] font-[650] tracking-[.04em]
+                           text-ink-3 group-hover:border-accent group-hover:text-accent-lift">{{ item.initials }}</span>
+              <span class="min-w-0">
+                <b class="block text-[13.5px] font-semibold tracking-[-.01em] truncate">{{ item.student.Name }}</b>
+                <span class="block fig text-[11px] text-ink-3 truncate">{{ item.student.Email }}</span>
+              </span>
+            </a>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="pl-3 pr-pad text-[12.5px] text-ink-2 truncate">
+              {% if item.courses %}{{ item.courses|join:" · " }}
+              {% else %}<span class="text-ink-3">Sin clase asignada</span>{% endif %}
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="3" class="h-row px-pad border-b border-line text-[12.5px] text-ink-3">
+            {% if query or course_id %}
+            No se encontraron estudiantes para la búsqueda.
+            {% else %}
+            Escribe un nombre o un email para buscar entre tus alumn@s.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+    <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+  </section>
+
+</div>
+{% endblock main %}

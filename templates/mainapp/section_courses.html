@@ -1,60 +1,110 @@
-{% extends 'base.html' %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block page_title %}Cursos - {{ section_label }}{% endblock %}
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-{% endblock %}
+  The course listing is the class register's smaller sibling and is built from
+  the same parts: 1px rules only, no cards, no icon tiles, a 2px left rule that
+  lights up on hover instead of an avatar, and ruled blank lines continuing
+  below the last row.
 
-{% block content %}
-  <div class="page-root">
-    <div class="page-surface" role="main">
-      <header class="page-header">
-        <h1>Cursos - {{ section_label }}</h1>
-        {% if user.is_authenticated and user.profile.role == 'professor' %}
-          <a class="btn btn-secondary" href="#" data-action="back">Volver</a>
-        {% endif %}
-      </header>
-      
-      <div class="filter-section mb-4">
-        {% if school_years %}
-            <form method="GET" id="school-year-filter-form">
-                <label for="school-year-select" style="font-weight: bold;">Seleccionar Año Escolar:</label>
-                <select name="school_year_id" id="school-year-select" class="form-control" data-autosubmit="school-year-filter-form">
-                    {% for sy in school_years %}
-                        <option value="{{ sy.pk }}" {% if sy.pk == selected_year_id %}selected{% endif %}>
-                            {{ sy.year }}
-                        </option>
-                    {% endfor %}
-                </select>
-            </form>
-        {% endif %}
-      </div>
-      {% if courses %}
-        <div class="table-wrap">
-          <table class="table course-table">
-          <thead><tr><th>Sección</th></tr></thead>
-          <tbody>
-            {% for course in courses %}
-            <tr>
-              <td>
-                {# No ?school_year_id=: class_dashboard takes its year from
-                   Course.school_year and ignores the param. The scope params
-                   it does read — trimester_id, subject_courses_id — have no
-                   value here, so the class page picks its own defaults. #}
-                <a href="{% url 'class_dashboard' course.CourseID %}">
-                    {{ course.Section }}
-                </a>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-          </table>
-        </div>
-      {% else %}
-        <div class="empty">No hay cursos en esta sección para el año seleccionado.</div>
-      {% endif %}
-    </div>
+  Two things this page deliberately does not show:
+
+  * No student or grade counts per course. Nothing in this context knows them,
+    and `section_courses` issues no aggregate — inventing one here would be a
+    new backend feature wearing a display change's clothes.
+  * No `?school_year_id=` on the links out. `class_dashboard` takes its year
+    from `Course.school_year` and ignores the param; the listing has already
+    filtered these courses to the selected year, so it is redundant as well.
+
+  The year filter is a row of real <a href> links rather than the legacy
+  <select data-autosubmit>, matching the trimester control in
+  _class_scope.html. Same URLs, no JavaScript, nothing for the CSP to block.
+{% endcomment %}
+
+{% block page_title %}Cursos · {{ section_label }}{% endblock page_title %}
+
+{% block breadcrumb %}Clases / <b class="text-ink-2 font-medium">{{ section_label }}</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">{{ section_label }}</h1>
+    <span class="text-[13px] text-ink-3">Cursos que impartes</span>
   </div>
-{% endblock %}
+
+  {# ---------- scope bar: the school year is the only filter here ---------- #}
+  <div class="flex flex-wrap items-center gap-3.5 shrink-0 px-pad py-3 border-y border-line">
+    {% if school_years %}
+    <span class="lbl">Año escolar</span>
+    <div class="flex rounded-[5px] border border-line-2 overflow-hidden" role="group" aria-label="Año escolar">
+      {% for sy in school_years %}
+      <a href="?school_year_id={{ sy.pk }}"
+         class="fig px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+                {% if sy.pk == selected_year_id %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+         {% if sy.pk == selected_year_id %}aria-current="true"{% endif %}>{{ sy.year }}</a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <span class="text-[12.5px] text-ink-3">No hay años escolares configurados.</span>
+    {% endif %}
+
+    {# A count of the rows below, not a claim about the schema. #}
+    <span class="ml-auto text-[12px] text-ink-3">
+      {{ courses|length }} curso{{ courses|length|pluralize:"s" }}
+    </span>
+  </div>
+
+  {# ---------- the listing ---------- #}
+  <section class="flex flex-col min-w-0 flex-1" aria-labelledby="cur-h">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="cur-h">Listado de cursos</span>
+    </div>
+
+    <table class="w-full border-collapse shrink-0">
+      <thead>
+        <tr>
+          <th scope="col" class="w-[60px] text-left pl-pad pr-3 py-2 border-y border-line lbl"
+              title="Posición en la lista ordenada por sección; no es un dato almacenado">Nº</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Curso</th>
+          <th scope="col" class="text-right pl-3 pr-pad py-2 border-y border-line lbl">Año escolar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for course in courses %}
+        <tr class="group">
+          <td class="h-row p-0 border-b border-line">
+            <div class="pl-pad pr-3 fig text-[11.5px] text-ink-3">{{ forloop.counter|stringformat:"02d" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <a class="flex items-center min-w-0 px-3"
+               href="{% url 'class_dashboard' course.CourseID %}">
+              {% comment %}
+                One line, not two: a course's string is already "Tipo Section",
+                so a sub-line under it could only repeat one of the halves.
+              {% endcomment %}
+              <b class="min-w-0 pl-[11px] border-l-2 border-line-2 text-[13.5px] font-semibold
+                        tracking-[-.01em] truncate
+                        group-hover:border-accent group-hover:text-accent-lift">{{ course }}</b>
+            </a>
+          </td>
+          <td class="h-row p-0 border-b border-line text-right">
+            <div class="pl-3 pr-pad fig text-[12.5px] text-ink-2">{{ course.school_year }}</div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="3" class="h-row px-pad border-b border-line text-[12.5px] text-ink-3">
+            No hay cursos en esta sección para el año seleccionado.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+    <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+  </section>
+
+</div>
+{% endblock main %}
