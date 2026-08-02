@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: my_database
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: ci-not-a-real-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      SECRET_KEY: ci-only-key-not-used-anywhere-else
+      POSTGRES_DB: my_database
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ci-not-a-real-password
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+      DEBUG: 'False'
+      ALLOWED_HOSTS: 127.0.0.1,localhost
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run migrations
+        run: python manage.py migrate
+
+      - name: Rate-limit counter store
+        run: python manage.py createcachetable
+
+      # The access-control suite. Catches the class of bug that shipped here:
+      # endpoints with no authorization, and denials returned as HTTP 200.
+      - name: Tests
+        run: python manage.py test mainapp -v 2
+
+      # Independently re-checks DEBUG, ALLOWED_HOSTS, secure cookies, HSTS and
+      # the SECRET_KEY prefix. The two remaining warnings (HSTS
+      # includeSubDomains and preload) are deliberate, so this does not fail
+      # on WARNING -- raise the level once a real domain is in place.
+      - name: Deployment checks
+        run: python manage.py check --deploy --fail-level ERROR
+
+      - name: Static files build
+        run: python manage.py collectstatic --noinput

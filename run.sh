@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # --- Configuration ---
-PROJECT_DIR="/Users/sebastian/TR" # Set your project's root directory
+# Derived from this script's own location: a hardcoded path only worked on the
+# one machine it was written on, and failed the `cd` below everywhere else.
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_ACTIVATE="$PROJECT_DIR/venv/bin/activate"
 SESSION_NAME="dev-session"
 DELAY_SECONDS=3
