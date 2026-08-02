@@ -23,7 +23,9 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 83 tests in mainapp/tests.py
+# Tests — 105 tests in mainapp/tests.py
+# POSTGRES_TEST_DB overrides the test database name, so a second worktree
+# can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
 python manage.py test mainapp.tests.SomeTest.test_method     # single test
 
@@ -36,7 +38,7 @@ Secrets come from the environment: `SECRET_KEY` is required (`settings.py:32`, r
 
 ## Architecture
 
-Single Django app `mainapp` + project config `tr_webpage`. All URLs live in `mainapp/urls.py` (included at project root). All 30+ views live in one file, `mainapp/views.py` (~1900 lines).
+Single Django app `mainapp` + project config `tr_webpage`. All URLs live in `mainapp/urls.py` (included at project root). All 30+ views live in one file, `mainapp/views.py` (~2280 lines).
 
 ### Role model
 
@@ -45,11 +47,11 @@ Single Django app `mainapp` + project config `tr_webpage`. All URLs live in `mai
 **Authorization IS decorator-based** (changed during the 2026-08-02 security remediation). Use the decorators, not inline role checks:
 
 ```python
-@role_required('professor')          # views.py:72-91 — 403 + forbidden.html on mismatch
-@teacher_required                    # views.py:94-110 — the above PLUS profile.teacher is not None
+@role_required('professor')          # views.py:74-93 — 403 + forbidden.html on mismatch
+@teacher_required                    # views.py:96-112 — the above PLUS profile.teacher is not None
 ```
 
-Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:113-115`) and `teacher_students(profile.teacher)` (`views.py:118-128`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`.
+Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:115-117`) and `teacher_students(profile.teacher)` (`views.py:120-130`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`.
 
 ### Data model chain
 
@@ -65,7 +67,7 @@ Grade / Ausencias = Student + Subject + Trimester + School_year (+ grade_type/da
 
 `Grade` is unique on `(student, subject, trimester, school_year, grade_type, grade_type_number)`. **A student can hold unbounded grades per subject per trimester** — 5 `grade_type` values x unbounded `grade_type_number`. Any UI showing a grade count therefore has **no denominator**. `grade_type_number` defaults to `0`, and 0 means *unnumbered*, not "the first one" (`student_dashboard_content.html:152` renders it as "unico"). `Ausencias` is unique on `(student, subject, trimester, date_time)`; note `Tipo` is NOT in that key.
 
-`Subjects_Courses.assigned_course_sections` is an M2M to `Students_Courses` (enrolments, not students) and is **the per-subject roster** — students in one course legitimately take different subjects. Caveat: only one administrator form writes it, and that form `.clear()`s it on an empty submit (`views.py:1592-1597`), so it is often empty. It is unsafe for *authorization*; that is not the same as being meaningless. **Its one reader is `resolve_class_scope()`**, which uses it only to *narrow* a roster, only when non-empty, and only after re-filtering it by `course_section=course` — nothing constrains an enrolment in that M2M to belong to the course that owns the row.
+`Subjects_Courses.assigned_course_sections` is an M2M to `Students_Courses` (enrolments, not students) and is **the per-subject roster** — students in one course legitimately take different subjects. Caveat: only one administrator form writes it, and that form `.clear()`s it on an empty submit (`views.py:1885-1890`), so it is often empty. It is unsafe for *authorization*; that is not the same as being meaningless. **Its one reader is `resolve_class_scope()`**, which uses it only to *narrow* a roster, only when non-empty, and only after re-filtering it by `course_section=course` — nothing constrains an enrolment in that M2M to belong to the course that owns the row. Everything downstream consumes the *resolved* roster (`scope.students`) rather than the M2M: the register, `class_metrics()`, and `AusenciaForm`, which is built from the scope so the panel cannot offer a student the register has just excluded.
 
 `Grade` has **no FK to `Course`, `Teachers` or `Subjects_Courses`**. Joining grades to a class goes through `Students_Courses` and is unenforced.
 
@@ -95,7 +97,9 @@ Two roots: project-level `templates/` (`base.html`, `navbar.html`, `sidebar.html
 |---|---|---|
 | Base | `templates/base.html` | `templates/base_v2.html`, plus `templates/base_shell_v2.html` for the nav + top-bar shell |
 | CSS | the four hand-written stylesheets in `static/css/` | Tailwind v4, source `static/css/src/app.css` → built `static/css/tailwind.css` |
-| Pages | everything else | `mainapp/templates/mainapp/class_dashboard.html` |
+| Pages | everything else | `mainapp/templates/mainapp/class_dashboard.html` + `_class_scope.html` |
+
+**`class_dashboard` renders a fragment, not always a page.** `_class_scope.html` is everything below the page title — metrics strip, scope bar, register, absence panel — and the view returns *only* that file when the request is a **GET carrying `HX-Request`**. The scope-bar links are real `<a href>` with `hx-boost` layered on top, so the page still works with JavaScript off; the boost is scoped to that bar deliberately, because boosting the operations bar would AJAX the CSV downloads. Anything scope-dependent that lives *outside* the fragment has to be swapped out-of-band — today that is the nav's enrolled count (`id="class-enrolled"`), emitted only on an HTMX request so a full page load has no duplicate id.
 
 Tailwind's Preflight collides with the legacy stylesheets, which is why the bases are kept apart. Delete `base.html` when the last page migrates.
 
@@ -118,7 +122,7 @@ Three different header sets exist and they do **not** all match:
 
 `download_class_list` is the only producer whose *headers* the importers accept; the two export sets must be re-headered before re-import.
 
-**But the round-trip is broken today, for every course.** `download_class_list` derives `Año_Escolar` from `timezone.now()` (`views.py:594-595`) rather than from `course.school_year`, and `import_grades` looks school years up without creating them (`views.py:1196`) — so every row of the downloaded template fails with "año escolar no encontrado" whenever the calendar year and the school year disagree. Import matches `Students` and `Subjects` **by exact name string**; `School_year` and `Trimester` must already exist.
+**But the round-trip is broken today, for every course.** `download_class_list` derives `Año_Escolar` from `timezone.now()` (`views.py:883`) rather than from `course.school_year`, and `import_grades` looks school years up without creating them (`views.py:1485`) — so every row of the downloaded template fails with "año escolar no encontrado" whenever the calendar year and the school year disagree. Import matches `Students` and `Subjects` **by exact name string**; `School_year` and `Trimester` must already exist.
 
 ## Known rough edges
 
@@ -126,8 +130,8 @@ The four items previously listed here (duplicate `GradeForm`, stray imports, unf
 
 - **The CSV round-trip is broken** — see the section above.
 - **Aggregates exist in exactly one place: `class_metrics()`.** Everywhere else, any average, total or rate is still a **new backend feature**, not a display change. `class_metrics` is also the pattern to copy: two aggregate queries plus a Python merge, never one annotated queryset over `Students` — `grade` and `ausencias` are both multi-valued, so annotating both at once multiplies rows and each inflates the other's count. Class means there are **weighted by grade count**; a mean of means is a different number. `grade_count` has **no denominator** (see the `Grade` uniqueness note above).
-- **`sort_key_section`** (`views.py:357-367`) raises on any `Section` not shaped `<digit><letter>`.
-- **`views.py:535-539`** swallows every exception in the bulk-absence loop, so an `IntegrityError` and a `ValidationError` look identical to the teacher.
+- **`sort_key_section`** (`views.py:631-641`) raises on any `Section` not shaped `<digit><letter>`.
+- **`views.py:811-815`** swallows every exception in the bulk-absence loop, so an `IntegrityError` and a `ValidationError` look identical to the teacher.
 - **`LANGUAGE_CODE = 'en-us'`** on a Spanish-language app, so decimals render `2.66` rather than `2,66`. A switch to `es-ES` is agreed but not yet done — it changes date formats on every page too.
 
 ## Content-Security-Policy
@@ -136,7 +140,7 @@ The four items previously listed here (duplicate `GradeForm`, stray imports, unf
 
 - All JS must be vendored under `static/js/vendor/` (jQuery already is). No CDN `<script>`.
 - No webfont URLs and no Google Fonts `@import` — they are blocked and fall back **silently**.
-- HTMX `hx-on:` attributes eval strings and violate the policy. Stay on `hx-get` / `hx-post`.
+- HTMX `hx-on:` attributes eval strings and violate the policy. Stay on `hx-get` / `hx-post` / `hx-boost`.
 - A screenshot cannot reveal any of these. Check the browser console.
 
 ## Project wiki

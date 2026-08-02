@@ -13,7 +13,9 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from .views import MAX_IMPORT_BYTES, class_metrics, resolve_class_scope
@@ -1217,3 +1219,55 @@ class AusenciaFormScopeTests(AccessControlTestCase):
         _, response = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
 
         self.assertContains(response, 'Solo la lista propia de Matematicas')
+
+
+class ClassDashboardCostTests(AccessControlTestCase):
+    """The page as a whole, not just class_metrics.
+
+    Step 2 asserted the aggregates were flat in the roster size; steps 3, 4 and
+    6 then added a template, a fragment and a scope-built form on top, each of
+    which evaluates querysets of its own."""
+
+    def enrol(self, n):
+        sc = Subjects_Courses.objects.get(
+            course=self.course, trimester=self.trimester)
+        for i in range(n):
+            extra = Students.objects.create(
+                Name=f'Alumno {i:03d}', Email=f'a{i}@example.com')
+            Students_Courses.objects.create(
+                student=extra, course_section=self.course)
+            Grade.objects.create(
+                student=extra, subject=self.subject, trimester=self.trimester,
+                school_year=self.year, grade=Decimal('7.00'),
+                grade_type='examen', grade_type_number=i)
+        return sc
+
+    def test_the_page_does_not_query_per_student(self):
+        """Rendering the register and the student select must not walk the
+        roster row by row."""
+        client = self.as_(self.professor)
+        url = f'/class/{self.course.pk}/dashboard/'
+        self.enrol(3)
+
+        with CaptureQueriesContext(connection) as small:
+            self.assertEqual(client.get(url).status_code, 200)
+
+        self.enrol(27)
+
+        with CaptureQueriesContext(connection) as large:
+            self.assertEqual(client.get(url).status_code, 200)
+
+        self.assertEqual(len(large), len(small))
+
+    def test_the_htmx_fragment_costs_no_more_than_the_page(self):
+        client = self.as_(self.professor)
+        url = f'/class/{self.course.pk}/dashboard/'
+        self.enrol(3)
+
+        with CaptureQueriesContext(connection) as full:
+            client.get(url)
+
+        with CaptureQueriesContext(connection) as fragment:
+            client.get(url, HTTP_HX_REQUEST='true')
+
+        self.assertLessEqual(len(fragment), len(full))

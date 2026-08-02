@@ -841,9 +841,6 @@ def class_dashboard(request, course_id):
         "course": course,
         "scope": scope,
         "metrics": class_metrics(scope),
-        # Kept flat as well: the legacy template reads these names directly.
-        "subjects_courses": scope.subjects_courses,
-        "students": scope.students,
         "ausencia_form": form,
         "hx_request": is_hx,
     }
