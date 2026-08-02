@@ -38,9 +38,12 @@
       {# No sidebar for non-professors: render a full-width main area #}
       <main class="main full-width" id="page">
         {% endif %}
-        <header class="page-header">
-          <h1>{% block page_header %}{% endblock page_header %}</h1>
-        </header>
+        {% comment %}
+          No template fills page_header, so wrapping this block in an h1 would
+          render an empty top-level heading on every page. Each page supplies
+          its own heading inside page-content.
+        {% endcomment %}
+        {% block page_header %}{% endblock page_header %}
 
         <section class="page-content">
           {% if messages %}
@@ -64,6 +67,7 @@
   <!-- JS: sidebar behaviour and small navbar helper -->
   <script src="{% static 'js/sidebar.js' %}"></script>
   <script src="{% static 'js/navbar.js' %}"></script>
+  <script src="{% static 'js/behaviors.js' %}"></script>
   {% block scripts %}{% endblock scripts %}
 </body>
 

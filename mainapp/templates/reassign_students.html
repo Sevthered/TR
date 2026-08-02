@@ -246,6 +246,15 @@
             </button>
         </div>
 
+        <!-- Opciones de año escolar para las tarjetas generadas por JS.
+             Se renderizan aquí, en contexto HTML, donde el autoescape de Django
+             sí aplica: dentro de una plantilla literal de JS no aplicaría. -->
+        <template id="school-year-options">
+            {% for sy in school_years %}
+                <option value="{{ sy.SchoolYearID }}">{{ sy.year }}</option>
+            {% endfor %}
+        </template>
+
         <!-- LISTA DE ESTUDIANTES -->
         <form method="POST" id="reassignment-form">
             {% csrf_token %}
@@ -261,7 +270,7 @@
         </form>
     </div>
 
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         // Referencias a los selectores origen
         const originSchoolYear = document.getElementById('origin-school-year');
         const originCourseType = document.getElementById('origin-course-type');
@@ -274,13 +283,9 @@
 
         // Manejo de filtros en cascada - ORIGEN
         originSchoolYear.addEventListener('change', function() {
-            console.log('=== EVENT: Año escolar changed ===');
-            console.log('Año escolar seleccionado:', this.value);
             const value = this.value;
             
-            console.log('Habilitando originCourseType...');
             originCourseType.disabled = !value;
-            console.log('originCourseType.disabled:', originCourseType.disabled);
             
             originCourseNumber.disabled = true;
             originSectionLetter.disabled = true;
@@ -290,35 +295,21 @@
             originCourseType.value = "";
             resetSelect(originCourseNumber);
             resetSelect(originSectionLetter);
-            console.log('=== END EVENT ===');
         });
 
         originCourseType.addEventListener('change', function() {
-            console.log('=== EVENT: Tipo de curso changed ===');
-            console.log('Tipo de curso seleccionado:', this.value);
-            console.log('Año escolar actual:', originSchoolYear.value);
-            console.log('originCourseType element:', originCourseType);
-            console.log('originSchoolYear element:', originSchoolYear);
             
             if (this.value && originSchoolYear.value) {
-                console.log('✓ Ambos valores presentes, llamando a loadCourseNumbers...');
                 loadCourseNumbers('origin');
             } else {
-                console.log('✗ Faltan valores, reseteando selects');
-                console.log('  this.value:', this.value);
-                console.log('  originSchoolYear.value:', originSchoolYear.value);
                 originCourseNumber.disabled = true;
                 originSectionLetter.disabled = true;
                 loadStudentsBtn.disabled = true;
                 resetSelect(originCourseNumber);
                 resetSelect(originSectionLetter);
             }
-            console.log('=== END EVENT ===');
         });
         
-        console.log('Event listeners configurados correctamente');
-        console.log('originSchoolYear:', originSchoolYear);
-        console.log('originCourseType:', originCourseType);
 
         originCourseNumber.addEventListener('change', function() {
             if (this.value) {
@@ -343,23 +334,15 @@
             const schoolYearId = schoolYearSelect.value;
             const courseType = typeSelect.value;
 
-            console.log(`loadCourseNumbers para ${prefix}:`, {schoolYearId, courseType});
 
             if (!schoolYearId || !courseType) {
-                console.log('Faltan parámetros, abortando');
                 return;
             }
 
             const url = `/ajax/get-course-numbers/?school_year_id=${schoolYearId}&course_type=${courseType}`;
-            console.log('Fetching:', url);
 
-            fetch(url)
-                .then(response => {
-                    console.log('Response status:', response.status);
-                    return response.json();
-                })
+            getJSON(url)
                 .then(data => {
-                    console.log('Datos recibidos:', data);
                     resetSelect(numberSelect);
                     
                     if (data.numbers && data.numbers.length > 0) {
@@ -370,18 +353,15 @@
                             numberSelect.appendChild(option);
                         });
                         numberSelect.disabled = false;
-                        console.log('Números cargados exitosamente');
                     } else {
-                        console.log('No se encontraron números de curso');
                         const option = document.createElement('option');
                         option.value = '';
                         option.textContent = '-- No hay cursos disponibles --';
                         numberSelect.appendChild(option);
                     }
                 })
-                .catch(error => {
-                    console.error('Error en fetch:', error);
-                });
+                .catch(error => reportFailure(
+                    'No se pudieron cargar los cursos.', error));
         }
 
         // Cargar letras de sección
@@ -395,23 +375,15 @@
             const courseType = typeSelect.value;
             const courseNumber = numberSelect.value;
 
-            console.log(`loadSectionLetters para ${prefix}:`, {schoolYearId, courseType, courseNumber});
 
             if (!schoolYearId || !courseType || !courseNumber) {
-                console.log('Faltan parámetros, abortando');
                 return;
             }
 
             const url = `/ajax/get-course-sections/?school_year_id=${schoolYearId}&course_type=${courseType}&course_number=${courseNumber}`;
-            console.log('Fetching:', url);
 
-            fetch(url)
-                .then(response => {
-                    console.log('Response status:', response.status);
-                    return response.json();
-                })
+            getJSON(url)
                 .then(data => {
-                    console.log('Datos recibidos:', data);
                     resetSelect(letterSelect);
                     
                     if (data.sections && data.sections.length > 0) {
@@ -422,18 +394,15 @@
                             letterSelect.appendChild(option);
                         });
                         letterSelect.disabled = false;
-                        console.log('Secciones cargadas exitosamente');
                     } else {
-                        console.log('No se encontraron secciones');
                         const option = document.createElement('option');
                         option.value = '';
                         option.textContent = '-- No hay secciones disponibles --';
                         letterSelect.appendChild(option);
                     }
                 })
-                .catch(error => {
-                    console.error('Error en fetch:', error);
-                });
+                .catch(error => reportFailure(
+                    'No se pudieron cargar las secciones.', error));
         }
 
         // Cargar estudiantes
@@ -446,8 +415,7 @@
             studentsContainer.innerHTML = '<div class="loading">Cargando estudiantes...</div>';
             studentsSection.style.display = 'block';
 
-            fetch(`/ajax/get-students/?school_year_id=${schoolYearId}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
-                .then(response => response.json())
+            getJSON(`/ajax/get-students/?school_year_id=${schoolYearId}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
                 .then(data => {
                     if (data.students && data.students.length > 0) {
                         renderStudents(data.students);
@@ -456,8 +424,31 @@
                         studentsContainer.innerHTML = '<div class="no-students">No se encontraron estudiantes en esta clase.</div>';
                         submitBtn.disabled = true;
                     }
+                })
+                .catch(error => {
+                    studentsContainer.innerHTML =
+                        '<div class="no-students">No se pudieron cargar los estudiantes.</div>';
+                    submitBtn.disabled = true;
+                    reportFailure('No se pudieron cargar los estudiantes.', error);
                 });
         });
+
+        // fetch does not reject on 4xx/5xx, so an expired session or a
+        // server error arrives as an HTML body and only fails later, inside
+        // .json(). Check response.ok explicitly and surface the failure.
+        function getJSON(url) {
+            return fetch(url).then(response => {
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.json();
+            });
+        }
+
+        function reportFailure(message, error) {
+            console.error(message, error);
+            alert(message + ' Vuelve a intentarlo o recarga la p\u00e1gina.');
+        }
 
         // Renderizar estudiantes con filtros de destino
         function renderStudents(students) {
@@ -469,23 +460,20 @@
                 card.innerHTML = `
                     <div class="student-header">
                         <div class="student-info">
-                            <h3>${student.name}</h3>
-                            <p>${student.email}</p>
+                            <h3 class="student-name"></h3>
+                            <p class="student-email"></p>
                         </div>
                     </div>
                     <div class="destination-filters">
                         <div class="form-group">
-                            <label>Año Escolar Destino:</label>
-                            <select class="dest-school-year" data-student="${student.id}">
+                            <label for="dest-school-year-${student.id}">Año Escolar Destino:</label>
+                            <select id="dest-school-year-${student.id}" class="dest-school-year" data-student="${student.id}">
                                 <option value="">-- Seleccionar --</option>
-                                {% for sy in school_years %}
-                                    <option value="{{ sy.SchoolYearID }}">{{ sy.year }}</option>
-                                {% endfor %}
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Tipo:</label>
-                            <select class="dest-course-type" data-student="${student.id}" disabled>
+                            <label for="dest-course-type-${student.id}">Tipo:</label>
+                            <select id="dest-course-type-${student.id}" class="dest-course-type" data-student="${student.id}" disabled>
                                 <option value="">-- Seleccionar --</option>
                                 <option value="Eso">Eso</option>
                                 <option value="Bachillerato">Bachillerato</option>
@@ -493,22 +481,27 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Curso:</label>
-                            <select class="dest-course-number" data-student="${student.id}" disabled>
+                            <label for="dest-course-number-${student.id}">Curso:</label>
+                            <select id="dest-course-number-${student.id}" class="dest-course-number" data-student="${student.id}" disabled>
                                 <option value="">-- Seleccionar --</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Sección:</label>
-                            <select class="dest-section-letter" data-student="${student.id}" disabled>
+                            <label for="dest-section-letter-${student.id}">Sección:</label>
+                            <select id="dest-section-letter-${student.id}" class="dest-section-letter" data-student="${student.id}" disabled>
                                 <option value="">-- Seleccionar --</option>
                             </select>
                         </div>
                     </div>
                     <input type="hidden" name="assignments" class="assignment-input" data-student="${student.id}" value="">
                 `;
+                // textContent, no innerHTML: student data is not trusted markup.
+                card.querySelector('.student-name').textContent = student.name;
+                card.querySelector('.student-email').textContent = student.email;
+                card.querySelector('.dest-school-year').appendChild(
+                    document.getElementById('school-year-options').content.cloneNode(true));
                 studentsContainer.appendChild(card);
-                
+
                 // Configurar event listeners para este estudiante
                 setupDestinationFilters(student.id);
             });
@@ -524,7 +517,6 @@
             const assignmentInput = card.querySelector('.assignment-input');
 
             schoolYear.addEventListener('change', function() {
-                console.log(`Estudiante ${studentId}: Año destino seleccionado:`, this.value);
                 courseType.disabled = !this.value;
                 courseNumber.disabled = true;
                 sectionLetter.disabled = true;
@@ -537,7 +529,6 @@
             });
 
             courseType.addEventListener('change', function() {
-                console.log(`Estudiante ${studentId}: Tipo destino seleccionado:`, this.value);
                 if (this.value && schoolYear.value) {
                     loadDestCourseNumbers(studentId);
                 } else {
@@ -550,7 +541,6 @@
             });
 
             courseNumber.addEventListener('change', function() {
-                console.log(`Estudiante ${studentId}: Número destino seleccionado:`, this.value);
                 if (this.value) {
                     loadDestSectionLetters(studentId);
                 } else {
@@ -561,7 +551,6 @@
             });
 
             sectionLetter.addEventListener('change', function() {
-                console.log(`Estudiante ${studentId}: Sección destino seleccionada:`, this.value);
                 if (this.value) {
                     updateAssignment(studentId);
                 } else {
@@ -572,18 +561,14 @@
 
         // Funciones para cargar opciones de destino
         function loadDestCourseNumbers(studentId) {
-            console.log(`loadDestCourseNumbers para estudiante ${studentId}`);
             const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
             const schoolYear = card.querySelector('.dest-school-year').value;
             const courseType = card.querySelector('.dest-course-type').value;
             const numberSelect = card.querySelector('.dest-course-number');
 
-            console.log(`  schoolYear: ${schoolYear}, courseType: ${courseType}`);
 
-            fetch(`/ajax/get-course-numbers/?school_year_id=${schoolYear}&course_type=${courseType}`)
-                .then(response => response.json())
+            getJSON(`/ajax/get-course-numbers/?school_year_id=${schoolYear}&course_type=${courseType}`)
                 .then(data => {
-                    console.log(`  Números recibidos:`, data.numbers);
                     resetSelect(numberSelect);
                     if (data.numbers && data.numbers.length > 0) {
                         data.numbers.forEach(num => {
@@ -593,28 +578,23 @@
                             numberSelect.appendChild(option);
                         });
                         numberSelect.disabled = false;
-                        console.log(`  Números cargados exitosamente`);
                     } else {
-                        console.log(`  No hay números disponibles`);
                     }
                 })
-                .catch(error => console.error('Error:', error));
+                .catch(error => reportFailure(
+                    'No se pudieron cargar los cursos de destino.', error));
         }
 
         function loadDestSectionLetters(studentId) {
-            console.log(`loadDestSectionLetters para estudiante ${studentId}`);
             const card = studentsContainer.querySelector(`[data-student="${studentId}"]`).closest('.student-card');
             const schoolYear = card.querySelector('.dest-school-year').value;
             const courseType = card.querySelector('.dest-course-type').value;
             const courseNumber = card.querySelector('.dest-course-number').value;
             const letterSelect = card.querySelector('.dest-section-letter');
 
-            console.log(`  schoolYear: ${schoolYear}, courseType: ${courseType}, courseNumber: ${courseNumber}`);
 
-            fetch(`/ajax/get-course-sections/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}`)
-                .then(response => response.json())
+            getJSON(`/ajax/get-course-sections/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}`)
                 .then(data => {
-                    console.log(`  Secciones recibidas:`, data.sections);
                     resetSelect(letterSelect);
                     if (data.sections && data.sections.length > 0) {
                         data.sections.forEach(letter => {
@@ -624,12 +604,11 @@
                             letterSelect.appendChild(option);
                         });
                         letterSelect.disabled = false;
-                        console.log(`  Secciones cargadas exitosamente`);
                     } else {
-                        console.log(`  No hay secciones disponibles`);
                     }
                 })
-                .catch(error => console.error('Error:', error));
+                .catch(error => reportFailure(
+                    'No se pudieron cargar las secciones de destino.', error));
         }
 
         // Actualizar el valor del input oculto con la asignación
@@ -641,20 +620,27 @@
             const sectionLetter = card.querySelector('.dest-section-letter').value;
             const assignmentInput = card.querySelector('.assignment-input');
 
-            fetch(`/ajax/get-destination-courses/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
-                .then(response => response.json())
+            getJSON(`/ajax/get-destination-courses/?school_year_id=${schoolYear}&course_type=${courseType}&course_number=${courseNumber}&section_letter=${sectionLetter}`)
                 .then(data => {
                     if (data.course_id) {
                         assignmentInput.value = `${studentId}:${data.course_id}`;
+                    } else {
+                        throw new Error('sin course_id');
                     }
+                })
+                // This value feeds the hidden input the form submits. A silent
+                // failure here drops the student from the POST with no error.
+                .catch(error => {
+                    assignmentInput.value = '';
+                    reportFailure(
+                        'No se pudo fijar la clase de destino de este alumno; '
+                        + 'no se enviara en la reasignacion.', error);
                 });
         }
 
         // Resetear un select
         function resetSelect(select) {
-            console.log('Reseteando select:', select.id);
             select.innerHTML = '<option value="">-- Seleccionar --</option>';
-            console.log('Select reseteado, innerHTML:', select.innerHTML);
         }
     </script>
 </body>

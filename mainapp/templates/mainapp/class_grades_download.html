@@ -13,7 +13,7 @@ Descargar Notas de Clase
 <div class="page-root">
     <div class="page-surface" role="main" aria-labelledby="page-title">
         <p>
-            <button type="button" class="btn-back" onclick="window.history.back()">← Volver</button>
+            <button type="button" class="btn-back" data-action="back">← Volver</button>
         </p>
         
         <h1 id="page-title" class="page-title">Descargar Notas de {{ course.Tipo }} {{ course.Section }}</h1>
@@ -68,7 +68,7 @@ Descargar Notas de Clase
                     <button type="submit" class="btn btn-primary">
                         Descargar Notas
                     </button>
-                    <button type="button" class="btn btn-secondary" onclick="window.history.back()">
+                    <button type="button" class="btn btn-secondary" data-action="back">
                         Cancelar
                     </button>
                 </div>

@@ -22,7 +22,7 @@ Teacher Dashboard
         <select 
           id="school-year-select" 
           name="school_year" 
-          onchange="this.form.submit()"
+          data-autosubmit
           style="padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc;">
           {% for sy in school_years %}
             <option value="{{ sy.SchoolYearID }}" {% if sy.SchoolYearID == selected_school_year.SchoolYearID %}selected{% endif %}>

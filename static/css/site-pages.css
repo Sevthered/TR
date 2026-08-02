@@ -283,8 +283,13 @@ input:focus, textarea:focus, select:focus {
 /* -------------------------
    Accessibility touches
    ------------------------- */
-:focus { outline: none; }
-[tabindex]:focus, a:focus, button:focus, input:focus {
+/* Removing the outline without replacing it for every focusable element left
+   keyboard users with no visible focus on <select> and <textarea> -- which is
+   every dependent dropdown in the admin flows. Scope the reset to elements
+   that actually get the replacement ring below. */
+[tabindex]:focus, a:focus, button:focus, input:focus,
+select:focus, textarea:focus {
+  outline: none;
   box-shadow: 0 0 0 6px rgba(255,90,40,0.14);
   border-radius: 6px;
 }

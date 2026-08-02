@@ -258,8 +258,8 @@
 
     </div>
 
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script>
+    <script src="{% static 'js/vendor/jquery-3.6.0.min.js' %}"></script>
+    <script nonce="{{ request.csp_nonce }}">
         $(document).ready(function() {
             var $courseType = $('#id_course_type');
             var $courseLevel = $('#id_course_level');
