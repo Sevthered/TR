@@ -23,7 +23,7 @@ python manage.py shell
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 105 tests in mainapp/tests.py
+# Tests — 120 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -77,7 +77,7 @@ Note the legacy naming: model fields are CapitalCase (`Name`, `Tipo`, `Section`,
 
 Nearly every list/dashboard view is filtered by school year, passed as the `?school_year_id=` query param (sometimes `?school_year=`), and often `?trimester_id=` too. When adding a view or a redirect, propagate these params — `create_school_year_view` for example redirects with `?school_year_id={pk}` appended. When no year is given, code falls back to `School_year.objects.all().order_by('-year').first()`.
 
-**`class_dashboard` is the exception, deliberately.** It resolves scope through `resolve_class_scope()` → `ClassScope` (`views.py`, beside `teacher_courses`), which takes `?trimester_id=` and `?subject_courses_id=` and **ignores `?school_year_id=`** — `Course.school_year` fixes the year, and a year disagreeing with the course would describe a class that does not exist. Unrecognised ids fall back to the default scope rather than raising. Use `scope.query_string` to keep redirects and links inside the current scope.
+**`class_dashboard` is the exception, deliberately.** It resolves scope through `resolve_class_scope()` → `ClassScope` (`views.py`, beside `teacher_courses`), which takes `?trimester_id=` and `?subject_courses_id=` and **ignores `?school_year_id=`** — `Course.school_year` fixes the year, and a year disagreeing with the course would describe a class that does not exist. Unrecognised ids fall back to the default scope rather than raising. Use `scope.query_string` to keep redirects and links inside the current scope. **Do not append `?school_year_id=` to a `class_dashboard` link** — it reads as a filter that does not exist. `section_courses.html` used to; it no longer does, and `teacher_dashboard.html` never did.
 
 ### AJAX cascades
 
@@ -122,17 +122,20 @@ Three different header sets exist and they do **not** all match:
 
 `download_class_list` is the only producer whose *headers* the importers accept; the two export sets must be re-headered before re-import.
 
-**But the round-trip is broken today, for every course.** `download_class_list` derives `Año_Escolar` from `timezone.now()` (`views.py:883`) rather than from `course.school_year`, and `import_grades` looks school years up without creating them (`views.py:1485`) — so every row of the downloaded template fails with "año escolar no encontrado" whenever the calendar year and the school year disagree. Import matches `Students` and `Subjects` **by exact name string**; `School_year` and `Trimester` must already exist.
+**The round-trip works as of step 5.** It did not before: `download_class_list` derived `Año_Escolar` from `timezone.now()` rather than from `course.school_year`, so every row of the template failed on re-import with "año escolar no encontrado" whenever the calendar year and the school year disagreed. The template now writes `course.school_year.year`.
+
+The fix is at the producer, deliberately. **`import_grades` still looks `School_year` and `Trimester` up and never creates them** — an upload must not be able to invent a school year, and `CsvImportTests` pins that. A missing year or trimester now names the offending value in the error. Import matches `Students` and `Subjects` **by exact name string**.
+
+The exports are still unaffected by `LANGUAGE_CODE = 'es-es'`: they write `Decimal`s through `csv.writer`, which calls `str()`, so a grade stays `2.66` in the file while rendering `2,66` on a page.
 
 ## Known rough edges
 
 The four items previously listed here (duplicate `GradeForm`, stray imports, unfinished filename block, hardcoded `DEBUG`/`SECRET_KEY`) were **all fixed** in the 2026-08-02 remediation. What remains:
 
-- **The CSV round-trip is broken** — see the section above.
 - **Aggregates exist in exactly one place: `class_metrics()`.** Everywhere else, any average, total or rate is still a **new backend feature**, not a display change. `class_metrics` is also the pattern to copy: two aggregate queries plus a Python merge, never one annotated queryset over `Students` — `grade` and `ausencias` are both multi-valued, so annotating both at once multiplies rows and each inflates the other's count. Class means there are **weighted by grade count**; a mean of means is a different number. `grade_count` has **no denominator** (see the `Grade` uniqueness note above).
 - **`sort_key_section`** (`views.py:631-641`) raises on any `Section` not shaped `<digit><letter>`.
 - **`views.py:811-815`** swallows every exception in the bulk-absence loop, so an `IntegrityError` and a `ValidationError` look identical to the teacher.
-- **`LANGUAGE_CODE = 'en-us'`** on a Spanish-language app, so decimals render `2.66` rather than `2,66`. A switch to `es-ES` is agreed but not yet done — it changes date formats on every page too.
+- **`LANGUAGE_CODE = 'es-es'`.** Decimals render `2,66` and dates take Spanish formats app-wide. Two consequences worth knowing before adding a widget: `<input type="datetime-local">` and `type="date"` need an explicit `format='%Y-%m-%dT%H:%M'` on the widget, because Django otherwise renders `DATETIME_INPUT_FORMATS[0]` of the locale and the browser **silently blanks the control**; and anything writing a number into a file rather than a page must keep going through `str()`, not the locale.
 
 ## Content-Security-Policy
 

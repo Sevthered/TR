@@ -16,7 +16,6 @@ from django.forms import formset_factory
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.http import urlencode
 from django_ratelimit.decorators import ratelimit
 
@@ -137,10 +136,11 @@ class ClassScope:
     resolved once, in one place, instead of each view re-deriving it.
 
     The school year is NOT a query parameter here: `Course.school_year` fixes
-    it. Links into `class_dashboard` carry `?school_year_id=` (see
-    `section_courses.html`), and that param is deliberately ignored rather than
-    honoured — a year that disagrees with the course would describe a class
-    that does not exist.
+    it. A `?school_year_id=` arriving from a bookmark is deliberately ignored
+    rather than honoured — a year that disagrees with the course would describe
+    a class that does not exist. The in-app links that used to append it
+    (`section_courses.html`) no longer do; the only params worth propagating
+    into this page are the two `query_params` emits.
 
     `roster_source` says which of the two roster rules produced `students`,
     because the two mean different things to a teacher and must be labelled
@@ -854,12 +854,6 @@ def download_class_list(request, course_id):
     course = get_object_or_404(
         teacher_courses(request.user.profile.teacher), CourseID=course_id)
 
-    # Get subject (optional).
-    subject_course = Subjects_Courses.objects.filter(course=course).first()
-
-    if not subject_course:
-        pass
-
     # Configure CSV response.
     response = HttpResponse(content_type='text/csv')
 
@@ -879,9 +873,13 @@ def download_class_list(request, course_id):
         students_courses__course_section=course
     ).distinct().order_by('Name')
 
-    # Get current school year string.
-    current_year = timezone.now().year
-    school_year_str = f"{current_year}-{current_year + 1}"
+    # The year comes from the course, not from the calendar. Derived from
+    # `timezone.now()` this wrote e.g. "2026-2027" for a course held in
+    # "2025-2026", and `import_grades` looks years up without creating them —
+    # so every row of the template it just handed the teacher failed on
+    # re-import with "año escolar no encontrado". `Course.school_year` is the
+    # only year this course can have.
+    school_year_str = course.school_year.year
 
     # Iterate over students.
     for student in students:
@@ -1516,11 +1514,18 @@ def import_grades(request, course_id=None):
                     errors.append(f'Fila {row_num}: asignatura no encontrada.')
                     error_count += 1
                 except School_year.DoesNotExist:
-                    errors.append(f'Fila {row_num}: año escolar no encontrado.')
+                    # Name the value. Years and trimesters are not PII, and a
+                    # bare "no encontrado" gave the teacher nothing to act on —
+                    # this is the error the broken template used to raise on
+                    # every single row.
+                    errors.append(
+                        f'Fila {row_num}: año escolar "{school_year_str}" '
+                        f'no encontrado.')
                     error_count += 1
                 except Trimester.DoesNotExist:
                     errors.append(
-                        f'Fila {row_num}: trimestre no encontrado para ese año.')
+                        f'Fila {row_num}: trimestre "{trimester_name}" no '
+                        f'encontrado en el año escolar "{school_year_str}".')
                     error_count += 1
                 except ValidationError:
                     errors.append(
