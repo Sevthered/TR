@@ -1,4 +1,6 @@
+from django.conf import settings
 from django.urls import path, include
+from django.views.generic import TemplateView
 from . import views
 from .views import create_school_year_view, create_courses_sections_view, adminage_dashboard_view, assign_subjects_view, load_course_sections, create_and_assign_student_view
 
@@ -74,3 +76,14 @@ urlpatterns = [
          views.import_grades, name='import_grades_class'),
 
 ]
+
+# Scratch page for the UI overhaul. It exercises base_v2 — the Tailwind bundle
+# and vendored HTMX — so that a CSP violation shows up in the console, which is
+# the only place a blocked script announces itself. DEBUG-only: it is unauthed
+# and must never be routed in production.
+if settings.DEBUG:
+    urlpatterns += [
+        path('ui/preview/',
+             TemplateView.as_view(template_name='ui_preview.html'),
+             name='ui_preview'),
+    ]

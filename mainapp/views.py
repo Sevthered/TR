@@ -1,30 +1,405 @@
-from .models import Students, Grade, Ausencias, School_year, Trimester, Profile
-from django.shortcuts import render, get_object_or_404
-from .models import (
-    School_year, Course, Students, Students_Courses
-)
-from django.shortcuts import render, redirect
-from django.http import JsonResponse
-import profile
-from django.db import transaction
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.models import User
-from django.shortcuts import render, get_object_or_404, redirect
-from .models import Students, Profile, Course, Students_Courses, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
-from django.http import JsonResponse, HttpResponse
-from django.db.models import Q
-import unicodedata
-from django.contrib.auth.decorators import login_required
+import codecs
 import csv
+import logging
+import unicodedata
+from decimal import Decimal, ROUND_HALF_UP
+from functools import wraps
+
 from django.contrib import messages
-from .forms import GradeForm, AusenciaForm, AusenciaEditForm, SchoolYearForm, CourseCreationForm, CourseSectionForm, MAIN_COURSES, SubjectAssignmentForm, StudentCreationForm
-from django.utils import timezone
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
-from django.forms import formset_factory, ModelChoiceField
-from django.http import Http404
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models import Count, Q, Sum
+from django.forms import formset_factory
+from django.http import Http404, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-# Create your views here.
+from django.utils import timezone
+from django.utils.http import urlencode
+from django_ratelimit.decorators import ratelimit
+
+from .forms import (
+    AusenciaEditForm, AusenciaForm, CourseCreationForm, CourseSectionForm,
+    GradeForm, MAIN_COURSES, SchoolYearForm, StudentCreationForm,
+    SubjectAssignmentForm,
+)
+from .models import (
+    Ausencias, Course, Grade, Profile, School_year, Students,
+    Students_Courses, Subjects, Subjects_Courses, Teachers, Trimester,
+)
+
+# CSV import bounds. Django caps neither: DATA_UPLOAD_MAX_MEMORY_SIZE excludes
+# uploaded files and FILE_UPLOAD_MAX_MEMORY_SIZE is only a spool threshold.
+MAX_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_IMPORT_ROWS = 5000
+
+
+audit_log = logging.getLogger('mainapp.audit')
+
+
+def audit(request, action, **fields):
+    """Record a security-relevant action: who, what, from where, why.
+
+    Callers pass identifiers, never payloads or credentials: log lines are
+    long-lived and student data is a liability. The timestamp comes from the
+    formatter.
+    """
+    user = getattr(request, 'user', None)
+    audit_log.info(
+        'action=%s user=%s ip=%s path=%s %s',
+        action,
+        getattr(user, 'username', None) or 'anonymous',
+        request.META.get('REMOTE_ADDR', '-'),
+        request.path,
+        ' '.join(f'{k}={v}' for k, v in fields.items()),
+    )
+
+
+def _cell(row, *names):
+    """First non-empty value among `names`, stripped.
+
+    Exists because `row.get('A') or row.get('b', '').strip()` binds `.strip()`
+    to the fallback only, so a padded value in the primary column was never
+    stripped and silently failed to match.
+    """
+    for name in names:
+        value = row.get(name)
+        if value:
+            return value.strip()
+    return ''
+
+
+def role_required(*roles):
+    """Require login, a Profile, and one of `roles`. Denials return 403."""
+    def decorator(view):
+        @login_required
+        @wraps(view)
+        def wrapper(request, *args, **kwargs):
+            # RelatedObjectDoesNotExist subclasses AttributeError, so getattr
+            # yields None when the user has no Profile row (they are created
+            # by hand in Django admin, so that is a real case).
+            profile = getattr(request.user, 'profile', None)
+            if profile is None:
+                logout(request)
+                return redirect('login')
+            if profile.role not in roles:
+                return render(request, "forbidden.html",
+                              {"user": request.user, "profile": profile},
+                              status=403)
+            return view(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def teacher_required(view):
+    """`role_required('professor')` plus a guaranteed Teachers link.
+
+    Wrapped views can rely on `request.user.profile.teacher` being set. A
+    professor account with no link reaches no student data at all: the
+    scoping fails closed, which is the point of it.
+    """
+    @role_required('professor')
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if request.user.profile.teacher is None:
+            return render(request, "forbidden.html",
+                          {"user": request.user,
+                           "profile": request.user.profile,
+                           "unlinked_teacher": True}, status=403)
+        return view(request, *args, **kwargs)
+    return wrapper
+
+
+def teacher_courses(teacher):
+    """Course sections this teacher is assigned to teach in."""
+    return Course.objects.filter(subjects_courses__teacher=teacher).distinct()
+
+
+def teacher_students(teacher):
+    """Students enrolled in any course section this teacher teaches.
+
+    Scoped through Subjects_Courses.course rather than through
+    `assigned_course_sections`: that M2M is optional in the only UI that
+    populates it and is actively cleared on an empty submit, so it is
+    routinely empty and cannot be relied on for authorization.
+    """
+    return Students.objects.filter(
+        students_courses__course_section__subjects_courses__teacher=teacher
+    ).distinct()
+
+
+class ClassScope:
+    """What a class page is currently looking at: year, trimester, subject, roster.
+
+    Every class-level readout is a claim about a scope, so the scope is
+    resolved once, in one place, instead of each view re-deriving it.
+
+    The school year is NOT a query parameter here: `Course.school_year` fixes
+    it. Links into `class_dashboard` carry `?school_year_id=` (see
+    `section_courses.html`), and that param is deliberately ignored rather than
+    honoured — a year that disagrees with the course would describe a class
+    that does not exist.
+
+    `roster_source` says which of the two roster rules produced `students`,
+    because the two mean different things to a teacher and must be labelled
+    differently in the UI:
+
+    * ``'course'``  — everyone enrolled in the course section. The default, and
+      the fallback whenever a subject has no roster of its own.
+    * ``'subject'`` — the subset in `Subjects_Courses.assigned_course_sections`,
+      used only when a subject is selected *and* that M2M is non-empty.
+
+    The hybrid exists because pure subject-scoping has no defined answer before
+    a subject is picked, and because that M2M is populated by exactly one admin
+    form which clears it on an empty submit (`views.py`, `assign_subjects_view`)
+    — so it is frequently empty and cannot stand alone. It is still the only
+    thing in the schema that models optativas, and this is its first reader.
+    """
+
+    def __init__(self, course, school_year, trimesters, trimester,
+                 subjects_courses, subject_courses, students, roster_source):
+        self.course = course
+        self.school_year = school_year
+        self.trimesters = trimesters
+        self.trimester = trimester
+        self.subjects_courses = subjects_courses
+        self.subject_courses = subject_courses
+        self.students = students
+        self.roster_source = roster_source
+
+    @property
+    def subject(self):
+        """The selected Subject, or None when the page is showing all of them."""
+        return self.subject_courses.subject if self.subject_courses else None
+
+    @property
+    def query_params(self):
+        """The scope as URL params, so redirects and links keep the page in place."""
+        params = {}
+        if self.trimester:
+            params['trimester_id'] = self.trimester.pk
+        if self.subject_courses:
+            params['subject_courses_id'] = self.subject_courses.pk
+        return params
+
+    @property
+    def query_string(self):
+        params = self.query_params
+        return urlencode(params) if params else ''
+
+
+def resolve_class_scope(course, trimester_id=None, subject_courses_id=None):
+    """Build the ClassScope for `course` from raw (untrusted) request params.
+
+    Unrecognised ids fall back to the default scope instead of raising: these
+    arrive from bookmarks and hand-edited URLs, and a 404 on a stale trimester
+    link would be a worse page than the current trimester.
+    """
+    school_year = course.school_year
+
+    trimesters = list(
+        Trimester.objects.filter(school_year=school_year).order_by('Name')
+    )
+    trimester = None
+    if trimester_id:
+        trimester = next(
+            (t for t in trimesters if str(t.pk) == str(trimester_id)), None)
+    if trimester is None:
+        trimester = trimesters[0] if trimesters else None
+
+    # Subjects_Courses carries a trimester FK, so the subject set is per
+    # trimester, not per course. Without this filter the live DB prints
+    # "Matematicas" three times.
+    subjects_courses = list(
+        Subjects_Courses.objects
+        .filter(course=course, trimester=trimester)
+        .select_related('subject', 'teacher')
+        .order_by('subject__Name')
+    ) if trimester else []
+
+    subject_courses = None
+    if subject_courses_id:
+        subject_courses = next(
+            (sc for sc in subjects_courses
+             if str(sc.pk) == str(subject_courses_id)), None)
+
+    students = Students.objects.filter(students_courses__course_section=course)
+    roster_source = 'course'
+
+    if subject_courses is not None:
+        # Filter the M2M back down to this course. Nothing constrains an
+        # enrolment in `assigned_course_sections` to belong to the course that
+        # owns the Subjects_Courses row, and a roster must never widen past the
+        # class the teacher opened.
+        assigned = subject_courses.assigned_course_sections.filter(
+            course_section=course)
+        if assigned.exists():
+            students = Students.objects.filter(students_courses__in=assigned)
+            roster_source = 'subject'
+
+    return ClassScope(
+        course=course,
+        school_year=school_year,
+        trimesters=trimesters,
+        trimester=trimester,
+        subjects_courses=subjects_courses,
+        subject_courses=subject_courses,
+        students=students.distinct().order_by('Name'),
+        roster_source=roster_source,
+    )
+
+
+class StudentMetrics:
+    """One student's figures within a ClassScope.
+
+    `mean` is None, never 0, when the student has no grades: zero is a mark and
+    "not yet graded" is not one. The template must render the two differently.
+    """
+
+    def __init__(self, student, grade_count, grade_total, ausencias_count):
+        self.student = student
+        self.grade_count = grade_count
+        self.grade_total = grade_total
+        self.ausencias_count = ausencias_count
+
+    @property
+    def evaluated(self):
+        return self.grade_count > 0
+
+    @property
+    def mean(self):
+        if not self.grade_count:
+            return None
+        return _round2(self.grade_total / self.grade_count)
+
+    @property
+    def failing(self):
+        """Below 5. Not a schema rule — the app's own convention, already
+        applied as `grade-fail` in student_dashboard_content.html."""
+        return self.mean is not None and self.mean < 5
+
+    @property
+    def initials(self):
+        """Up to two initials, for the register's left rule. Names here run to
+        five words ("Christian Francisco Gonzalez Di Antonio"), so this takes
+        the first two rather than all of them."""
+        parts = [p for p in self.student.Name.split() if p]
+        return ''.join(p[0] for p in parts[:2]).upper()
+
+
+class ClassMetrics:
+    """Aggregates for a class page: per student, plus the strip along the top.
+
+    Read the labels off this class carefully, because two of them are easy to
+    state wrongly:
+
+    * `grade_count` has **no denominator**. `Grade` is unique on
+      (student, subject, trimester, school_year, grade_type, grade_type_number),
+      which permits unbounded grades per student per subject per trimester.
+      Any "N de M" readout would be a fabrication.
+    * `mean` averages **every grade type in scope** — `examen`, `parcial`,
+      `trimestral`, `final`, `otros` alike. Known and accepted flaw: a
+      `trimestral` row is counted alongside the `examen` rows it summarises.
+      The label must therefore name its pool ("media de las notas
+      registradas"), not imply a syllabus-weighted average. A `grade_type`
+      filter is a later page.
+    """
+
+    def __init__(self, scope, rows):
+        self.scope = scope
+        self.rows = rows
+
+    @property
+    def enrolled(self):
+        return len(self.rows)
+
+    @property
+    def evaluated(self):
+        return sum(1 for r in self.rows if r.evaluated)
+
+    @property
+    def grade_count(self):
+        return sum(r.grade_count for r in self.rows)
+
+    @property
+    def ausencias_count(self):
+        return sum(r.ausencias_count for r in self.rows)
+
+    @property
+    def mean(self):
+        """Class mean, weighted by each student's grade count.
+
+        Deliberately not the mean of the per-student means: those are a
+        different number whenever students hold different numbers of grades,
+        which is the normal case here. Averaging averages would let a student
+        with one grade weigh as much as a student with ten.
+        """
+        count = self.grade_count
+        if not count:
+            return None
+        total = sum((r.grade_total for r in self.rows), Decimal('0'))
+        return _round2(total / count)
+
+
+def _round2(value):
+    return Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def class_metrics(scope):
+    """Grade and absence figures for every student in `scope`.
+
+    Two aggregate queries plus a Python merge, never one annotated queryset
+    over Students: `grade` and `ausencias` are both multi-valued relations, so
+    annotating both at once multiplies the rows and inflates every count. The
+    merge also keeps the query count flat in the size of the roster.
+
+    Scoping a grade to a class is unenforced by the schema — `Grade` has no FK
+    to `Course` (`models.py`), so the join runs through roster ∩ subject set ∩
+    trimester ∩ school year. Consequence worth knowing: a student enrolled in
+    two courses in the same year contributes their grades to both class pages.
+    """
+    students = list(scope.students)
+
+    if scope.subject_courses is not None:
+        subject_ids = [scope.subject_courses.subject_id]
+    else:
+        # No subject selected: every subject taught to this course in this
+        # trimester. Not "every grade the student holds" — that would pull in
+        # subjects belonging to other courses entirely.
+        subject_ids = [sc.subject_id for sc in scope.subjects_courses]
+
+    grades = {}
+    absences = {}
+    if students and subject_ids and scope.trimester:
+        base = dict(student__in=students, subject_id__in=subject_ids,
+                    trimester=scope.trimester, school_year=scope.school_year)
+
+        grades = {
+            row['student']: (row['n'], row['total'])
+            for row in (Grade.objects.filter(**base)
+                        .values('student')
+                        .annotate(n=Count('pk'), total=Sum('grade')))
+        }
+        absences = {
+            row['student']: row['n']
+            for row in (Ausencias.objects.filter(**base)
+                        .values('student')
+                        .annotate(n=Count('pk')))
+        }
+
+    rows = []
+    for student in students:
+        count, total = grades.get(student.pk, (0, Decimal('0')))
+        rows.append(StudentMetrics(
+            student=student,
+            grade_count=count,
+            grade_total=total or Decimal('0'),
+            ausencias_count=absences.get(student.pk, 0),
+        ))
+
+    return ClassMetrics(scope=scope, rows=rows)
 
 
 def loginPage(request):
@@ -58,19 +433,17 @@ def loginPage(request):
         if not username or not password:
             return render(request, "mainapp/login.html", {"error": "Please provide both username and password."})
 
-        try:
-            # Check if user exists.
-            User.objects.get(username=username)
-        except User.DoesNotExist:
-            return render(request, "mainapp/login.html", {"error": "User does not exist"})
-
-        # Authenticate user.
+        # No existence pre-check: distinguishing "no such user" from "wrong
+        # password" is a user-enumeration oracle, and skipping the password
+        # hash on the unknown-user path is a timing oracle. authenticate()
+        # already returns None for both, in constant time.
         user = authenticate(request, username=username, password=password)
 
         if user is not None:
             # Login successful.
             login(request, user)
             profile = request.user.profile
+            audit(request, 'login.success', role=profile.role)
 
             # Redirect based on role.
             if profile.role == 'student' and profile.student:
@@ -85,7 +458,9 @@ def loginPage(request):
                 # Unknown role.
                 return render(request, "forbidden.html", {"user": request.user, "profile": profile})
         else:
-            # Invalid credentials.
+            # Invalid credentials. Logged without the attempted username:
+            # failed-login volume is the signal, not who was targeted.
+            audit(request, 'login.failure', reason='invalid_credentials')
             return render(request, "mainapp/login.html", {"error": "Invalid username or password"})
 
     return render(request, "mainapp/login.html")
@@ -93,11 +468,12 @@ def loginPage(request):
 
 def logoutUser(request):
     # Logs out user.
+    audit(request, 'logout')
     logout(request)
     return redirect('login')
 
 
-@login_required
+@role_required('tutor', 'legal_tutor', 'student')
 def student_detail(request):
     """
     Student dashboard view with filters.
@@ -143,10 +519,6 @@ def student_detail(request):
         if not profile.student:
             return render(request, "mainapp/student_profile.html", {"user": request.user, "profile": profile})
         student = profile.student
-
-    else:
-        # Unauthorized role.
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     # FILTERS: School Year & Trimester
     all_school_years = list(School_year.objects.all().order_by('-year'))
@@ -269,41 +641,39 @@ def sort_key_section(course):
     return (number_part, letter_part)
 
 
-@login_required
+@teacher_required
 def teacher_dashboard(request):
     # Get user profile.
     profile = request.user.profile
 
-    # Restrict access to professors.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-    else:
-        # Fetch dashboard data.
-        all_students = Students.objects.all().order_by('Name')
-        all_grades = Grade.objects.all()
-        all_ausencias = Ausencias.objects.all()
+    # Fetch dashboard data, scoped to this teacher's own students.
+    my_students = teacher_students(profile.teacher)
+    my_courses = teacher_courses(profile.teacher)
+    all_students = my_students.order_by('Name')
+    all_grades = Grade.objects.filter(student__in=my_students)
+    all_ausencias = Ausencias.objects.filter(student__in=my_students)
 
-        # Get available school years.
-        all_school_years = School_year.objects.all().order_by('-year')
+    # Get available school years.
+    all_school_years = School_year.objects.all().order_by('-year')
 
-        # Get selected school year or default to newest.
-        selected_school_year = request.GET.get('school_year')
+    # Get selected school year or default to newest.
+    selected_school_year = request.GET.get('school_year')
 
-        if selected_school_year:
-            try:
-                school_year = School_year.objects.get(
-                    SchoolYearID=selected_school_year)
-                all_courses = Course.objects.filter(school_year=school_year)
-            except School_year.DoesNotExist:
-                # Fallback to newest.
-                school_year = all_school_years.first()
-                all_courses = Course.objects.filter(
-                    school_year=school_year) if school_year else Course.objects.none()
-        else:
-            # Default to newest.
+    if selected_school_year:
+        try:
+            school_year = School_year.objects.get(
+                SchoolYearID=selected_school_year)
+            all_courses = my_courses.filter(school_year=school_year)
+        except School_year.DoesNotExist:
+            # Fallback to newest.
             school_year = all_school_years.first()
-            all_courses = Course.objects.filter(
+            all_courses = my_courses.filter(
                 school_year=school_year) if school_year else Course.objects.none()
+    else:
+        # Default to newest.
+        school_year = all_school_years.first()
+        all_courses = my_courses.filter(
+            school_year=school_year) if school_year else Course.objects.none()
 
     # Sort courses.
     sorted_courses = sorted(all_courses, key=sort_key_section)
@@ -337,12 +707,9 @@ def teacher_dashboard(request):
     return render(request, "mainapp/teacher_dashboard.html", context)
 
 
-@login_required
+@teacher_required
 def section_courses(request, section):
     profile = request.user.profile
-
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     sec = (section or '').strip().lower()
 
@@ -381,7 +748,7 @@ def section_courses(request, section):
 
     # Base QuerySet: Filter by school year.
     if selected_year_id:
-        courses_base_qs = Course.objects.filter(
+        courses_base_qs = teacher_courses(profile.teacher).filter(
             school_year_id=selected_year_id)
     else:
         courses_base_qs = Course.objects.none()
@@ -407,21 +774,20 @@ def section_courses(request, section):
     return render(request, 'mainapp/section_courses.html', context)
 
 
-@login_required
+@teacher_required
 def class_dashboard(request, course_id):
     profile = request.user.profile
 
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    course = get_object_or_404(teacher_courses(profile.teacher), CourseID=course_id)
 
-    course = get_object_or_404(Course, CourseID=course_id)
-
-    # Get all Subjects_Courses for this Course.
-    subjects_courses = course.subjects_courses_set.all()
-
-    # Filter students by course section.
-    students = Students.objects.filter(
-        students_courses__course_section=course).distinct().order_by('Name')
+    # Trimester and subject are the two scope controls; the school year comes
+    # from the course itself. See ClassScope for why `?school_year_id=` — which
+    # section_courses.html appends — is ignored here.
+    scope = resolve_class_scope(
+        course,
+        trimester_id=request.GET.get('trimester_id'),
+        subject_courses_id=request.GET.get('subject_courses_id'),
+    )
 
     if request.method == 'POST':
         form = AusenciaForm(request.POST, course=course)
@@ -454,7 +820,12 @@ def class_dashboard(request, course_id):
             else:
                 messages.error(
                     request, 'No se creó ninguna ausencia (posibles duplicados).')
-            return redirect('class_dashboard', course_id=course.CourseID)
+            # Carry the scope through the redirect, or the teacher lands back
+            # on the default trimester after every save.
+            url = reverse('class_dashboard', args=[course.CourseID])
+            if scope.query_string:
+                url = f'{url}?{scope.query_string}'
+            return redirect(url)
         else:
             messages.error(request, 'Errores en el formulario de ausencia.')
     else:
@@ -462,21 +833,21 @@ def class_dashboard(request, course_id):
 
     context = {
         "course": course,
-        "subjects_courses": subjects_courses,
-        "students": students,
+        "scope": scope,
+        "metrics": class_metrics(scope),
+        # Kept flat as well: the legacy template reads these names directly.
+        "subjects_courses": scope.subjects_courses,
+        "students": scope.students,
         "ausencia_form": form,
     }
     return render(request, "mainapp/class_dashboard.html", context)
 
 
-@login_required
+@teacher_required
 def download_class_list(request, course_id):
-    # Check if user is professor.
-    if request.user.profile.role != 'professor':
-        return HttpResponse("Access denied.", status=403)
-
     # 1. Get Course object.
-    course = get_object_or_404(Course, CourseID=course_id)
+    course = get_object_or_404(
+        teacher_courses(request.user.profile.teacher), CourseID=course_id)
 
     # Get subject (optional).
     subject_course = Subjects_Courses.objects.filter(course=course).first()
@@ -524,17 +895,14 @@ def download_class_list(request, course_id):
     return response
 
 
-@login_required
+@teacher_required
 def student_dashboard_content(request, student_id):
     # Authentication required.
     profile = request.user.profile
 
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-
     # Get student.
-    student = get_object_or_404(Students, StudentID=student_id)
+    student = get_object_or_404(
+        teacher_students(profile.teacher), StudentID=student_id)
 
     # --- FILTER LOGIC ---
 
@@ -600,7 +968,6 @@ def student_dashboard_content(request, student_id):
 
 
 @login_required
-@login_required
 def tutor_dashboard(request):
     """
     Deprecated view. Redirects to student_dashboard which handles
@@ -609,7 +976,8 @@ def tutor_dashboard(request):
     return redirect('student_dashboard')
 
 
-@login_required
+@ratelimit(key='user', rate='30/h', block=True)
+@role_required('student', 'tutor', 'professor')
 def grades_csv(request, student_id=None):
     # Generic view to download grades as CSV.
     profile = request.user.profile
@@ -631,14 +999,17 @@ def grades_csv(request, student_id=None):
         grades = Grade.objects.filter(student__in=children)
         filename = f"{request.user.username}_notas.csv"
     elif profile.role == "professor":
+        # Scoped to this teacher's own students; unlinked teachers get nothing.
+        my_students = teacher_students(profile.teacher) if profile.teacher \
+            else Students.objects.none()
         if student_id:
             # Professor (specific student).
-            student = get_object_or_404(Students, pk=student_id)
+            student = get_object_or_404(my_students, pk=student_id)
             grades = Grade.objects.filter(student=student)
             filename = f"{student.Name}_notas.csv"
         else:
-            # Professor (all).
-            grades = Grade.objects.all()
+            # Professor (all their own students).
+            grades = Grade.objects.filter(student__in=my_students)
             filename = "all_grades.csv"
     else:
         # Access denied.
@@ -660,6 +1031,7 @@ def grades_csv(request, student_id=None):
             pass
 
     # Configure CSV response.
+    audit(request, 'grades.export', rows=grades.count(), scope=profile.role)
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
@@ -669,7 +1041,8 @@ def grades_csv(request, student_id=None):
         ['Estudiante', 'Asignatura', 'Trimestre', 'Año Escolar', 'Nota', 'Tipo de Nota', 'Numero tipo de Nota', 'Comentario'])
 
     # Write rows.
-    for grade in grades:
+    for grade in grades.select_related(
+            'student', 'subject', 'trimester', 'school_year'):
         student = grade.student
         student_name = student.Name
         subject_name = grade.subject.Name
@@ -688,17 +1061,14 @@ def grades_csv(request, student_id=None):
     return response
 
 
-@login_required
+@ratelimit(key='user', rate='30/h', block=True)
+@teacher_required
 def class_grades_download(request, course_id):
     # Download grades for a specific class.
     profile = request.user.profile
 
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-
     # Get Course.
-    course = get_object_or_404(Course, CourseID=course_id)
+    course = get_object_or_404(teacher_courses(profile.teacher), CourseID=course_id)
 
     # Filter students by course section.
     students_in_course = Students.objects.filter(
@@ -740,8 +1110,6 @@ def class_grades_download(request, course_id):
         if selected_subject_id:
             subject = get_object_or_404(Subjects, pk=selected_subject_id)
             filename_parts.append(subject.Name)
-        # ... (continúa con la lógica de generación de filename) ...
-        # Aquí se necesita completar la lógica original de filename:
         filename = "_".join(filename_parts) + "_grades.csv"
 
         # Genera el CSV y la respuesta de descarga.
@@ -780,20 +1148,13 @@ def class_grades_download(request, course_id):
     return render(request, "mainapp/class_grades_download.html", context)
 
 
-@login_required
+@teacher_required
 def create_edit_grade(request, grade_id=None, student_id=None):
     """
     Create or edit a grade.
     Pre-selects student and latest school year.
     """
-    try:
-        profile = request.user.profile
-    except User.profile.RelatedObjectDoesNotExist:
-        return render(request, "error.html", {"message": "User has no profile."})
-
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+    profile = request.user.profile
 
     student_instance = None
     grade_instance = None
@@ -803,14 +1164,17 @@ def create_edit_grade(request, grade_id=None, student_id=None):
     latest_year = School_year.objects.all().order_by('-year').first()
 
     # Determine edit or create mode.
+    my_students = teacher_students(profile.teacher)
+
     if grade_id:
         # Edit mode.
-        grade_instance = get_object_or_404(Grade, id=grade_id)
+        grade_instance = get_object_or_404(
+            Grade, id=grade_id, student__in=my_students)
         student_instance = grade_instance.student
         initial_data['student'] = student_instance.pk
     elif student_id:
         # Create mode.
-        student_instance = get_object_or_404(Students, pk=student_id)
+        student_instance = get_object_or_404(my_students, pk=student_id)
         initial_data['student'] = student_instance.pk
 
         # 2. Set default school year.
@@ -822,7 +1186,15 @@ def create_edit_grade(request, grade_id=None, student_id=None):
         form = GradeForm(request.POST, instance=grade_instance)
 
         if form.is_valid():
-            g = form.save()
+            g = form.save(commit=False)
+            # The student comes from the URL, never from the request body:
+            # `student` is only a hidden input, so a crafted POST could
+            # otherwise write a grade onto any student.
+            g.student = student_instance
+            g.save()
+            audit(request, 'grade.save', grade_id=g.pk,
+                  student_id=g.student_id, value=g.grade,
+                  created=grade_instance is None)
 
             messages.success(request, "Grade saved successfully.")
             return redirect('student_dashboard_content', student_id=student_instance.pk)
@@ -842,6 +1214,7 @@ def create_edit_grade(request, grade_id=None, student_id=None):
 # 2. AJAX VIEW: LOAD TRIMESTERS
 # =================================================================
 
+@role_required('professor')
 def load_trimesters(request):
     """
     Returns trimesters for a school year as JSON.
@@ -862,26 +1235,25 @@ def load_trimesters(request):
     return JsonResponse({'trimesters': trimester_list})
 
 
-@login_required
+@teacher_required
 def create_edit_ausencia(request, ausencia_id=None, student_id=None):
     # Create or edit absence.
     profile = request.user.profile
-
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     student_instance = None
     ausencia_instance = None
 
     # Determine edit or create mode.
+    my_students = teacher_students(profile.teacher)
+
     if ausencia_id:
         # Edit mode.
-        ausencia_instance = get_object_or_404(Ausencias, id=ausencia_id)
+        ausencia_instance = get_object_or_404(
+            Ausencias, id=ausencia_id, student__in=my_students)
         student_instance = ausencia_instance.student
     elif student_id:
         # Create mode.
-        student_instance = get_object_or_404(Students, pk=student_id)
+        student_instance = get_object_or_404(my_students, pk=student_id)
 
     # Handle POST.
     if request.method == "POST":
@@ -890,14 +1262,20 @@ def create_edit_ausencia(request, ausencia_id=None, student_id=None):
         if form.is_valid():
             ausencia = form.save(commit=False)
 
-        # Assign student if new.
-        if not ausencia_id:
-            ausencia.student = student_instance
+            # Assign student if new. Indented into the is_valid() branch: at
+            # module level these lines ran even on an invalid form, where
+            # `ausencia` is unbound, raising UnboundLocalError -> HTTP 500
+            # instead of re-rendering the form with its errors.
+            if not ausencia_id:
+                ausencia.student = student_instance
 
-        ausencia.save()
+            ausencia.save()
+            audit(request, 'absence.save', absence_id=ausencia.pk,
+                  student_id=ausencia.student_id)
 
-        messages.success(request, "Absence saved successfully.")
-        return redirect('student_dashboard_content', student_id=student_instance.pk)
+            messages.success(request, "Absence saved successfully.")
+            return redirect('student_dashboard_content',
+                            student_id=student_instance.pk)
     else:
         # GET request.
         form = AusenciaEditForm(instance=ausencia_instance)
@@ -910,13 +1288,10 @@ def create_edit_ausencia(request, ausencia_id=None, student_id=None):
     return render(request, "mainapp/ausencia_form.html", context)
 
 
-@login_required
+@ratelimit(key='user', rate='60/m', block=True)
+@teacher_required
 def search_students(request):
     profile = request.user.profile
-
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     # Get query and optional course filter.
     query = (request.GET.get('q') or '').strip()
@@ -924,19 +1299,23 @@ def search_students(request):
 
     students_qs = Students.objects.none()
 
+    # Every branch starts from this teacher's own students, never from all.
+    my_students = teacher_students(profile.teacher)
+
     # Filter by course.
     if course_id:
         try:
-            course_obj = Course.objects.get(CourseID=course_id)
+            course_obj = teacher_courses(profile.teacher).get(
+                CourseID=course_id)
             # Filter by Students -> Students_Courses -> Course
-            students_qs = Students.objects.filter(
+            students_qs = my_students.filter(
                 students_courses__course_section=course_obj
             ).distinct()
         except Course.DoesNotExist:
             students_qs = Students.objects.none()
     else:
-        # No course filter, start with all.
-        students_qs = Students.objects.all()
+        # No course filter: still scoped to this teacher.
+        students_qs = my_students
 
     def _strip_accents(text):
         if not text:
@@ -1008,18 +1387,24 @@ def search_students(request):
     return render(request, 'mainapp/search_results.html', context)
 
 
-@login_required
+@ratelimit(key='user', rate='10/h', block=True)
+@teacher_required
 def import_grades(request, course_id=None):
     profile = request.user.profile
-
-    # Restrict to professor.
-    if profile.role != 'professor':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     # Get Course.
     course = None
     if course_id:
-        course = get_object_or_404(Course, CourseID=course_id)
+        course = get_object_or_404(
+            teacher_courses(profile.teacher), CourseID=course_id)
+
+    # Rows may only touch students this teacher teaches, and when the import
+    # is scoped to a class, only that class. Previously `course` was fetched
+    # and then never used, so a class-scoped import could grade anyone.
+    importable_students = teacher_students(profile.teacher)
+    if course:
+        importable_students = importable_students.filter(
+            students_courses__course_section=course)
 
     # Handle POST (CSV upload).
     if request.method == 'POST':
@@ -1034,6 +1419,17 @@ def import_grades(request, course_id=None):
             messages.error(request, 'El archivo debe ser un CSV.')
             return render(request, 'mainapp/import_grades.html', {'course': course})
 
+        # Django's upload settings do not cap file size: DATA_UPLOAD_MAX_
+        # MEMORY_SIZE excludes files and FILE_UPLOAD_MAX_MEMORY_SIZE is only a
+        # spool threshold. Without this a 2 GB upload is accepted and read
+        # into memory whole.
+        if csv_file.size > MAX_IMPORT_BYTES:
+            messages.error(
+                request,
+                f'El archivo supera el límite de '
+                f'{MAX_IMPORT_BYTES // 1024 // 1024} MB.')
+            return render(request, 'mainapp/import_grades.html', {'course': course})
+
         # Counters.
         created_count = 0
         updated_count = 0
@@ -1041,61 +1437,66 @@ def import_grades(request, course_id=None):
         errors = []
 
         try:
-            # Read CSV.
-            csv_content = csv_file.read().decode('utf-8')
-            reader = csv.DictReader(csv_content.splitlines())
+            # Streamed, not read() into memory. iterdecode keeps peak memory
+            # proportional to one row rather than to the whole file.
+            reader = csv.DictReader(codecs.iterdecode(csv_file, 'utf-8'))
 
             # Iterate rows.
             for row_num, row in enumerate(reader, start=2):
+                if row_num - 1 > MAX_IMPORT_ROWS:
+                    errors.append(
+                        f'Se ha alcanzado el límite de {MAX_IMPORT_ROWS} filas; '
+                        f'el resto del archivo se ha ignorado.')
+                    error_count += 1
+                    break
                 try:
-                    # Parse values.
-                    student_name = row.get('Nombre_Estudiante') or row.get(
-                        'student_name', '').strip()
-                    subject_name = row.get('Asignatura') or row.get(
-                        'subject_name', '').strip()
-                    trimester_name = row.get('Trimestre') or row.get(
-                        'trimester_name', '').strip()
-                    school_year_str = row.get('Año_Escolar') or row.get(
-                        'school_year', '').strip()
-                    grade_value = float(row.get('Nota') or row.get('grade', 0))
-                    grade_type = (row.get('Tipo_Nota') or row.get(
-                        'grade_type', 'examen')).strip()
-                    grade_type_number = int(
-                        row.get('Numero_Tipo_Nota') or row.get('grade_type_number', 0) or 0)
-                    comments = (row.get('Comentarios')
-                                or row.get('comments', '')).strip()
+                    # `or` binds tighter than the method call, so
+                    # `a or b.strip()` only ever strips the fallback. Wrap the
+                    # whole expression instead.
+                    student_name = _cell(row, 'Nombre_Estudiante', 'student_name')
+                    subject_name = _cell(row, 'Asignatura', 'subject_name')
+                    trimester_name = _cell(row, 'Trimestre', 'trimester_name')
+                    school_year_str = _cell(row, 'Año_Escolar', 'school_year')
+                    grade_raw = _cell(row, 'Nota', 'grade')
+                    grade_type = _cell(row, 'Tipo_Nota', 'grade_type') or 'examen'
+                    number_raw = _cell(row, 'Numero_Tipo_Nota', 'grade_type_number')
+                    comments = _cell(row, 'Comentarios', 'comments')
 
-                    # Get Student and Subject.
-                    student = Students.objects.get(Name=student_name)
+                    # A blank grade used to import as 0.0, silently recording a
+                    # zero for every row the teacher left empty in the template.
+                    if not grade_raw:
+                        errors.append(f'Fila {row_num}: falta la nota.')
+                        error_count += 1
+                        continue
+                    grade_value = float(grade_raw.replace(',', '.'))
+                    grade_type_number = int(number_raw or 0)
+
+                    # Scoped: a professor may only write grades for students
+                    # they actually teach, whatever the uploaded file names.
+                    student = importable_students.get(Name=student_name)
                     subject = Subjects.objects.get(Name=subject_name)
+                    # Looked up, never created: an upload must not be able to
+                    # invent school years or trimesters.
+                    school_year = School_year.objects.get(year=school_year_str)
+                    trimester = Trimester.objects.get(
+                        Name=int(trimester_name), school_year=school_year)
 
-                    # Get or create School Year.
-                    school_year, _ = School_year.objects.get_or_create(
-                        year=school_year_str,
-                        defaults={'year': school_year_str}
-                    )
-
-                    # Get or create Trimester.
-                    trimester, _ = Trimester.objects.get_or_create(
-                        Name=int(trimester_name),
-                        school_year=school_year,
-                        defaults={'Name': int(
-                            trimester_name), 'school_year': school_year}
-                    )
-
-                    # Update or Create Grade.
-                    grade, created = Grade.objects.update_or_create(
-                        student=student,
-                        subject=subject,
-                        trimester=trimester,
-                        school_year=school_year,
-                        grade_type=grade_type,
-                        grade_type_number=grade_type_number,
-                        defaults={
-                            'grade': grade_value,
-                            'comments': comments,
-                        }
-                    )
+                    with transaction.atomic():
+                        key = dict(
+                            student=student, subject=subject,
+                            trimester=trimester, school_year=school_year,
+                            grade_type=grade_type,
+                            grade_type_number=grade_type_number)
+                        grade = Grade.objects.filter(**key).first()
+                        created = grade is None
+                        if created:
+                            grade = Grade(**key)
+                        grade.grade = grade_value
+                        grade.comments = comments
+                        # update_or_create skips validators entirely, which is
+                        # how out-of-range grades and invalid grade types got in.
+                        grade.full_clean()
+                        grade.save()
 
                     if created:
                         created_count += 1
@@ -1104,15 +1505,33 @@ def import_grades(request, course_id=None):
 
                 except Students.DoesNotExist:
                     errors.append(
-                        f"Row {row_num}: Student '{student_name}' not found")
+                        f'Fila {row_num}: alumno no encontrado o fuera de tu clase.')
                     error_count += 1
                 except Subjects.DoesNotExist:
+                    errors.append(f'Fila {row_num}: asignatura no encontrada.')
+                    error_count += 1
+                except School_year.DoesNotExist:
+                    errors.append(f'Fila {row_num}: año escolar no encontrado.')
+                    error_count += 1
+                except Trimester.DoesNotExist:
                     errors.append(
-                        f"Row {row_num}: Subject '{subject_name}' not found")
+                        f'Fila {row_num}: trimestre no encontrado para ese año.')
+                    error_count += 1
+                except ValidationError:
+                    errors.append(
+                        f'Fila {row_num}: valores no válidos '
+                        f'(nota fuera de 0-10, o tipo de nota incorrecto).')
+                    error_count += 1
+                except (ValueError, TypeError):
+                    errors.append(f'Fila {row_num}: formato numérico no válido.')
                     error_count += 1
                 except Exception:
-                    errors.append(f"Row {row_num}: An error occurred processing this row.")
+                    errors.append(f'Fila {row_num}: error al procesar la fila.')
                     error_count += 1
+
+            audit(request, 'grades.import', created=created_count,
+                  updated=updated_count, errors=error_count,
+                  course_id=course.pk if course else None)
 
             # Show summary.
             if created_count > 0:
@@ -1137,12 +1556,9 @@ def import_grades(request, course_id=None):
     return render(request, 'mainapp/import_grades.html', context)
 
 
-@login_required
+@role_required('administrator')
 def adminage_dashboard_view(request):
     profile = request.user.profile
-    # Restrict to administrator.
-    if profile.role != 'administrator':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     context = {
         'title': 'School Admin Dashboard',
@@ -1154,12 +1570,9 @@ def adminage_dashboard_view(request):
 # =======================================================
 # --- VIEW 1: CREATE SCHOOL YEAR ---
 # =======================================================
-@login_required
+@role_required('administrator')
 def create_school_year_view(request):
     profile = request.user.profile
-    # Restrict to administrator.
-    if profile.role != 'administrator':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     # Handle POST.
     if request.method == 'POST':
@@ -1200,12 +1613,9 @@ def create_school_year_view(request):
 # =======================================================
 # --- VIEW 2: CREATE COURSE SECTIONS (Multi-Step) ---
 # =======================================================
-@login_required
+@role_required('administrator')
 def create_courses_sections_view(request):
     profile = request.user.profile
-    # Restrict to administrator.
-    if profile.role != 'administrator':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
 
     # Get School Year ID.
     school_year_id = request.GET.get('school_year_id')
@@ -1302,10 +1712,7 @@ def create_courses_sections_view(request):
 
 # Helper to render Step 2
 def _render_step2(request, course_tipo, school_year, form_main, formset=None):
-    profile = request.user.profile
-    if profile.role != 'administrator':
-        return render(request, "forbidden.html", {"user": request.user, "profile": profile})
-
+    # No gate: only called from create_courses_sections_view, already gated.
     if not formset:
         CourseFormSet = formset_factory(CourseSectionForm, extra=0)
         initial_data = []
@@ -1328,7 +1735,7 @@ def _render_step2(request, course_tipo, school_year, form_main, formset=None):
     return render(request, "adminage/create_courses_step2.html", context)
 
 
-@login_required
+@role_required('administrator')
 def assign_subjects_view(request):
     """
     Complex view to assign subject/teacher to multiple trimesters,
@@ -1505,7 +1912,7 @@ def assign_subjects_view(request):
 # =======================================================
 # B. Endpoint AJAX para Carga Dinámica de Secciones
 # =======================================================
-@login_required
+@role_required('administrator')
 def load_course_sections(request):
     """
     Endpoint AJAX para devolver los niveles o las secciones finales de un curso en cascada.
@@ -1573,7 +1980,7 @@ def load_course_sections(request):
 # =======================================================
 # --- SINGLE VIEW: CREATE STUDENT AND ASSIGN CLASS ---
 # =======================================================
-@login_required
+@role_required('administrator')
 def create_and_assign_student_view(request):
     """
     Creates a new student and assigns them to a course section.
@@ -1609,6 +2016,8 @@ def create_and_assign_student_view(request):
                 else:
                     # 1. Create Student.
                     new_student = current_form.save()
+                    audit(request, 'student.create',
+                          student_id=new_student.pk)
 
                     # 2. Create Relation (Students_Courses).
                     Students_Courses.objects.create(
@@ -1637,6 +2046,7 @@ def create_and_assign_student_view(request):
     return render(request, "adminage/create_and_assign_student.html", context)
 
 
+@role_required('administrator')
 def reassign_students(request):
     """
     Main view to reassign students from one class to another.
@@ -1645,6 +2055,7 @@ def reassign_students(request):
         # Process reassignment.
         # List of "student_id:course_id"
         assignments = request.POST.getlist('assignments')
+        audit(request, 'roster.reassign', count=len(assignments))
 
         success_count = 0
         error_count = 0
@@ -1702,6 +2113,7 @@ def reassign_students(request):
     return render(request, 'reassign_students.html', context)
 
 
+@role_required('administrator')
 def ajax_get_course_numbers(request):
     """
     AJAX endpoint to get available course numbers
@@ -1745,6 +2157,7 @@ def ajax_get_course_numbers(request):
         return JsonResponse({'numbers': [], 'error': 'An error occurred retrieving course numbers.'})
 
 
+@role_required('administrator')
 def ajax_get_course_sections(request):
     """
     AJAX endpoint to get available sections (letters)
@@ -1790,6 +2203,7 @@ def ajax_get_course_sections(request):
         return JsonResponse({'sections': [], 'error': 'An error occurred retrieving sections.'})
 
 
+@role_required('administrator')
 def ajax_get_students(request):
     """
     AJAX endpoint to get students of a specific class.
@@ -1835,6 +2249,7 @@ def ajax_get_students(request):
         return JsonResponse({'students': [], 'error': 'An error occurred retrieving students.'})
 
 
+@role_required('administrator')
 def ajax_get_destination_courses(request):
     """
     AJAX endpoint to get destination course ID.

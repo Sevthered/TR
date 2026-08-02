@@ -1,0 +1,90 @@
+{% extends "base_v2.html" %}
+
+{% comment %}
+  The direction C shell: a 224px rule-separated nav beside the page. Rebuilt
+  pages extend this; base_v2 stays a bare document for anything that wants no
+  chrome. Nothing here invents a count — the legacy sidebar's hardcoded lists
+  are exactly what this replaces.
+{% endcomment %}
+
+{% block shell %}
+<div class="grid grid-cols-1 md:grid-cols-[224px_minmax(0,1fr)] min-h-screen">
+
+  <nav class="flex flex-col border-b md:border-b-0 md:border-r border-line md:sticky md:top-0 md:h-screen"
+       aria-label="Principal">
+    <div class="flex items-center gap-2.5 h-[52px] px-pad border-b border-line shrink-0">
+      <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                   text-accent-lift text-[10px] font-bold">TR</span>
+      <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+    </div>
+
+    <div class="hidden md:block pt-[18px] pb-1.5">
+      <span class="lbl block px-pad pb-2.5">Docencia</span>
+      {% comment %}
+        The three literals mirror Course.COURSE_TYPE_CHOICES, which is a fixed
+        schema enum. Counts are deliberately absent: nothing in this context
+        knows them, and an invented one is how the first mockup went wrong.
+      {% endcomment %}
+      <a href="{% url 'teacher_dashboard' %}"
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
+                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Mis clases</a>
+      <a href="{% url 'section_courses' section='eso' %}"
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
+                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Eso</a>
+      <a href="{% url 'section_courses' section='bachillerato' %}"
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
+                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">Bachillerato</a>
+      <a href="{% url 'section_courses' section='ib' %}"
+         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] text-ink-2
+                border-l-2 border-transparent hover:text-ink hover:bg-white/[.03]">IB</a>
+    </div>
+
+    {% if scope.course %}
+    <div class="hidden md:block pt-[18px] pb-1.5">
+      <span class="lbl block px-pad pb-2.5">Esta clase</span>
+      <span class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px] font-semibold
+                   text-ink bg-accent-dim border-l-2 border-accent" aria-current="page">
+        {{ scope.course }}
+        <span class="ml-auto fig text-[11px] text-accent-lift">{{ metrics.enrolled }}</span>
+      </span>
+    </div>
+    {% endif %}
+
+    <div class="hidden md:flex items-center gap-2.5 mt-auto px-pad py-[13px] border-t border-line">
+      <span class="grid place-items-center w-[26px] h-[26px] rounded shrink-0 border border-line-2
+                   text-ink-2 text-[10px] font-bold">{{ user.username|slice:":2"|upper }}</span>
+      <span class="min-w-0">
+        <b class="block text-[12.5px] font-semibold truncate">
+          {% firstof user.profile.teacher.Name user.get_full_name user.username %}</b>
+        <span class="block text-[11.5px] text-ink-3 truncate">@{{ user.username }} · {{ user.profile.get_role_display }}</span>
+      </span>
+    </div>
+  </nav>
+
+  <div class="flex flex-col min-w-0">
+    <header class="sticky top-0 z-10 flex items-center gap-3.5 h-[52px] shrink-0 px-pad
+                   border-b border-line bg-ground">
+      <span class="text-[12.5px] text-ink-3 truncate">{% block breadcrumb %}{% endblock breadcrumb %}</span>
+      <form action="{% url 'search_students' %}" method="get"
+            class="ml-auto hidden sm:flex items-center gap-2 w-[250px] px-2.5 py-1.5
+                   border border-line-2 rounded-[5px] focus-within:border-accent">
+        <input type="search" name="q" placeholder="Buscar alumn@" aria-label="Buscar alumn@"
+               class="flex-1 min-w-0 bg-transparent text-[12.5px] text-ink outline-none
+                      placeholder:text-ink-3">
+      </form>
+    </header>
+
+    {% if messages %}
+    <div class="border-b border-line shrink-0">
+      {% for message in messages %}
+      <div class="px-pad py-3 text-[12.5px] {% if message.tags == 'error' %}text-bad{% else %}text-ink-2{% endif %}">
+        {{ message }}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% block main %}{% endblock main %}
+  </div>
+</div>
+{% endblock shell %}

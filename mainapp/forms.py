@@ -25,17 +25,26 @@ class GradeForm(forms.ModelForm):
         self.fields['school_year'].queryset = School_year.objects.all().order_by(
             '-year')
 
-        # 2. Empty trimester queryset on creation
-        if not self.instance or not self.instance.pk:
+        # 2. Trimesters are fetched by AJAX once a school year is picked, so
+        # the queryset has to follow whichever year is in play: the submitted
+        # one when the form is bound, the instance's on edit, none on a blank
+        # create form. Scoping it here is also what stops a crafted POST from
+        # pairing a trimester with a school year it does not belong to.
+        school_year = None
+        if self.is_bound:
+            school_year = School_year.objects.filter(
+                pk=self.data.get('school_year') or None).first()
+        elif self.instance and self.instance.pk:
+            school_year = self.instance.school_year
+
+        if school_year:
+            self.fields['trimester'].queryset = Trimester.objects.filter(
+                school_year=school_year
+            ).order_by('Name')
+        else:
             self.fields['trimester'].queryset = Trimester.objects.none()
             self.fields['trimester'].empty_label = "Select a school year"
             self.fields['trimester'].widget.attrs['disabled'] = True
-
-        # 3. Limit queryset on edit
-        elif self.instance.school_year:
-            self.fields['trimester'].queryset = Trimester.objects.filter(
-                school_year=self.instance.school_year
-            ).order_by('Name')
 
 
 class AusenciaEditForm(forms.ModelForm):
@@ -54,15 +63,16 @@ class AusenciaForm(forms.ModelForm):
     # Extra field for selecting multiple students.
     students = forms.ModelMultipleChoiceField(
         queryset=Students.objects.none(),
-        widget=forms.SelectMultiple(attrs={'size': 6}),
+        widget=forms.SelectMultiple(attrs={'size': 6, 'class': 'ctl'}),
         required=True,
-        label='Students'
+        label='Estudiante(s)'
     )
     # Extra field for date/time.
     date_time = forms.DateTimeField(
         required=False,
-        widget=forms.DateTimeInput(attrs={'type': 'datetime-local'}),
-        label='Date and Time'
+        widget=forms.DateTimeInput(
+            attrs={'type': 'datetime-local', 'class': 'ctl'}),
+        label='Fecha y hora'
     )
 
     class Meta:
@@ -71,6 +81,20 @@ class AusenciaForm(forms.ModelForm):
 
     def __init__(self, *args, course=None, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # The Meta fields render as bare selects, and their labels default to
+        # the model's English field names on a Spanish-language page. `ctl` is
+        # the v2 control style (see static/css/src/app.css); it is harmless on
+        # the legacy pages, which do not define the class.
+        meta_labels = {
+            'subject': 'Materia',
+            'trimester': 'Trimestre',
+            'school_year': 'Año escolar',
+            'Tipo': 'Tipo',
+        }
+        for name, label in meta_labels.items():
+            self.fields[name].widget.attrs.setdefault('class', 'ctl')
+            self.fields[name].label = label
 
         # Handle course ID or object.
         if course is not None:
@@ -191,12 +215,6 @@ class CourseCreationForm(forms.Form):
                         "Invalid school year.")
 
         return cleaned_data
-
-
-class GradeForm(forms.ModelForm):
-    class Meta:
-        model = Grade
-        fields = '__all__'
 
 
 class SubjectAssignmentForm(forms.Form):
