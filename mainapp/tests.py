@@ -1941,3 +1941,301 @@ class WriteFormTemplateTests(V2CascadeAssertions, AccessControlTestCase):
         response = self.as_(self.professor).get(self.ausencia_url())
 
         self.assertContains(response, 'class="ctl"')
+
+
+class StudentDashboardTemplateTests(V2CascadeAssertions, AccessControlTestCase):
+    """`student_dashboard_content` migrated onto base_shell_v2.
+
+    The largest of the four pages left on `base.html`, the destination both
+    write forms redirect to, and the only migrated template reached by three
+    different roles — a professor at `/students/<id>/dashboard/`, and a student
+    or tutor through the include in `student_file.html`.
+
+    Two things make it worth pinning beyond the cascade. Its role branching is
+    an authorization surface rendered in a template: a student reaching an
+    "Editar" link would be a real widening, not a cosmetic one. And every one
+    of its filter controls was a `data-autosubmit` select or a `data-href`
+    button, all of which are inert on a v2 page and silently so.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # A second trimester of the same year, so "filter down to nothing" is
+        # expressible without inventing a year the fixtures do not have.
+        cls.other_trimester = Trimester.objects.create(
+            Name=2, school_year=cls.year)
+        # One failing, unnumbered, commented grade and one carrying a real
+        # grade_type_number, so "0 means unnumbered" is testable against a
+        # row where the number is genuinely an ordinal.
+        cls.grade = Grade.objects.create(
+            student=cls.student, subject=cls.subject, trimester=cls.trimester,
+            school_year=cls.year, grade=Decimal('2.66'), grade_type='examen',
+            grade_type_number=0, comments='Mala nota')
+        cls.numbered_grade = Grade.objects.create(
+            student=cls.student, subject=cls.subject, trimester=cls.trimester,
+            school_year=cls.year, grade=Decimal('7.5'), grade_type='parcial',
+            grade_type_number=3)
+        cls.ausencia = Ausencias.objects.create(
+            student=cls.student, subject=cls.subject, trimester=cls.trimester,
+            school_year=cls.year, Tipo='Retraso')
+
+    def url(self, query=''):
+        return f'/students/{self.student.pk}/dashboard/{query}'
+
+    def scoped(self):
+        return (f'?school_year_id={self.year.pk}'
+                f'&trimester_id={self.trimester.pk}')
+
+    # --- the cascade -------------------------------------------------------
+
+    def test_the_student_dashboard_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.professor).get(self.url())
+
+        self.assertTemplateUsed(
+            response, 'mainapp/student_dashboard_content.html')
+        self.assertTemplateUsed(response, 'mainapp/_student_record.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_cascade_holds_once_the_filters_are_applied(self):
+        """The filtered page renders different branches — scope-bar active
+        states, empty tables — so a leaked comment can hide in either one."""
+        response = self.as_(self.professor).get(self.url(self.scoped()))
+
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_record_partial_is_shell_free_so_it_stays_includable(self):
+        """`student_file.html` includes the record for the student and tutor
+        roles. An `{%` `extends %}` or a block in the partial would drag a whole
+        second document into that page — which is the bug the split exists to
+        remove, and it renders without erroring, so only this catches it.
+        """
+        from django.template.loader import get_template
+
+        source = get_template('mainapp/_student_record.html').template.source
+
+        self.assertNotIn('{% extends', source)
+        self.assertNotIn('{% block', source)
+        # The same partial renders under two routes, so it must filter itself
+        # rather than name one of them.
+        self.assertNotIn("{% url 'student_dashboard_content'", source)
+        self.assertNotIn("{% url 'student_dashboard'", source)
+        self.assertIn('href="?', source)
+
+    # --- the filters -------------------------------------------------------
+
+    def test_the_filters_are_links_rather_than_scripted_selects(self):
+        """Both were `<select data-autosubmit>`, which base_v2 cannot run.
+
+        Real hrefs produce the same URLs the view already reads, need no
+        JavaScript, and give the CSP nothing to block.
+        """
+        response = self.as_(self.professor).get(
+            self.url(f'?school_year_id={self.year.pk}'))
+
+        self.assertContains(
+            response, f'href="?school_year_id={self.year.pk}"')
+        self.assertContains(
+            response,
+            f'href="?school_year_id={self.year.pk}'
+            f'&amp;trimester_id={self.trimester.pk}"')
+        self.assertNotContains(response, 'data-autosubmit')
+        self.assertNotContains(response, '<select')
+
+    def test_the_trimester_links_wait_for_a_year_to_be_chosen(self):
+        """A trimester belongs to one year, and the view offers none until a
+        year is picked. The legacy control was a *disabled* select; saying why
+        beats rendering a dead one."""
+        response = self.as_(self.professor).get(self.url())
+
+        self.assertNotContains(response, 'trimester_id=')
+        self.assertContains(response, 'Elige un año escolar')
+
+    def test_a_year_link_never_carries_a_trimester_of_the_year_it_leaves(self):
+        """`student_dashboard_content` does not validate `trimester_id` against
+        the year, so a stale one would silently empty both tables rather than
+        being dropped. The year links therefore carry no trimester at all."""
+        import re
+
+        response = self.as_(self.professor).get(self.url(self.scoped()))
+        body = response.content.decode()
+
+        year_links = [h for h in re.findall(r'href="\?([^"]*)"', body)
+                      if 'school_year_id' in h and 'trimester_id' not in h]
+        self.assertIn(f'school_year_id={self.year.pk}', year_links)
+
+    def test_the_tutor_filter_links_all_carry_the_selected_child(self):
+        """A tutor's child lives in `?child=` alone and is re-read per request.
+        Drop it from one link and the tutor silently jumps back to their first
+        child on the next filter click."""
+        import re
+
+        response = self.as_(self.tutor).get('/student/?child=0')
+        body = response.content.decode()
+
+        self.assertContains(response, 'href="?child=0"')
+        self.assertContains(
+            response, f'href="?child=0&amp;school_year_id={self.year.pk}"')
+        for href in re.findall(r'href="\?([^"]*)"', body):
+            self.assertTrue(
+                href.startswith('child=0'),
+                f'filter link {href!r} loses the tutor\'s selected child')
+
+    def test_the_csv_link_carries_the_filter_on_screen(self):
+        """Otherwise the exported file and the visible table disagree."""
+        response = self.as_(self.professor).get(self.url(self.scoped()))
+
+        self.assertContains(
+            response,
+            f'/grades/csv/{self.student.pk}/?school_year_id={self.year.pk}'
+            f'&amp;trimester_id={self.trimester.pk}')
+
+    # --- role branching ----------------------------------------------------
+
+    def test_only_a_professor_gets_the_write_actions(self):
+        response = self.as_(self.professor).get(self.url())
+
+        self.assertContains(
+            response, f'/student/{self.student.pk}/grade/new/')
+        self.assertContains(
+            response, f'/student/{self.student.pk}/ausencia/new/')
+        self.assertContains(response, f'/student/edit/grade/{self.grade.pk}/')
+        self.assertContains(
+            response, f'/student/edit/ausencia/{self.ausencia.pk}/')
+
+    def test_a_student_reaches_no_write_route_and_no_editar_link(self):
+        response = self.as_(self.pupil).get('/student/')
+
+        # The page did render for them — otherwise the assertions below pass
+        # vacuously on an empty or forbidden response.
+        self.assertContains(response, 'Mala nota')
+        self.assertNotContains(response, 'Editar')
+        self.assertNotContains(response, 'grade/new/')
+        self.assertNotContains(response, 'ausencia/new/')
+        self.assertNotContains(response, '/student/edit/')
+
+    def test_a_tutor_reaches_no_write_route_and_no_editar_link(self):
+        response = self.as_(self.tutor).get('/student/?child=0')
+
+        self.assertContains(response, 'Mala nota')
+        self.assertNotContains(response, 'Editar')
+        self.assertNotContains(response, 'grade/new/')
+        self.assertNotContains(response, 'ausencia/new/')
+        self.assertNotContains(response, '/student/edit/')
+
+    def test_each_role_gets_its_own_csv_endpoint(self):
+        """Three roles, three different exports — a professor's is scoped to
+        the student on screen, the other two to the caller."""
+        professor = self.as_(self.professor).get(self.url())
+        self.assertContains(professor, f'/grades/csv/{self.student.pk}/')
+        self.assertContains(professor, 'Descargar notas CSV')
+
+        pupil = self.as_(self.pupil).get('/student/')
+        self.assertContains(pupil, 'Descargar mis notas CSV')
+        self.assertNotContains(pupil, f'/grades/csv/{self.student.pk}/')
+
+        tutor = self.as_(self.tutor).get('/student/?child=0')
+        self.assertContains(tutor, 'Descargar las notas de mis hij@s CSV')
+        self.assertNotContains(tutor, f'/grades/csv/{self.student.pk}/')
+
+    # --- the tables --------------------------------------------------------
+
+    def test_zero_means_unnumbered_rather_than_the_first_one(self):
+        """`grade_type_number` defaults to 0 and 0 is *unnumbered*. Printing a
+        bare 0 beside a 3 would read as an ordinal."""
+        import re
+
+        response = self.as_(self.professor).get(self.url())
+        body = response.content.decode()
+
+        # The "Nº tipo" cells, in row order: the unnumbered grade says so in
+        # words, the numbered one prints its number and never a 0.
+        cells = [c.strip() for c in
+                 re.findall(r'fig text-\[12\.5px\]\s*\n\s*text-ink-[23]">'
+                            r'\s*([^<]*)</div>', body)]
+        self.assertIn('único', cells)
+        self.assertIn('3', cells)
+        self.assertNotIn('0', cells)
+
+    def test_a_failing_grade_is_marked_and_the_locale_is_respected(self):
+        """< 5 is a convention this page has always applied; it is carried
+        over as `text-bad`, neither invented nor dropped. es-ES renders the
+        decimal with a comma on the page — the CSV keeps the dot."""
+        response = self.as_(self.professor).get(self.url())
+
+        self.assertContains(response, 'text-bad')
+        self.assertContains(response, '2,66')
+
+    def test_the_two_absence_types_do_not_look_alike(self):
+        Ausencias.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year, Tipo='Ausencia',
+            date_time=timezone.now() + timedelta(days=1))
+        response = self.as_(self.professor).get(self.url())
+
+        self.assertContains(response, '>Retraso<')
+        self.assertContains(response, '>Ausencia<')
+        self.assertContains(response, 'bg-bad-dim')
+
+    # --- empty states ------------------------------------------------------
+
+    def test_the_empty_states_span_every_column_they_sit_under(self):
+        """The legacy colspans were 7 and 6 against 8 and 6 columns, so a
+        professor's empty grades row stopped one column short of its table."""
+        response = self.as_(self.professor).get(self.url(
+            f'?school_year_id={self.year.pk}'
+            f'&trimester_id={self.other_trimester.pk}'))
+
+        self.assertContains(
+            response, 'No hay notas para el filtro seleccionado.')
+        self.assertContains(
+            response, 'No hay ausencias para el filtro seleccionado.')
+        self.assertEqual(
+            self._table_shapes(response.content.decode()), [(8, 8), (6, 6)])
+
+    def test_a_student_sees_one_column_fewer_and_the_colspans_follow(self):
+        """No "Acciones" column for a student, so the same empty rows have to
+        span 7 and 5 instead."""
+        response = self.as_(self.pupil).get(
+            f'/student/?school_year_id={self.year.pk}'
+            f'&trimester_id={self.other_trimester.pk}')
+
+        self.assertEqual(
+            self._table_shapes(response.content.decode()), [(7, 7), (5, 5)])
+
+    @staticmethod
+    def _table_shapes(body):
+        """(header columns, empty-row colspan) for each table, in order."""
+        import re
+
+        headers = [t.count('<th ')
+                   for t in re.findall(r'<thead>(.*?)</thead>', body, re.S)]
+        spans = [int(s) for s in re.findall(r'colspan="(\d+)"', body)]
+        return list(zip(headers, spans))
+
+    # --- the back link -----------------------------------------------------
+
+    def test_the_back_link_is_scoped_to_the_teachers_own_courses(self):
+        """It replaces a `<button data-action="back">`, and the id arrives in
+        the URL, so it is resolved against `teacher_courses` rather than
+        trusted. A foreign or unparseable id yields no link, not an error."""
+        mine = self.as_(self.professor).get(
+            self.url(f'?course={self.course.pk}'))
+        self.assertContains(
+            mine, f'href="/class/{self.course.pk}/dashboard/"')
+
+        theirs = self.as_(self.professor).get(
+            self.url(f'?course={self.other_course.pk}'))
+        self.assertNotContains(
+            theirs, f'/class/{self.other_course.pk}/dashboard/')
+        self.assertContains(theirs, 'Alumn@s')
+
+        junk = self.as_(self.professor).get(self.url('?course=abc'))
+        self.assertEqual(junk.status_code, 200)
+        self.assertContains(junk, 'Alumn@s')

@@ -1,0 +1,315 @@
+{% comment %}
+  One student's record: the filter bar, the grades table and the absences
+  table. Direction C · Registro.
+
+  ---------------------------------------------------------------------------
+  CONTRACT — a second page depends on this file. Read before changing it.
+  ---------------------------------------------------------------------------
+
+  Shell-free on purpose: no `extends`, no blocks, no page title, no breadcrumb,
+  no <h1>. It is safe to include from any page, and it is included from two,
+  under two different routes:
+
+    * mainapp/student_dashboard_content.html — the professor's page, at
+      /students/<id>/dashboard/, via `student_dashboard_content`.
+    * mainapp/student_file.html — the student and tutor view, at /student/,
+      via `student_detail`.
+
+  It reads these names from the surrounding context, and BOTH views supply
+  all of them:
+
+    student, grades, ausencias
+    all_school_years, available_trimesters
+    selected_year_id, selected_trimester_id
+    is_tutor, selected_child          -- so the filter links keep ?child=
+    user.profile.role                 -- the role branching below
+
+  Two rules that are not optional:
+
+  * The filter links are PATH-RELATIVE (href="?school_year_id=...") and must
+    never be built with the `url` tag. The same markup renders under two
+    different routes, and each must filter itself rather than redirect to the
+    other. The legacy <form action=""> submitted to the current path for
+    exactly this reason.
+  * student_file.html includes this with `student=... grades=... ausencias=...`
+    overriding those three names for the selected child. Do not read the same
+    data under any other name, or a tutor's child view silently shows a
+    different person's record.
+
+  ---------------------------------------------------------------------------
+
+  Four legacy controls were rebuilt rather than restyled. base_v2 loads htmx
+  and nothing else, so `behaviors.js` is absent and every hook below was dead
+  markup — silently, with no console error:
+
+  * two `<select data-autosubmit>` filters → rows of real <a href> links, the
+    same control _class_scope.html and section_courses.html already use.
+  * `<button data-action="back">` → the page's breadcrumb (it is page chrome,
+    so it lives in student_dashboard_content.html, not here).
+  * roughly eight `<button data-href="...">` → real <a href>. A button that
+    navigates is a link wearing the wrong element.
+
+  Deliberately absent: any average, rate or total the views do not compute.
+  The two counts shown are `|length` of the very lists rendered beneath them,
+  so they are scoped exactly like the filter above them and assert nothing
+  about the schema. A grade count in particular has no denominator — `Grade`
+  is unique per (…, grade_type, grade_type_number), so it is unbounded.
+{% endcomment %}
+
+{% comment %}
+  Scope bar. The year and the trimester are the two filters both views read.
+
+  `child` is carried through every link. A tutor's selected child lives in that
+  param alone and is re-read on each request — drop it from one link and the
+  tutor silently jumps back to their first child.
+
+  Changing the year drops `trimester_id` on purpose. A trimester belongs to one
+  year, so keeping it would filter against a trimester of the year just left:
+  `student_detail` validates that away, but `student_dashboard_content` does
+  not and would quietly show two empty tables.
+{% endcomment %}
+<div class="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 shrink-0 px-pad py-3 border-y border-line">
+  <span class="lbl">Año escolar</span>
+  {% if all_school_years %}
+  <div class="flex rounded-[5px] border border-line-2 overflow-hidden" role="group" aria-label="Año escolar">
+    <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}{% endif %}"
+       class="px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+              {% if not selected_year_id %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+       {% if not selected_year_id %}aria-current="true"{% endif %}>Todos</a>
+    {% for year in all_school_years %}
+    <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}&amp;{% endif %}school_year_id={{ year.SchoolYearID }}"
+       class="fig px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+              {% if year.SchoolYearID == selected_year_id %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+       {% if year.SchoolYearID == selected_year_id %}aria-current="true"{% endif %}>{{ year.year }}</a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <span class="text-[12px] text-ink-3">No hay años escolares registrados.</span>
+  {% endif %}
+
+  <span class="lbl">Trimestre</span>
+  {% if selected_year_id %}
+  <div class="flex rounded-[5px] border border-line-2 overflow-hidden" role="group" aria-label="Trimestre">
+    <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}&amp;{% endif %}school_year_id={{ selected_year_id }}"
+       class="px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+              {% if not selected_trimester_id %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+       {% if not selected_trimester_id %}aria-current="true"{% endif %}>Todos</a>
+    {% for trimester in available_trimesters %}
+    <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}&amp;{% endif %}school_year_id={{ selected_year_id }}&amp;trimester_id={{ trimester.TrimesterID }}"
+       class="px-3.5 py-[5px] text-[12px] border-r border-line-2 last:border-r-0
+              {% if trimester.TrimesterID == selected_trimester_id %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink{% endif %}"
+       {% if trimester.TrimesterID == selected_trimester_id %}aria-current="true"{% endif %}>T{{ trimester.Name }}</a>
+    {% endfor %}
+  </div>
+  {% else %}
+  {# The legacy control was a disabled <select>; say why instead of showing a dead one. #}
+  <span class="text-[12px] text-ink-3">Elige un año escolar para filtrar por trimestre.</span>
+  {% endif %}
+</div>
+
+{% comment %}
+  Operations. Each role gets exactly what it got before — a student or tutor
+  must not reach a create or edit route — and the CSV link differs per role
+  because the endpoint does. `request.GET.urlencode` keeps the export matching
+  the filter on screen; without it the file and the page disagree.
+{% endcomment %}
+<div class="flex flex-wrap shrink-0 px-pad border-b border-line">
+  {% if user.profile.role == 'professor' %}
+  <a href="{% url 'grade_create' student_id=student.StudentID %}"
+     class="py-[11px] pr-[15px] text-[12.5px] text-accent-lift hover:border-b-2 hover:border-accent -mb-px">Nueva nota</a>
+  <a href="{% url 'ausencia_create' student_id=student.StudentID %}"
+     class="px-[15px] py-[11px] text-[12.5px] text-accent-lift hover:border-b-2 hover:border-accent -mb-px">Nueva ausencia</a>
+  <a href="{% url 'grades_csv_student' student_id=student.StudentID %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+     class="px-[15px] py-[11px] text-[12.5px] text-ink-2 hover:text-ink">Descargar notas CSV</a>
+  {% elif user.profile.role == 'student' %}
+  <a href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+     class="py-[11px] pr-[15px] text-[12.5px] text-ink-2 hover:text-ink">Descargar mis notas CSV</a>
+  {% elif user.profile.role == 'tutor' %}
+  <a href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+     class="py-[11px] pr-[15px] text-[12.5px] text-ink-2 hover:text-ink">Descargar las notas de mis hij@s CSV</a>
+  {% endif %}
+</div>
+
+{% comment %}
+  Notas. Same row treatment as the class register: 56px rows, 1px rules, and a
+  2px left rule on the identifying column that the accent lights on hover,
+  standing in for the icon tile direction C does not have.
+
+  No Nº column here, unlike the register: these rows are ordered by trimester
+  rather than alphabetically, so a position would number nothing a reader
+  could use.
+{% endcomment %}
+<section class="flex flex-col min-w-0" aria-labelledby="notas-h">
+  <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+    <span class="lbl" id="notas-h">Notas</span>
+    {# A count of the rows below, filtered exactly as they are — not a schema claim. #}
+    <span class="ml-auto fig text-[11px] text-ink-3">{{ grades|length }}</span>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr>
+          <th scope="col" class="text-left pl-pad pr-3 py-2 border-y border-line lbl">Año escolar</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Trim.</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Asignatura</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Tipo</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Nº tipo</th>
+          <th scope="col" class="text-right px-3 py-2 border-y border-line lbl">Nota</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Comentario</th>
+          {% if user.profile.role == 'professor' %}
+          <th scope="col" class="text-right pl-3 pr-pad py-2 border-y border-line lbl">Acciones</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for grade in grades %}
+        <tr class="group">
+          <td class="h-row p-0 border-b border-line">
+            <div class="pl-pad pr-3 fig text-[12px] text-ink-2">{{ grade.school_year.year|default:"—" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3 fig text-[12px] text-ink-2">
+              {% if grade.trimester %}T{{ grade.trimester.Name }}{% else %}—{% endif %}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3">
+              <b class="block pl-[11px] border-l-2 border-line-2 text-[13.5px] font-semibold tracking-[-.01em]
+                        group-hover:border-accent group-hover:text-accent-lift">
+                {{ grade.subject.Name|default:"—" }}</b>
+            </div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3 text-[12.5px] text-ink-2">{{ grade.grade_type|default:"—" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            {% comment %}
+              grade_type_number defaults to 0, and 0 means *unnumbered* — not
+              "the first one". The legacy page said so and this must keep
+              saying so, or a reader counts from the wrong place.
+            {% endcomment %}
+            <div class="px-3 fig text-[12.5px]
+                        {% if grade.grade_type_number %}text-ink-2{% else %}text-ink-3{% endif %}">
+              {% if grade.grade_type_number %}{{ grade.grade_type_number }}{% else %}único{% endif %}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line text-right">
+            {# < 5 is a template convention this page has always applied, not a schema rule. #}
+            <div class="px-3 fig text-[14.5px] font-semibold tracking-[-.02em]
+                        {% if grade.grade < 5 %}text-bad{% endif %}">{{ grade.grade }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3 max-w-[280px] text-[12.5px] truncate
+                        {% if grade.comments %}text-ink-2{% else %}text-ink-3{% endif %}"
+                 title="{{ grade.comments }}">
+              {{ grade.comments|default:"Sin comentario" }}</div>
+          </td>
+          {% if user.profile.role == 'professor' %}
+          <td class="h-row p-0 border-b border-line text-right">
+            <div class="pl-3 pr-pad">
+              <a href="{% url 'grade_edit' grade_id=grade.id %}"
+                 class="text-[12.5px] text-ink-3 hover:text-accent-lift">Editar</a>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr>
+          {% comment %}
+            The legacy colspans were 7 and 6 against 8 and 6 columns, so the
+            professor's empty grades row stopped one column short of its table.
+          {% endcomment %}
+          <td colspan="{% if user.profile.role == 'professor' %}8{% else %}7{% endif %}"
+              class="h-row px-pad border-b border-line text-[12.5px] text-ink-3">
+            No hay notas para el filtro seleccionado.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="shrink-0 px-pad py-[11px] border-b border-line text-[11.5px] text-ink-3">
+    Cada alumn@ admite <b class="text-ink-2 font-medium">varias notas</b> por asignatura, tipo y trimestre,
+    así que este recuento no tiene un total previsto. «Nº tipo» en blanco se muestra como «único».
+  </div>
+</section>
+
+{# ---------- ausencias ---------- #}
+<section class="flex flex-col min-w-0 flex-1" aria-labelledby="ausencias-h">
+  <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[22px] pb-3">
+    <span class="lbl" id="ausencias-h">Ausencias y retrasos</span>
+    <span class="ml-auto fig text-[11px] text-ink-3">{{ ausencias|length }}</span>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr>
+          <th scope="col" class="text-left pl-pad pr-3 py-2 border-y border-line lbl">Año escolar</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Trim.</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Fecha y hora</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Asignatura</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Tipo</th>
+          {% if user.profile.role == 'professor' %}
+          <th scope="col" class="text-right pl-3 pr-pad py-2 border-y border-line lbl">Acciones</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for ausencia in ausencias %}
+        <tr class="group">
+          <td class="h-row p-0 border-b border-line">
+            <div class="pl-pad pr-3 fig text-[12px] text-ink-2">{{ ausencia.school_year.year|default:"—" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3 fig text-[12px] text-ink-2">
+              {% if ausencia.trimester %}T{{ ausencia.trimester.Name }}{% else %}—{% endif %}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3 fig text-[12.5px] whitespace-nowrap">{{ ausencia.date_time|date:"d/m/Y H:i" }}</div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            <div class="px-3">
+              <b class="block pl-[11px] border-l-2 border-line-2 text-[13.5px] font-semibold tracking-[-.01em]
+                        group-hover:border-accent group-hover:text-accent-lift">
+                {{ ausencia.subject.Name|default:"—" }}</b>
+            </div>
+          </td>
+          <td class="h-row p-0 border-b border-line">
+            {% comment %}
+              Ausencias.AUSENCIAS_TYPE_CHOICES is Ausencia / Retraso. The two
+              read as chips rather than as coloured text, matching the
+              register's Estado column; they must not look interchangeable.
+            {% endcomment %}
+            <div class="px-3">
+              {% if ausencia.Tipo == 'Retraso' %}
+              <span class="text-[11px] font-semibold px-2.5 py-[3px] rounded border border-line-2 text-ink-2">Retraso</span>
+              {% elif ausencia.Tipo == 'Ausencia' %}
+              <span class="text-[11px] font-semibold px-2.5 py-[3px] rounded bg-bad-dim text-bad">Ausencia</span>
+              {% else %}
+              <span class="text-[11px] font-semibold px-2.5 py-[3px] rounded text-ink-3">{{ ausencia.Tipo }}</span>
+              {% endif %}
+            </div>
+          </td>
+          {% if user.profile.role == 'professor' %}
+          <td class="h-row p-0 border-b border-line text-right">
+            <div class="pl-3 pr-pad">
+              <a href="{% url 'ausencia_edit' ausencia_id=ausencia.id %}"
+                 class="text-[12.5px] text-ink-3 hover:text-accent-lift">Editar</a>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="{% if user.profile.role == 'professor' %}6{% else %}5{% endif %}"
+              class="h-row px-pad border-b border-line text-[12.5px] text-ink-3">
+            No hay ausencias para el filtro seleccionado.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+  <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+</section>
