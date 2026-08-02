@@ -222,3 +222,7 @@ staticfiles/
 
 # Node toolchain (Tailwind build)
 node_modules/
+# Without the slash too: a git worktree symlinks node_modules back to the
+# main checkout rather than installing its own, and "node_modules/" does not
+# match a symlink.
+node_modules
