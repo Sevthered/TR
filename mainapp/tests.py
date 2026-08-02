@@ -1552,16 +1552,22 @@ class V2CascadeAssertions:
         self.assertNotContains(response, 'onclick=', status_code=status_code)
         self.assertNotContains(response, 'onchange=', status_code=status_code)
 
+    # Every hook behaviors.js binds. Read off that file rather than recalled:
+    # `data-href` was missing from this list until the write-form slice, and it
+    # is the one the legacy pages use most — every "button" that is really a
+    # link is a `<button data-href>`.
+    INERT_HOOKS = ('data-action', 'data-href', 'data-autosubmit')
+
     def assert_no_inert_js_hooks(self, response, status_code=200):
         """base_v2 loads htmx and nothing else — `behaviors.js` is not there.
 
-        So a `data-action` or `data-autosubmit` attribute on a v2 page is dead
-        markup: the click or change does nothing, and nothing says so. No
-        console error, no failed request, no visual difference.
+        So any of these attributes on a v2 page is dead markup: the click or
+        change does nothing, and nothing says so. No console error, no failed
+        request, no visual difference.
         """
         self.assertNotContains(response, 'behaviors.js', status_code=status_code)
-        self.assertNotContains(response, 'data-action', status_code=status_code)
-        self.assertNotContains(response, 'data-autosubmit', status_code=status_code)
+        for hook in self.INERT_HOOKS:
+            self.assertNotContains(response, hook, status_code=status_code)
 
     def assert_no_leaked_template_comments(self, response, status_code=200):
         """`{# #}` is single-line only — spread it over two and Django renders
