@@ -1662,3 +1662,85 @@ class MigratedPageTemplateTests(AccessControlTestCase):
 
         self.assertNotContains(
             response, 'no está vinculada a ningún registro', status_code=403)
+
+
+class TeacherDashboardTemplateTests(AccessControlTestCase):
+    """The professor's landing page, second off base.html.
+
+    The year control is the interesting part: the legacy page used a
+    `<select data-autosubmit>`, and base_v2 loads htmx and nothing else — so
+    that control would have been inert on the rebuilt page."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.bach = Course.objects.create(
+            Tipo='Bachillerato', Section='1A', school_year=cls.year)
+        Subjects_Courses.objects.create(
+            subject=cls.subject, teacher=cls.teacher_a, course=cls.bach,
+            trimester=cls.trimester)
+        cls.old_year = School_year.objects.create(year='2024-2025')
+
+    def get(self, query=''):
+        return self.as_(self.professor).get(f'/teacher/{query}')
+
+    def test_page_is_built_on_the_v2_cascade_only(self):
+        response = self.get()
+
+        self.assertTemplateUsed(response, 'base_v2.html')
+        self.assertContains(response, 'css/tailwind.css')
+        for legacy in ('css/navbar.css', 'css/sidebar.css',
+                       'css/site-pages.css', 'css/global-styles.css'):
+            self.assertNotContains(response, legacy)
+
+    def test_the_year_control_is_links_not_an_inert_select(self):
+        """behaviors.js is not loaded on a v2 page, so data-autosubmit would
+        do nothing and the teacher could not change the year at all."""
+        response = self.get()
+
+        self.assertNotContains(response, 'data-autosubmit')
+        self.assertContains(response, f'href="?school_year={self.year.pk}"')
+        self.assertContains(response, f'href="?school_year={self.old_year.pk}"')
+
+    def test_the_counts_are_per_type(self):
+        response = self.get()
+
+        self.assertEqual(len(response.context['eso_courses']), 1)
+        self.assertEqual(len(response.context['bachillerato_courses']), 1)
+        self.assertEqual(len(response.context['ib_courses']), 0)
+        self.assertEqual(len(response.context['courses']), 2)
+
+    def test_an_empty_group_says_which_group_is_empty(self):
+        """Three identical "no hay cursos" lines tell a teacher nothing."""
+        response = self.get()
+
+        self.assertContains(response, 'ninguna clase de IB')
+        self.assertNotContains(response, 'ninguna clase de Eso')
+
+    def test_a_year_with_no_classes_is_not_an_error(self):
+        response = self.get(f'?school_year={self.old_year.pk}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['courses']), 0)
+        self.assertEqual(response.context['selected_school_year'], self.old_year)
+
+    def test_an_unknown_year_falls_back_instead_of_raising(self):
+        """Stale bookmarks are routine; the newest year is a better page than
+        a 500. Same rule as resolve_class_scope."""
+        response = self.get('?school_year=999999')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['selected_school_year'], self.year)
+
+    def test_the_nav_marks_the_page_you_are_on(self):
+        response = self.get()
+
+        self.assertContains(response, 'aria-current="page"')
+
+    def test_it_still_lists_only_this_teachers_classes(self):
+        """The rebuild must not widen the scope the security work narrowed."""
+        response = self.get()
+
+        sections = [c.CourseID for c in response.context['courses']]
+        self.assertIn(self.course.CourseID, sections)
+        self.assertNotIn(self.other_course.CourseID, sections)
