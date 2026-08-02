@@ -1,0 +1,47 @@
+{% extends "base_v2.html" %}
+
+{% block page_title %}base_v2 · comprobación{% endblock page_title %}
+
+{% block content %}
+<div class="p-pad max-w-3xl">
+  <h1 class="text-[18px] font-semibold tracking-tight">base_v2</h1>
+  <p class="text-ink-2 mt-1">Comprobación del paquete: Tailwind compilado y HTMX alojado localmente.</p>
+
+  <div class="lbl mt-8 mb-3">Fondo y reglas</div>
+  <div class="border border-line">
+    <div class="h-row flex items-center px-pad border-b border-line">
+      <span class="w-40 text-ink-2">Elevación</span>
+      <span>Sólo reglas de 1px — sin sombras, sin escalones de luminosidad.</span>
+    </div>
+    <div class="h-row flex items-center px-pad border-b border-line-2">
+      <span class="w-40 text-ink-2">Regla secundaria</span>
+      <span class="fig">--color-line-2</span>
+    </div>
+    <div class="h-row flex items-center px-pad">
+      <span class="w-40 text-ink-2">Numerales</span>
+      <span class="fig">2,66 · 1234567890</span>
+    </div>
+  </div>
+
+  <div class="lbl mt-8 mb-3">Acento y semántica</div>
+  <div class="flex gap-2 items-center">
+    <button class="h-9 px-4 bg-accent text-ground font-semibold rounded-sm">Acción principal</button>
+    <span class="px-2 py-1 bg-accent-dim text-accent-lift fig text-[11px] border border-accent">T1</span>
+    <span class="text-bad fig">2,66</span>
+  </div>
+
+  <div class="lbl mt-8 mb-3">HTMX</div>
+  <div id="htmx-probe"
+       hx-get="{% url 'ui_preview' %}"
+       hx-select="#htmx-payload span"
+       hx-target="#htmx-probe"
+       hx-swap="innerHTML"
+       hx-trigger="load"
+       class="text-ink-3">
+    Sin respuesta todavía.
+  </div>
+  <div id="htmx-payload" class="hidden">
+    <span class="text-accent-lift">HTMX respondió: petición hx-get servida y sustituida.</span>
+  </div>
+</div>
+{% endblock content %}

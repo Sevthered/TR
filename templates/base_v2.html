@@ -1,0 +1,47 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block page_title %}{% endblock page_title %}</title>
+
+  {% comment %}
+    Deliberately none of the four legacy stylesheets. Tailwind's Preflight and
+    the 1,312 lines in navbar/sidebar/site-pages/global-styles collide, so the
+    two cascades are kept apart: rebuilt pages extend this file, legacy pages
+    keep base.html. Delete base.html when the last page migrates.
+    See wiki/decisions/ui-overhaul.md.
+  {% endcomment %}
+  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
+  {% block styles %}{% endblock styles %}
+
+  {% comment %}
+    Vendored, not CDN: script-src is 'self' with no 'unsafe-inline'. Stay on
+    hx-get / hx-post — hx-on: attributes eval strings and violate the policy.
+  {% endcomment %}
+  <script src="{% static 'js/vendor/htmx-2.0.10.min.js' %}" defer></script>
+  {% block head_scripts %}{% endblock head_scripts %}
+</head>
+
+<body class="bg-ground text-ink font-sans antialiased">
+  {% block shell %}
+  <main id="page" class="min-h-screen">
+    {% if messages %}
+    <div class="border-b border-line">
+      {% for message in messages %}
+      <div class="px-pad py-3 text-[13px] {% if message.tags == 'error' %}text-bad{% else %}text-ink-2{% endif %}">
+        {{ message }}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% block content %}{% endblock content %}
+  </main>
+  {% endblock shell %}
+
+  {% block scripts %}{% endblock scripts %}
+</body>
+
+</html>

@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* Tailwind v4 auto-detects sources from this file's directory upward, which
+   would miss the two template roots. Name them explicitly. */
+@source "../../../templates";
+@source "../../../mainapp/templates";
+
+/* Direction C · Registro — the pinned spec. See wiki/decisions/ui-overhaul.md
+   and wiki/design/design-reference-dna.md. Elevation is 1px rules only: no
+   shadows, no surface-lightness steps, no icon tiles. */
+@theme {
+  /* neutrals: dark slate with a slight blue bias — not void black */
+  --color-ground: #101318;
+  --color-line: #212630;
+  --color-line-2: #2E3542;
+  --color-ink: #E4E7EC;
+  --color-ink-2: #98A0AD;
+  --color-ink-3: #626B79;
+
+  /* one accent: ink blue. institutional, not instrument-panel */
+  --color-accent: #4C7DD9;
+  --color-accent-lift: #6B95E4;
+  --color-accent-dim: rgba(76, 125, 217, 0.13);
+
+  /* semantic, kept separate from the accent */
+  --color-bad: #DD6E66;
+  --color-bad-dim: rgba(221, 110, 102, 0.12);
+
+  --spacing-row: 56px;
+  --spacing-pad: 24px;
+
+  /* system stacks on purpose: the CSP blocks font CDNs, so a webfont URL
+     would fall back silently and the built pages would not match the mockup */
+  --font-sans: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+}
+
+@utility lbl {
+  /* labels are sans small-caps, NOT letterspaced mono — mono reads terminal */
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+@utility fig {
+  /* mono is reserved for things that are literally figures or identifiers */
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@utility ruled {
+  /* The register continues below the last student as ruled blank lines, the
+     way a paper class register does — no markup, no invented rows. This is
+     direction C's answer to dead space, so it is a token, not a one-off. */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--spacing-row) - 1px),
+    var(--color-line) calc(var(--spacing-row) - 1px),
+    var(--color-line) var(--spacing-row)
+  );
+  opacity: 0.55;
+}
+
+@layer components {
+  /* Django renders these widgets itself, so the class is attached in
+     forms.py rather than in the template. */
+  .ctl {
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 1px solid var(--color-line-2);
+    border-radius: 5px;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+
+  .ctl:focus {
+    border-color: var(--color-accent);
+    outline: none;
+  }
+
+  select.ctl[multiple] {
+    padding: 0;
+  }
+
+  select.ctl option {
+    padding: 7px 10px;
+  }
+
+  select.ctl option:checked {
+    background: var(--color-accent-dim);
+    color: var(--color-accent-lift);
+  }
+
+  input.ctl[type="datetime-local"] {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+}
