@@ -1074,3 +1074,146 @@ class ClassDashboardHtmxTests(AccessControlTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'base_v2.html')
+
+
+class AusenciaFormScopeTests(AccessControlTestCase):
+    """Step 6: the absence panel is built from the ClassScope, not the Course.
+
+    Before this, the register could show two students under a subject while
+    the panel beside it offered three — two different answers to "who is in
+    this class" on one screen."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # A second student in the same course, so a narrowed roster has
+        # somebody to exclude.
+        cls.student_b = Students.objects.create(
+            Name='Christian Gonzalez', Email='christian@example.com')
+        cls.enrolment_b = Students_Courses.objects.create(
+            student=cls.student_b, course_section=cls.course)
+
+        cls.sc_t1 = Subjects_Courses.objects.get(
+            course=cls.course, trimester=cls.trimester)
+        # A subject taught in a different trimester of the same year.
+        cls.trimester_2 = Trimester.objects.create(
+            Name=2, school_year=cls.year)
+        cls.other_subject = Subjects.objects.create(Name='Fisica')
+        Subjects_Courses.objects.create(
+            subject=cls.other_subject, teacher=cls.teacher_a,
+            course=cls.course, trimester=cls.trimester_2)
+
+    def form_for(self, query=''):
+        response = self.as_(self.professor).get(
+            f'/class/{self.course.pk}/dashboard/{query}')
+        return response.context['ausencia_form'], response
+
+    def test_the_student_list_narrows_with_the_subject_roster(self):
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        form, _ = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
+
+        offered = list(form.fields['students'].queryset)
+        self.assertEqual(offered, [self.student])
+        self.assertNotIn(self.student_b, offered)
+
+    def test_without_a_subject_list_the_panel_offers_the_whole_group(self):
+        self.assertFalse(self.sc_t1.assigned_course_sections.exists())
+
+        form, _ = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
+
+        self.assertCountEqual(
+            list(form.fields['students'].queryset),
+            [self.student, self.student_b])
+
+    def test_the_panel_and_the_register_offer_the_same_roster(self):
+        """The defect this step closes is the two disagreeing."""
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        form, response = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
+
+        self.assertEqual(
+            list(form.fields['students'].queryset),
+            [row.student for row in response.context['metrics'].rows])
+
+    def test_the_subject_choices_are_this_trimester_only(self):
+        """Subjects_Courses carries a trimester FK, so Fisica in T2 is not on
+        offer while the page is showing T1."""
+        form, _ = self.form_for(f'?trimester_id={self.trimester.pk}')
+
+        offered = list(form.fields['subject'].queryset)
+        self.assertIn(self.subject, offered)
+        self.assertNotIn(self.other_subject, offered)
+
+    def test_the_scope_arrives_preselected(self):
+        """The page already states the trimester and the subject; making the
+        teacher pick them again is how the two drift apart."""
+        form, _ = self.form_for(
+            f'?trimester_id={self.trimester.pk}'
+            f'&subject_courses_id={self.sc_t1.pk}')
+
+        self.assertEqual(form.fields['trimester'].initial, self.trimester.pk)
+        self.assertEqual(form.fields['subject'].initial, self.subject.pk)
+
+    def test_the_subject_is_preselected_but_not_locked(self):
+        """An absence for another subject in the same trimester stays one
+        submit away."""
+        second = Subjects.objects.create(Name='Lengua')
+        Subjects_Courses.objects.create(
+            subject=second, teacher=self.teacher_a,
+            course=self.course, trimester=self.trimester)
+
+        form, _ = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
+
+        self.assertIn(second, list(form.fields['subject'].queryset))
+
+    def test_the_school_year_is_still_fixed_by_the_course(self):
+        form, _ = self.form_for()
+
+        self.assertEqual(list(form.fields['school_year'].queryset), [self.year])
+        self.assertEqual(form.fields['school_year'].initial, self.year)
+
+    def test_a_student_outside_the_scoped_roster_is_rejected(self):
+        """The narrowing is validation, not only display: the POST carries the
+        same scope in its query string."""
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        response = self.as_(self.professor).post(
+            f'/class/{self.course.pk}/dashboard/'
+            f'?subject_courses_id={self.sc_t1.pk}',
+            {
+                'students': [self.student_b.pk],
+                'subject': self.subject.pk,
+                'trimester': self.trimester.pk,
+                'school_year': self.year.pk,
+                'Tipo': 'Ausencia',
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Ausencias.objects.filter(student=self.student_b).exists())
+
+    def test_a_student_inside_the_scoped_roster_is_accepted(self):
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        response = self.as_(self.professor).post(
+            f'/class/{self.course.pk}/dashboard/'
+            f'?subject_courses_id={self.sc_t1.pk}',
+            {
+                'students': [self.student.pk],
+                'subject': self.subject.pk,
+                'trimester': self.trimester.pk,
+                'school_year': self.year.pk,
+                'Tipo': 'Ausencia',
+            })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Ausencias.objects.filter(student=self.student).exists())
+
+    def test_the_panel_says_which_roster_it_is_offering(self):
+        """Two students on offer where the course has three is correct, but
+        only legible if the panel admits which list it is using."""
+        self.sc_t1.assigned_course_sections.set([self.enrolment])
+
+        _, response = self.form_for(f'?subject_courses_id={self.sc_t1.pk}')
+
+        self.assertContains(response, 'Solo la lista propia de Matematicas')

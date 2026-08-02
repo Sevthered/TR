@@ -208,8 +208,21 @@
 
   {# ---------- absence panel ---------- #}
   <aside class="flex flex-col min-w-0" aria-labelledby="aus-h">
-    <div class="flex items-center shrink-0 px-pad pt-[15px] pb-3.5 border-b border-line">
+    {% comment %}
+      The panel is built from the same scope as the register, so the student
+      list narrows with the subject. Say which list is on offer: two students
+      here while the course has three is correct, but only legible if the
+      panel admits which roster it is using.
+    {% endcomment %}
+    <div class="flex flex-col gap-1 shrink-0 px-pad pt-[15px] pb-3.5 border-b border-line">
       <span class="lbl" id="aus-h">Crear ausencia</span>
+      <span class="text-[11.5px] text-ink-3">
+        {% if scope.roster_source == 'subject' %}
+          Solo la lista propia de {{ scope.subject.Name }}
+        {% else %}
+          Todo el grupo · T{{ scope.trimester.Name }}
+        {% endif %}
+      </span>
     </div>
 
     <form method="post" novalidate class="flex flex-col gap-[15px] px-pad pt-[18px] pb-6">

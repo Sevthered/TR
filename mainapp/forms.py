@@ -79,7 +79,21 @@ class AusenciaForm(forms.ModelForm):
         model = Ausencias
         fields = ['subject', 'trimester', 'school_year', 'Tipo']
 
-    def __init__(self, *args, course=None, **kwargs):
+    def __init__(self, *args, scope=None, **kwargs):
+        """`scope` is a views.ClassScope — the same one the page is reading.
+
+        The form used to be built from the Course alone, so it offered every
+        enrolled student and every subject the course has ever been taught,
+        while the register beside it showed a roster narrowed by the selected
+        subject. Two different answers to "who is in this class" on one screen.
+
+        Taking the scope instead means the choices on offer are the ones the
+        page is already claiming: `scope.students` is the register's roster,
+        and the subjects are the ones taught to this course *in this
+        trimester*. The trimester and subject arrive pre-selected, since the
+        page states both — but neither is locked, so an absence for another
+        subject in the same trimester is still one submit away.
+        """
         super().__init__(*args, **kwargs)
 
         # The Meta fields render as bare selects, and their labels default to
@@ -96,31 +110,29 @@ class AusenciaForm(forms.ModelForm):
             self.fields[name].widget.attrs.setdefault('class', 'ctl')
             self.fields[name].label = label
 
-        # Handle course ID or object.
-        if course is not None:
-            if not hasattr(course, 'CourseID'):
-                try:
-                    course = Course.objects.get(CourseID=course)
-                except Exception:
-                    course = None
+        if scope is not None:
+            # The register's roster, whichever of the two rules produced it.
+            # When a subject narrows it, this narrows with it — the panel must
+            # not offer a student the page has just said is not in the list.
+            self.fields['students'].queryset = scope.students
 
-        if course is not None:
-            # Filter students by course section.
-            self.fields['students'].queryset = Students.objects.filter(
-                students_courses__course_section=course).distinct().order_by('Name')
-
-            # Filter subjects by course.
+            # Subjects_Courses carries a trimester FK, so the subject set is
+            # per trimester. These are exactly the tabs in the scope bar.
             self.fields['subject'].queryset = Subjects.objects.filter(
-                subjects_courses__course=course).distinct()
+                pk__in=[sc.subject_id for sc in scope.subjects_courses]
+            ).order_by('Name')
+            if scope.subject_courses is not None:
+                self.fields['subject'].initial = scope.subject_courses.subject_id
 
-            # Filter School Year to the one associated with the course
+            # The school year is fixed by the course, never chosen.
             self.fields['school_year'].queryset = School_year.objects.filter(
-                pk=course.school_year.pk)
-            self.fields['school_year'].initial = course.school_year
+                pk=scope.school_year.pk)
+            self.fields['school_year'].initial = scope.school_year
 
-            # Filter Trimesters to those in the course's school year
             self.fields['trimester'].queryset = Trimester.objects.filter(
-                school_year=course.school_year).order_by('Name')
+                school_year=scope.school_year).order_by('Name')
+            if scope.trimester is not None:
+                self.fields['trimester'].initial = scope.trimester.pk
 
         # Set default date/time to now.
         if 'initial' not in kwargs or 'date_time' not in kwargs.get('initial', {}):

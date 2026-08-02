@@ -790,7 +790,7 @@ def class_dashboard(request, course_id):
     )
 
     if request.method == 'POST':
-        form = AusenciaForm(request.POST, course=course)
+        form = AusenciaForm(request.POST, scope=scope)
 
         if form.is_valid():
             students_selected = form.cleaned_data.get('students')
@@ -829,7 +829,7 @@ def class_dashboard(request, course_id):
         else:
             messages.error(request, 'Errores en el formulario de ausencia.')
     else:
-        form = AusenciaForm(course=course)
+        form = AusenciaForm(scope=scope)
 
     # A scope change arrives as a boosted GET from the scope bar and only needs
     # the fragment back. Anything else — a first load, a POST that failed
