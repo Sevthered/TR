@@ -974,8 +974,20 @@ def student_dashboard_content(request, student_id):
 
     # --- END FILTER LOGIC ---
 
-    # Check for return course.
-    return_course = request.GET.get('course')
+    # Where "back" goes. The legacy page had a <button data-action="back">,
+    # which is dead markup on a v2 page — `behaviors.js` is not loaded there —
+    # so the breadcrumb links to the class instead. The id arrives from the
+    # register's row links (`?course=`), i.e. from the URL, so resolve it
+    # against this teacher's own courses rather than trusting it: an
+    # unrecognised, non-numeric or unauthorised id simply yields no link.
+    return_course = None
+    return_course_id = request.GET.get('course')
+    if return_course_id:
+        try:
+            return_course = teacher_courses(profile.teacher).filter(
+                CourseID=int(return_course_id)).first()
+        except (TypeError, ValueError):
+            return_course = None
 
     # Prepare context.
     context = {

@@ -1,228 +1,45 @@
-{% extends "base.html" %}
-{% load static %}
+{% extends "base_shell_v2.html" %}
 
-{% block styles %}
-<link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-<style>
-    :root {
-        --surface-padding-vertical: 28px;
-        --surface-padding-horizontal: 20px;
-    }
+{% comment %}
+  Direction C · Registro. Migrated off base.html in stage 2.
 
-    .filter-form {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-        align-items: flex-end;
-        margin-bottom: 20px;
-        padding: 15px;
-        background-color: #1e1e1e;
-        border: 1px solid #444;
-        border-radius: 8px;
-    }
+  The professor's view of one student, at /students/<id>/dashboard/, and where
+  both write forms redirect after a save.
 
-    .filter-form .form-group {
-        display: flex;
-        flex-direction: column;
-    }
+  This file is only the page chrome — breadcrumb, title, the student's
+  identity. The record itself lives in `_student_record.html`, because
+  `student_file.html` renders the same three tables for the student and tutor
+  roles and must be able to include them without dragging a second document in
+  with them. That split is the one `class_dashboard.html` / `_class_scope.html`
+  already use; the partial carries the contract for both callers, so read it
+  before changing what this page passes down.
 
-    .filter-form label {
-        font-size: 0.85rem;
-        font-weight: 600;
-        margin-bottom: 5px;
-        color: var(--muted-color);
-    }
+  Everything below the identity block is context-driven, and the view supplies
+  every name the partial names. Nothing is passed through `with`: the professor
+  view already puts `student`, `grades` and `ausencias` in the context under
+  exactly those names.
+{% endcomment %}
 
-    .filter-form select {
-        width: auto;
-        min-width: 200px;
-        margin-bottom: 0;
-    }
+{% block page_title %}{{ student.Name }}{% endblock page_title %}
 
-    .filter-form a {
-        margin-bottom: 8px;
-    }
-</style>
-{% endblock styles %}
+{% comment %}
+  The breadcrumb replaces a `<button data-action="back">`, which base_v2 cannot
+  run — `behaviors.js` is not loaded there, so the button was dead markup with
+  no console error to say so. `return_course` is resolved in the view against
+  this teacher's own courses, so a foreign or unparseable `?course=` yields the
+  plain label rather than a link or an error.
+{% endcomment %}
+{% block breadcrumb %}{% if user.profile.role == 'professor' %}{% if return_course %}<a class="hover:text-ink" href="{% url 'class_dashboard' return_course.CourseID %}">{{ return_course }}</a>{% else %}Alumn@s{% endif %}{% else %}Expediente{% endif %} / <b class="text-ink-2 font-medium">{{ student.Name }}</b>{% endblock breadcrumb %}
 
-{% block content %}
-<div class="page-root">
-    <div class="page-surface" role="main" aria-labelledby="student-name">
-        {% if user.is_authenticated and user.profile.role == 'professor' %}
-        <p>
-            <button type="button" class="btn-back" data-action="back">← Volver</button>
-        </p>
-        {% endif %}
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
 
-        <h2 id="student-name">{{ student.Name }}</h2>
-        <p><strong>Email:</strong> {{ student.Email }}</p>
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">{{ student.Name }}</h1>
+    <span class="fig text-[12.5px] text-ink-3">{{ student.Email }}</span>
+  </div>
 
-        <!-- FORMULARIO DE FILTROS -->
-        <form method="get" action="" class="filter-form">
-            {% if is_tutor and selected_child is not None %}
-            <!-- Preservar la selección del hijo en tutores -->
-            <input type="hidden" name="child" value="{{ selected_child }}">
-            {% endif %}
+  {% include "mainapp/_student_record.html" %}
 
-            <div class="form-group">
-                <label for="id_school_year">Año Escolar:</label>
-                <select name="school_year_id" id="id_school_year" data-autosubmit>
-                    <option value="">-- Todos los Años --</option>
-                    {% if all_school_years %}
-                    {% for year in all_school_years %}
-                    <option value="{{ year.SchoolYearID }}" {% if year.SchoolYearID == selected_year_id %}selected{% endif %}>
-                        {{ year.year }}
-                    </option>
-                    {% endfor %}
-                    {% else %}
-                    <option value="" disabled>No hay años escolares registrados</option>
-                    {% endif %}
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="id_trimester">Trimestre:</label>
-                <select name="trimester_id" id="id_trimester" data-autosubmit {% if not selected_year_id %}disabled{% endif %}>
-                    <option value="">-- Todos los Trimestres --</option>
-                    {% for trimester in available_trimesters %}
-                    <option value="{{ trimester.TrimesterID }}" {% if trimester.TrimesterID == selected_trimester_id %}selected{% endif %}>
-                        Trimestre {{ trimester.Name }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
-
-            <a href="?{% if is_tutor and selected_child is not None %}child={{ selected_child }}{% endif %}">Limpiar
-                Filtros</a>
-        </form>
-
-        <!-- SECCIÓN DE NOTAS -->
-        <h2>Notas</h2>
-        {% if user.is_authenticated and user.profile.role == 'professor' %}
-        <div style="margin-bottom: 15px;">
-            <button type="button" class="btn btn-success"
-                data-href="{% url 'grade_create' student_id=student.StudentID %}">
-                Crear Notas
-            </button>
-            <button type="button" class="btn btn-primary"
-                data-href="{% url 'grades_csv_student' student_id=student.StudentID %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
-                style="margin-left: 10px;">
-                Descargar Notas CSV
-            </button>
-        </div>
-        {% elif user.is_authenticated and user.profile.role == 'student' %}
-        <div style="margin-bottom: 15px;">
-            <button type="button" class="btn btn-primary"
-                data-href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">
-                Descargar Mis Notas CSV
-            </button>
-        </div>
-        {% elif user.is_authenticated and user.profile.role == 'tutor' %}
-        <div style="margin-bottom: 15px;">
-            <button type="button" class="btn btn-primary"
-                data-href="{% url 'grades_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">
-                Descargar Notas de Mis Hijos CSV
-            </button>
-        </div>
-        {% endif %}
-
-        <div class="table-wrap">
-            <table class="table student-table" aria-describedby="grades-note">
-                <thead>
-                    <tr>
-                        <th>Año Escolar</th>
-                        <th>Trimestre</th>
-                        <th>Asignatura</th>
-                        <th>Tipo</th>
-                        <th>Num. Tipo</th>
-                        <th>Nota</th>
-                        <th>Comentario</th>
-                        {% if user.is_authenticated and user.profile.role == 'professor' %}
-                        <th>Acciones</th>
-                        {% endif %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for grade in grades %}
-                    <tr>
-                        <td>{{ grade.school_year.year|default:"N/A" }}</td>
-                        <td>{{ grade.trimester.Name|default:"N/A" }}</td>
-                        <td>{{ grade.subject.Name|default:"N/A" }}</td>
-                        <td>{{ grade.grade_type|default:"N/A" }}</td>
-                        <td>{% if grade.grade_type_number %}{{ grade.grade_type_number }}{% else %}unico{% endif %}</td>
-                        <td class="{% if grade.grade < 5 %}grade-fail{% endif %}">
-                            {{ grade.grade }}
-                        </td>
-                        <td class="comment-cell">
-                            {{ grade.comments|default:"No hay comentario" }}
-                        </td>
-                        {% if user.is_authenticated and user.profile.role == 'professor' %}
-                        <td>
-                            <button type="button" class="btn-edit"
-                                data-href="{% url 'grade_edit' grade_id=grade.id %}">Editar</button>
-                        </td>
-                        {% endif %}
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="7" id="grades-note">No hay notas disponibles para los filtros seleccionados.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <!-- SECCIÓN DE AUSENCIAS -->
-        <h2>Ausencias</h2>
-        {% if user.is_authenticated and user.profile.role == 'professor' %}
-        <button type="button" class="btn btn-success"
-            data-href="{% url 'ausencia_create' student_id=student.StudentID %}">
-            Crear Ausencia
-        </button>
-        <br><br>
-        {% endif %}
-
-        <div class="table-wrap">
-            <table class="table student-table" aria-describedby="absences-note">
-                <thead>
-                    <tr>
-                        <th>Año Escolar</th>
-                        <th>Trimestre</th>
-                        <th>Fecha y Hora</th>
-                        <th>Materia</th>
-                        <th>Tipo</th>
-                        {% if user.is_authenticated and user.profile.role == 'professor' %}
-                        <th>Acciones</th>
-                        {% endif %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ausencia in ausencias %}
-                    <tr>
-                        <td>{{ ausencia.school_year.year|default:"N/A" }}</td>
-                        <td>{{ ausencia.trimester.Name|default:"N/A" }}</td>
-                        <td>{{ ausencia.date_time|date:"d/m/Y H:i" }}</td>
-                        <td>{{ ausencia.subject.Name|default:"N/A" }}</td>
-                        <td
-                            class="{% if ausencia.Tipo == 'Retraso' %}absence-delay{% elif ausencia.Tipo == 'Ausencia' %}absence-absence{% endif %}">
-                            {{ ausencia.Tipo }}
-                        </td>
-                        {% if user.is_authenticated and user.profile.role == 'professor' %}
-                        <td>
-                            <button type="button" class="btn-edit"
-                                data-href="{% url 'ausencia_edit' ausencia_id=ausencia.id %}">Editar</button>
-                        </td>
-                        {% endif %}
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="6" id="absences-note">No hay ausencias registradas para los filtros seleccionados.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
 </div>
-{% endblock content %}
+{% endblock main %}
