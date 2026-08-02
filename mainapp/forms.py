@@ -310,17 +310,22 @@ class CourseCreationForm(forms.Form):
 class SubjectAssignmentForm(forms.Form):
     # Form for assigning subject and teacher.
 
+    # Spanish labels and `ctl` live here rather than in assign_subjects.html,
+    # because Django renders these two widgets itself — a class written into
+    # the template would never reach the <select>. Same reasoning as GradeForm.
     subject = forms.ModelChoiceField(
         queryset=Subjects.objects.all().order_by('Name'),
-        label="Subject",
-        empty_label="Select Subject",
+        label="Asignatura",
+        empty_label="Seleccione una asignatura",
+        widget=forms.Select(attrs={'class': 'ctl'}),
         required=True
     )
 
     teacher = forms.ModelChoiceField(
         queryset=Teachers.objects.all().order_by('Name'),
-        label="Professor",
-        empty_label="Select Professor",
+        label="Profesor",
+        empty_label="Seleccione un profesor",
+        widget=forms.Select(attrs={'class': 'ctl'}),
         required=True
     )
 
@@ -331,6 +336,21 @@ class StudentCreationForm(forms.ModelForm):
         model = Students
         fields = ['Name', 'Email']
         widgets = {
-            'Name': forms.TextInput(attrs={'placeholder': 'Full Student Name'}),
-            'Email': forms.EmailInput(attrs={'placeholder': 'Email Address'}),
+            'Name': forms.TextInput(attrs={'placeholder': 'Nombre y apellidos'}),
+            'Email': forms.EmailInput(attrs={'placeholder': 'correo@ejemplo.com'}),
         }
+
+    # The model fields are CapitalCase English, so with no override Django
+    # derives "Name" and "Email" from them and renders an English form on a
+    # Spanish page.
+    LABELS = {
+        'Name': 'Nombre',
+        'Email': 'Correo electrónico',
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        for name, label in self.LABELS.items():
+            self.fields[name].widget.attrs.setdefault('class', 'ctl')
+            self.fields[name].label = label

@@ -10,7 +10,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.forms import formset_factory
 from django.http import Http404, HttpResponse, JsonResponse
@@ -1891,7 +1891,7 @@ def assign_subjects_view(request):
 
         if not selected_course_id or not final_school_year_id:
             messages.error(
-                request, "Error: Select course and school year.")
+                request, "Selecciona un curso y un año escolar.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
         try:
@@ -1913,7 +1913,7 @@ def assign_subjects_view(request):
 
             if not trimester_ids_selected:
                 messages.error(
-                    request, "Error: Select at least one trimester.")
+                    request, "Selecciona al menos un trimestre.")
                 current_form = form
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
@@ -1924,7 +1924,7 @@ def assign_subjects_view(request):
                 )
             except ValueError:
                 messages.error(
-                    request, "Error: Invalid Trimester IDs.")
+                    request, "Los trimestres seleccionados no son válidos.")
                 current_form = form
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
@@ -1938,7 +1938,7 @@ def assign_subjects_view(request):
                     int(pk) for pk in assigned_students_courses_ids_selected if pk]
             except ValueError:
                 messages.error(
-                    request, "Error: Invalid Student IDs.")
+                    request, "Los alumn@s seleccionad@s no son válid@s.")
                 return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}&course_id={selected_course_id}')
 
             student_count = len(assigned_students_courses_ids)
@@ -1968,7 +1968,7 @@ def assign_subjects_view(request):
                         assigned_students_courses_ids)
 
                 messages.success(
-                    request, f"Assignment of {subject.Name} created/updated for {len(newly_created_objects)} trimester(s) and {student_count} students.")
+                    request, f"Asignatura {subject.Name} asignada en {len(newly_created_objects)} trimestre(s) para {student_count} alumn@(s).")
 
             else:
                 # If no students selected, clear ManyToMany.
@@ -1992,86 +1992,133 @@ def assign_subjects_view(request):
                 ).select_related('student').order_by('student__Name')
 
     # 3. Manejo del GET y Contexto Final
+
+    # The cascade is rendered server-side on every paint, so the page is
+    # usable before any JavaScript runs — the same fix GradeForm.__init__
+    # needed when it was ignoring `initial` and rendering an empty trimester
+    # select. htmx only saves the round trip between the three selects.
+    course_type = request.GET.get('course_type') or ''
+    level = request.GET.get('level') or ''
+
+    # Arriving with only ?course_id= — from a bookmark, or from the redirect
+    # this view does after a successful POST — is the normal case, and the
+    # type and level are recoverable from the course itself. This is what the
+    # old template's LEVEL_LOOKUP round trip was meant to do and never did.
+    if target_course:
+        course_type = course_type or target_course.Tipo
+        if not level and target_course.Section[:1].isdigit():
+            level = target_course.Section[:1]
+
     context = {
         'title': 'Asignar Asignaturas a Clases',
         'form': current_form,
         'course_types': course_types,
         'school_year_id': school_year_id,
         'selected_course_id': selected_course_id,
+        'selected_course_type': course_type,
         'current_school_year': current_school_year,
         'trimesters': trimesters,
         # Lista de registros de estudiante-curso
         'course_students_links': course_students_links,
     }
+    context.update(course_cascade_context(
+        school_year_id, course_type, level, selected_course_id))
     return render(request, "adminage/assign_subjects.html", context)
 
 
 # =======================================================
-# B. Endpoint AJAX para Carga Dinámica de Secciones
+# B. Endpoint htmx para la cascada Tipo -> Nivel -> Sección
 # =======================================================
-@role_required('administrator')
-def load_course_sections(request):
-    """
-    Endpoint AJAX para devolver los niveles o las secciones finales de un curso en cascada.
-    Se utiliza en el formulario de asignación de asignaturas y creación de estudiantes.
-    """
-    school_year_id = request.GET.get('school_year_id')
-    course_type = request.GET.get('course_type')
-    # Puede ser None o el número del nivel (ej: '1').
-    level = request.GET.get('level')
+def _course_levels(school_year_id, course_type):
+    """The levels of a course type that actually have a section created.
 
-    # Validación mínima de parámetros.
+    `MAIN_COURSES` fixes which levels a type may have (Eso 1-4, Bachillerato
+    and IB 1-2); this narrows that to the ones a `Course` row exists for, so
+    the select never offers a level with nothing behind it.
+    """
     if not school_year_id or not course_type:
-        return JsonResponse({'data': []})
+        return []
 
     try:
-        # Filtra todos los cursos disponibles para el año y tipo seleccionados.
-        sections_query = Course.objects.filter(
-            school_year__pk=school_year_id,
-            Tipo=course_type,
-        ).order_by('Section')
+        names = set(Course.objects.filter(
+            school_year__pk=school_year_id, Tipo=course_type
+        ).values_list('Section', flat=True))
+    except (ValueError, TypeError):
+        # A non-numeric id in the query string is a bad request, not a 500.
+        return []
 
-        # --- MODO 1: Devolver NIVELES (al seleccionar Tipo) ---
-        if not level:
-            # Obtiene todos los nombres de sección existentes (ej: '1A', '2B').
-            all_sections_names = sections_query.values_list(
-                'Section', flat=True).distinct()
+    return [{'value': str(lvl), 'text': f'{lvl}º {course_type}'}
+            for lvl in MAIN_COURSES.get(course_type, [])
+            if any(name.startswith(str(lvl)) for name in names)]
 
-            # Usa el diccionario de niveles principales.
-            main_levels = MAIN_COURSES.get(course_type, [])
-            available_levels = []
 
-            # Filtra solo los niveles principales que tienen al menos una subsección creada.
-            for lvl in main_levels:
-                lvl_str = str(lvl)
-                if any(s.startswith(lvl_str) for s in all_sections_names):
-                    available_levels.append({
-                        'value': lvl_str,
-                        'text': f'{lvl_str}º {course_type}'
-                    })
+def _course_sections(school_year_id, course_type, level):
+    """The final sections under one level, e.g. 1A and 1B under Eso 1."""
+    if not school_year_id or not course_type or not level:
+        return []
 
-            # Retorna los niveles disponibles.
-            return JsonResponse({'mode': 'LEVELS', 'data': available_levels})
+    try:
+        rows = Course.objects.filter(
+            school_year__pk=school_year_id, Tipo=course_type,
+            Section__startswith=level,
+        ).order_by('Section').values('CourseID', 'Section')
+        return [{'value': str(row['CourseID']), 'text': row['Section']}
+                for row in rows]
+    except (ValueError, TypeError):
+        return []
 
-        # --- MODO 2: Devolver SECCIONES FINALES (al seleccionar Nivel) ---
-        else:
-            # Filtra las secciones que empiezan con el nivel seleccionado (ej: '1A', '1B').
-            final_sections = sections_query.filter(
-                Section__startswith=level
-            ).values('CourseID', 'Section')
 
-            sections_data = []
-            for s in final_sections:
-                sections_data.append({
-                    'id': s['CourseID'],
-                    'text': s['Section'],
-                })
+def course_cascade_context(school_year_id, course_type, level, course_id):
+    """Everything `adminage/_course_dependents.html` needs, for either caller.
 
-            # Retorna las secciones finales.
-            return JsonResponse({'mode': 'SECTIONS', 'data': sections_data})
+    The partial is rendered two ways — inlined by assign_subjects.html on the
+    first paint, and returned by `load_course_sections` for the htmx swap — and
+    both go through this one function. That is what stops the two renderings
+    from drifting; `mainapp/_trimester_options.html` states the same rule for
+    the trimester cascade, where a mismatch would silently rename every option.
+    """
+    return {
+        'school_year_id': school_year_id,
+        'level_options': _course_levels(school_year_id, course_type),
+        'section_options': _course_sections(
+            school_year_id, course_type, level),
+        'selected_level': level or '',
+        'selected_course_id': str(course_id or ''),
+    }
 
-    except Exception:
-        return JsonResponse({'error': 'Internal server error processing request.'}, status=500)
+
+@role_required('administrator')
+def load_course_sections(request):
+    """The course cascade, as markup rather than JSON.
+
+    Same route and same `@role_required('administrator')` as before; only the
+    response shape changed. It now renders the two dependent selects and htmx
+    swaps them in, which is what `ajax_load_trimesters` does for the trimester
+    cascade — `base_v2` ships htmx and nothing else, so the jQuery that
+    consumed the old JSON is gone with `base.html`.
+
+    It returns the whole dependent block rather than a bare list of <option>s,
+    and that is deliberate. Changing the course type has to repopulate the
+    level select *and* clear the section select, which is two targets; htmx
+    allows one `hx-target` per element, and the out-of-band alternative cannot
+    be mixed with bare <option>s in one response, because htmx wraps a
+    fragment that starts with <option> in a <select> to make the browser parse
+    it at all. One block, one target, one response shape.
+
+    The `LEVEL_LOOKUP` mode the old template asked for is not reimplemented:
+    this view never had it. It was added template-side only in 56978a8, no
+    branch has ever read `course_id_lookup`, so the "restore the dropdowns from
+    a preselected ?course_id=" path has never once run. The rebuilt page does
+    that server-side from the query string instead, which is both simpler and
+    the only version that works before any JavaScript does.
+    """
+    context = course_cascade_context(
+        request.GET.get('school_year_id'),
+        request.GET.get('course_type'),
+        request.GET.get('level'),
+        request.GET.get('course_id'),
+    )
+    return render(request, 'adminage/_course_dependents.html', context)
 
 
 # =======================================================
@@ -2085,9 +2132,10 @@ def create_and_assign_student_view(request):
 
     course_types = Course.COURSE_TYPE_CHOICES
 
-    # Get latest school year ID for AJAX filters.
-    latest_school_year = School_year.objects.order_by(
-        '-year').only('pk').first()
+    # Not `.only('pk')` any more: the rebuilt page states which year it is
+    # filing the student under, and a deferred field would fetch the row a
+    # second time to say so.
+    latest_school_year = School_year.objects.order_by('-year').first()
     latest_school_year_id = str(
         latest_school_year.pk) if latest_school_year else ''
 
@@ -2102,14 +2150,14 @@ def create_and_assign_student_view(request):
 
             if not course_id:
                 messages.error(
-                    request, "Error: Select a course section to assign.")
+                    request, "Selecciona una sección a la que asignar.")
             else:
                 try:
                     # Get selected Course.
                     target_course = Course.objects.get(pk=course_id)
                 except Course.DoesNotExist:
                     messages.error(
-                        request, "Error: Invalid course section.")
+                        request, "La sección seleccionada no es válida.")
                 else:
                     # 1. Create Student.
                     new_student = current_form.save()
@@ -2123,20 +2171,40 @@ def create_and_assign_student_view(request):
                     )
 
                     messages.success(
-                        request, f"Student '{new_student.Name}' created and assigned to {target_course.Section}.")
+                        request, f"Alumn@ «{new_student.Name}» dad@ de alta y asignad@ a {target_course.Section}.")
 
                     # Redirect to clear form.
                     return redirect('create_and_assign_student')
 
         else:
             messages.error(
-                request, "Error: Check student data (Name/Email).")
+                request, "Revisa los datos del alumn@ (nombre y correo).")
+
+    # Every section of the current year, grouped by course type for <optgroup>.
+    #
+    # This replaces the three-step Tipo -> Nivel -> Sección cascade the page
+    # used to run through `load_course_sections`. The cascade cannot be made
+    # to work before JavaScript does *here*, unlike on assign_subjects: that
+    # page can fall back to submitting its filter bar as a GET, whereas this
+    # one is a single POST form and any GET round trip would either discard
+    # the name and e-mail already typed or put them in the query string. One
+    # grouped select needs no round trip at all, so there is nothing left to
+    # degrade. The counts below are `len()` of rows already fetched.
+    section_groups = []
+    for key, label in course_types:
+        courses = list(Course.objects.filter(
+            school_year__pk=latest_school_year_id, Tipo=key
+        ).order_by('Section')) if latest_school_year_id else []
+        if courses:
+            section_groups.append({'label': label, 'courses': courses})
 
     context = {
         'title': 'Create Student and Assign Class',
         'form': current_form,
         'course_types': course_types,
+        'current_school_year': latest_school_year,
         'current_school_year_id': latest_school_year_id,
+        'section_groups': section_groups,
         # Pass selected course ID if POST failed.
         'selected_course_id': request.POST.get('course_id', ''),
     }
@@ -2166,35 +2234,58 @@ def reassign_students(request):
                 student = Students.objects.get(StudentID=student_id)
                 new_course = Course.objects.get(CourseID=new_course_id)
 
-                # Find existing assignment.
+                # The enrolment being moved is the one for the destination's
+                # own school year, not "whichever row comes back first".
+                #
+                # Students_Courses is unique on (student, course_section), so a
+                # student holds one row per course and therefore one per year
+                # they have been enrolled. The previous lookup was
+                # `.filter(student=student).first()` with no ordering: it
+                # repointed an arbitrary enrolment, which for anyone who has
+                # progressed a year could be a previous year's class. It also
+                # went unnoticed because a student who has only ever been in
+                # one course has exactly one row, which is every student in a
+                # freshly seeded database.
                 existing_assignment = Students_Courses.objects.filter(
-                    student=student
-                ).first()
+                    student=student,
+                    course_section__school_year=new_course.school_year,
+                ).order_by('pk').first()
 
-                if existing_assignment:
-                    # Update existing.
-                    existing_assignment.course_section = new_course
-                    existing_assignment.save()
-                else:
-                    # Create new if not exists.
+                if existing_assignment is None:
+                    # No enrolment for that year yet: this is an addition, not
+                    # a move.
                     Students_Courses.objects.create(
                         student=student,
                         course_section=new_course
                     )
+                elif existing_assignment.course_section_id != new_course.pk:
+                    existing_assignment.course_section = new_course
+                    existing_assignment.save()
+                # else: already in the destination course. Repointing the row
+                # onto itself is a no-op, and counting it as an error would
+                # report a failure for a request that is already satisfied.
 
                 success_count += 1
 
-            except Exception as e:
+            except (Students.DoesNotExist, Course.DoesNotExist, ValueError):
+                # A malformed "sid:cid" pair, or an id naming nothing. The
+                # payload is built client-side, so this is a bad request
+                # rather than a server fault.
                 error_count += 1
-                messages.error(
-                    request, "Error reassigning student.")
+            except IntegrityError:
+                # unique_together on (student, course_section). Reachable if
+                # the student already holds a row for the destination course
+                # under a *different* year's enrolment being moved onto it.
+                error_count += 1
 
         if success_count > 0:
             messages.success(
-                request, f"{success_count} student(s) reassigned successfully.")
+                request,
+                f"{success_count} alumn@(s) reasignad@(s) correctamente.")
         if error_count > 0:
             messages.warning(
-                request, f"{error_count} error(s) during reassignment.")
+                request,
+                f"{error_count} reasignación(es) no se pudieron aplicar.")
 
         return redirect('reassign_students')
 

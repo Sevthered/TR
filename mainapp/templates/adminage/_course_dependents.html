@@ -1,0 +1,55 @@
+{% comment %}
+  The dependent half of the course cascade: Nivel and Sección.
+
+  Rendered two ways, and only ever from views.course_cascade_context() —
+  inlined by assign_subjects.html on the first paint, and returned whole by
+  load_course_sections for the htmx swap. One renderer, so the option text
+  cannot drift between the two; mainapp/_trimester_options.html states the
+  same rule for the trimester cascade, where a mismatch would silently
+  rename every option the moment a parent select changed.
+
+  Both selects are real controls inside the page's GET form, and that form's
+  submit button is the path that always works. htmx only saves the round trip;
+  with JavaScript off you pick a type, submit, pick a level, submit. Nothing
+  here is a control that does nothing without scripting.
+
+  The level select carries its own hx attributes even though the page could
+  have held them, because it lives *inside* the swapped content: htmx
+  processes what it swaps in, so they keep working after a replacement, but
+  they have to travel with it.
+
+  The whole block is one swap target rather than two option lists, because
+  changing the type must repopulate Nivel *and* clear Sección — two targets,
+  and htmx allows one hx-target per element. See load_course_sections.
+{% endcomment %}
+<div class="flex flex-col gap-[7px] w-full sm:w-[190px]">
+  <label class="lbl" for="id_course_level">Nivel</label>
+  <select name="level" id="id_course_level" class="ctl"
+          hx-get="{% url 'load_course_sections' %}"
+          hx-target="#course-dependents" hx-swap="innerHTML"
+          hx-trigger="change"
+          hx-include="#scope-school-year, #id_course_type">
+    <option value="">Seleccione un nivel</option>
+    {% for option in level_options %}
+    <option value="{{ option.value }}"{% if option.value == selected_level %} selected{% endif %}>{{ option.text }}</option>
+    {% empty %}
+    <option value="" disabled>No hay niveles con secciones creadas</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="flex flex-col gap-[7px] w-full sm:w-[190px]">
+  <label class="lbl" for="id_course_section">Sección</label>
+  <select name="course_id" id="id_course_section" class="ctl">
+    <option value="">Seleccione una sección</option>
+    {% for option in section_options %}
+    <option value="{{ option.value }}"{% if option.value == selected_course_id %} selected{% endif %}>{{ option.text }}</option>
+    {% empty %}
+    {% comment %}
+      Two different empty states: no level chosen yet is a prompt, a level
+      with nothing under it is a fact about the data.
+    {% endcomment %}
+    <option value="" disabled>{% if selected_level %}Este nivel no tiene secciones{% else %}Elija primero un nivel{% endif %}</option>
+    {% endfor %}
+  </select>
+</div>

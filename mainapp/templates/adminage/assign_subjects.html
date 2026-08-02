@@ -1,436 +1,197 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ title }}</title>
-    <link rel="stylesheet" href="{% static 'css/global-styles.css' %}">
-    
-    <style>
-        /* Contenedor principal del formulario */
-        .adminage-form-container { 
-            max-width: 900px; 
-            margin: 50px auto; 
-            padding: 30px; 
-            background: #1e1e1e; /* Fondo ligeramente más claro que el body */
-            border-radius: 8px; 
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); /* Sombra suave para destacar */
-        }
-        
-        /* Mensajes de Django */
-        .adminage-messages { 
-            list-style: none; 
-            padding: 15px; 
-            border-radius: 4px; 
-            margin-bottom: 20px;
-        }
-        .adminage-messages li.success { 
-            background-color: #004d40; /* Verde oscuro */
-            color: #ccff90; /* Verde brillante */
-            border: 1px solid #388e3c; 
-        }
-        .adminage-messages li.error { 
-            background-color: #3b0d0d; /* Rojo oscuro */
-            color: #ffcdd2; /* Rojo claro */
-            border: 1px solid #d32f2f; 
-        }
-        .adminage-messages li.warning { 
-            background-color: #5d4037; /* Naranja/Marrón oscuro */
-            color: #ffeb3b; /* Amarillo brillante */
-            border: 1px solid #ff9800; 
-        }
+{% extends "base_shell_v2.html" %}
 
-        /* 🛠️ CORRECCIÓN LOCAL DEL BOX MODEL para este formulario */
-        .adminage-form-container input,
-        .adminage-form-container select,
-        .adminage-form-container textarea {
-            box-sizing: border-box; /* Fuerza la corrección del ancho localmente */
-        }
-        
-        /* Caja de Filtros de Sección */
-        .adminage-filter-box { 
-            display: flex; 
-            gap: 20px; 
-            margin-bottom: 30px; 
-            padding: 15px; 
-            border: 1px solid #333; 
-            border-radius: 8px; 
-            background-color: #212121; 
-            align-items: flex-end; 
-        }
-        .select-group { 
-            display: flex; 
-            flex-direction: column; 
-            flex: 1; 
-        }
-        .select-group label { 
-            margin-bottom: 5px; 
-            font-weight: 600; 
-            color: var(--text-color);
-        }
-        /* Ajustamos la altura del select para consistencia */
-        .select-group select { 
-            height: 48px; 
-        }
-        /* Estilos para el formulario de asignación (campos Asignatura, Profesor) */
-        .assignment-form-fields { 
-            display: flex; 
-            gap: 20px; 
-            margin-top: 20px; 
-        }
-        .assignment-form-fields .form-group { 
-            flex: 1; 
-        }
-        /* Aseguramos que los selectores dentro del form-group se vean bien */
-        .assignment-form-fields select { 
-            width: 100%; 
-            /* Se usan los estilos de tu CSS global, solo ajustamos la altura/padding si es necesario */
-            padding: 10px; 
-            height: 48px; 
-        }
+{% comment %}
+  Direction C · Registro. Stage 3, and the last consumer of global-styles.css
+  — the link is gone, so LegacyCascadeTeardownTests.STILL_ON_GLOBAL_STYLES
+  should now be empty. The sheet itself is not mine to delete.
 
-        /* Información de la Sección Asignada */
-        .section-info { 
-            padding: 15px; 
-            background-color: #282828; 
-            border: 1px solid #444;
-            border-radius: 5px; 
-            margin-bottom: 20px; 
-            font-size: 1.1rem;
-        }
+  What went with the document: a ~130-line inline <style> for a shadowed card,
+  three colours of message chip, two box-model patches undoing the legacy
+  sheet's own `width: 100%`, and a scrolling bordered box around the student
+  list. Direction C has no cards and no shadows, so all of it is 1px rules.
 
-        /* Estilos para el campo de selección múltiple de Trimestres */
-        #id_trimesters_selected {
-            height: auto !important; 
-            min-height: 100px;
-        }
-        #id_trimesters_selected option {
-            padding: 8px 10px;
-        }
-        
-        /* Lista de Selección Individual de Estudiantes */
-        .student-list-container {
-            margin-top: 15px;
-            max-height: 300px; 
-            overflow-y: auto; 
-            border: 1px solid #444; 
-            padding: 15px; 
-            border-radius: 5px;
-            background: #252525; 
-        }
-        .student-item { 
-            margin-bottom: 8px; 
-            padding: 4px 0;
-        }
-        .student-item label {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-        }
-        .student-item input[type="checkbox"] {
-            width: auto; 
-            margin-right: 10px;
-            cursor: pointer;
-        }
-        #select-all-students {
-            width: auto;
-            margin-right: 10px;
-        }
-    </style>
-</head>
-<body>
-    <div class="adminage-form-container">
-        <h1>{{ title }}</h1>
+  The jQuery cascade is now htmx, but the shape of the page changed more than
+  the transport did:
 
-        {% if messages %}
-            <ul class="adminage-messages">
-                {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
-            </ul>
-        {% endif %}
+  * **Step 1 is a real GET form.** Choosing a section used to be
+    `window.location.href = ...` inside a change handler — a navigation
+    disguised as a widget, and with behaviors.js deleted and the CSP
+    forbidding inline handlers it would have shipped dead. It stays a
+    navigation, because picking a section genuinely reloads the page: the
+    roster, the trimesters, the target course and the POST form's hidden
+    course_id all change with it, and the URL it produces is bookmarkable.
+    It is now an honest one — a submit button, which works with JavaScript
+    off. htmx on the first two selects only saves the round trip between them.
 
-        <h2>1. Seleccionar la Sección de Curso</h2>
-        <p>Utilice los selectores para encontrar la sección a la que desea asignar una asignatura y un profesor.</p>
+  * **LEVEL_LOOKUP is dropped.** The old page asked load_course_sections for
+    a mode that view has never implemented — added template-side only in
+    56978a8, with no branch ever reading `course_id_lookup` — so its
+    "restore the dropdowns from a preselected ?course_id=" path has never
+    once run. The view now recovers the type and level from the course row
+    itself, which is what that round trip was for.
 
-        <div class="adminage-filter-box">
-            <div class="select-group">
-                <label for="id_course_type">Tipo de Curso:</label>
-                <select id="id_course_type">
-                    <option value="">-- Seleccionar Tipo --</option>
-                    {% for key, name in course_types %}
-                        <option value="{{ key }}" {% if request.GET.course_type == key %}selected{% endif %}>{{ name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
+  * **The select-all checkbox is gone.** It was a jQuery change handler with
+    no server meaning. Every box is checked by default, which is the case it
+    existed to produce.
 
-            <div class="select-group">
-                <label for="id_course_level">Nivel:</label>
-                <select id="id_course_level" disabled>
-                    <option value="">-- Seleccionar Nivel --</option>
-                </select>
-            </div>
+  Nothing here invents a figure: the two counts are `len()` of lists the view
+  already passes.
+{% endcomment %}
 
-            <div class="select-group">
-                <label for="id_course_section">Sección Final:</label>
-                <select id="id_course_section" data-selected-id="{{ selected_course_id }}" disabled>
-                    <option value="">-- Seleccionar Sección --</option>
-                </select>
-            </div>
-        </div>
+{% block page_title %}Asignar asignaturas{% endblock page_title %}
 
-        <form method="post" id="assignment-form">
-            {% csrf_token %}
-            
-            <input type="hidden" name="course_id" id="hidden_course_id" value="{{ selected_course_id|default:'' }}">
-            <input type="hidden" name="school_year_id" value="{{ school_year_id|default:'' }}">
+{% block breadcrumb %}Administración / <b class="text-ink-2 font-medium">Asignaturas</b>{% endblock breadcrumb %}
 
-            <h2>2. Asignar Asignatura y Profesor</h2>
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
 
-            <div class="section-info">
-                Asignación para la sección: <span id="selected-section-name" style="font-weight: bold;">
-                    {% if target_course %}{{ target_course.Tipo }} {{ target_course.Section }}{% else %}(Ninguna Sección Seleccionada){% endif %}
-                </span>
-                {% if current_school_year %}
-                    <br>Año Escolar: **{{ current_school_year.year }}**
-                {% endif %}
-            </div>
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Asignar asignaturas</h1>
+    {% if current_school_year %}
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+      {{ current_school_year.year }}</span>
+    {% endif %}
+  </div>
 
-            <div class="assignment-form-fields">
-                <div class="form-group">
-                    {{ form.subject.label_tag }}
-                    {{ form.subject }}
-                    {{ form.subject.errors }}
-                </div>
-                <div class="form-group">
-                    {{ form.teacher.label_tag }}
-                    {{ form.teacher }}
-                    {{ form.teacher.errors }}
-                </div>
-            </div>
+  {% comment %}
+    Step 1. A GET form, so its result is a real URL. `school_year_id` rides
+    along as a hidden field rather than being dropped on submit — the view
+    falls back to the newest year without it, which would silently move the
+    administrator to a different year than the one they were looking at.
+  {% endcomment %}
+  <form method="get" class="flex flex-wrap items-end gap-3.5 shrink-0 px-pad py-3.5 border-y border-line">
+    <input type="hidden" name="school_year_id" id="scope-school-year"
+           value="{{ school_year_id|default:'' }}">
 
-            <div class="assignment-form-fields" style="margin-top: 15px;">
-                <div class="form-group" style="flex: none; width: 100%;">
-                    <label for="id_trimesters_selected">Trimestres a Asignar:</label>
-                    <select name="trimesters_selected" id="id_trimesters_selected" multiple="multiple" size="{{ trimesters|length }}" required>
-                        {% for trimester in trimesters %}
-                            <option value="{{ trimester.pk }}">{{ trimester.Name }} ({{ trimester.school_year.year }})</option>
-                        {% empty %}
-                            <option value="" disabled>No hay trimestres definidos para este año escolar.</option>
-                        {% endfor %}
-                    </select>
-                    <small style="display: block; margin-top: 5px;">Mantén presionada la tecla Ctrl/Cmd para seleccionar varios trimestres.</small>
-                </div>
-            </div>
-            <hr>
-
-            <h2>3. Seleccionar Estudiantes para la Asignatura</h2>
-
-            {% if course_students_links %}
-                <p>Marque la casilla de los estudiantes que cursarán **esta** asignatura:</p>
-                
-                <div class="student-list-container">
-                    <div style="margin-bottom: 10px;">
-                        <input type="checkbox" id="select-all-students" checked> 
-                        <label for="select-all-students" style="font-weight: bold;">Seleccionar/Deseleccionar todos</label>
-                    </div>
-                    {% for student_link in course_students_links %}
-                        <div class="student-item">
-                            <label>
-                                <input type="checkbox" 
-                                       name="student_links_selected" 
-                                       value="{{ student_link.pk }}" 
-                                       checked> 
-                                {{ student_link.student.Name }} 
-                                ({{ student_link.student.Email }})
-                            </label>
-                        </div>
-                    {% endfor %}
-                </div>
-            {% else %}
-                <p>Seleccione una sección de curso válida (paso 1) para cargar la lista de estudiantes.</p>
-            {% endif %}
-
-            <button type="submit" class="submit-button" id="submit-assignment" {% if not selected_course_id %}disabled{% endif %}>
-                Asignar Asignatura y Profesor
-            </button>
-            
-            {{ form.non_field_errors }}
-        </form>
-
+    <div class="flex flex-col gap-[7px] w-full sm:w-[190px]">
+      <label class="lbl" for="id_course_type">Tipo de curso</label>
+      <select name="course_type" id="id_course_type" class="ctl"
+              hx-get="{% url 'load_course_sections' %}"
+              hx-target="#course-dependents" hx-swap="innerHTML"
+              hx-trigger="change"
+              hx-include="#scope-school-year">
+        <option value="">Seleccione un tipo</option>
+        {% for key, name in course_types %}
+        <option value="{{ key }}"{% if key == selected_course_type %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
     </div>
 
-    <script src="{% static 'js/vendor/jquery-3.6.0.min.js' %}"></script>
-    <script nonce="{{ request.csp_nonce }}">
-        $(document).ready(function() {
-            var $courseType = $('#id_course_type');
-            var $courseLevel = $('#id_course_level');
-            var $courseSection = $('#id_course_section');
-            var $hiddenCourseId = $('#hidden_course_id');
-            var $submitButton = $('#submit-assignment');
-            var $sectionNameDisplay = $('#selected-section-name');
-            var $selectAllStudents = $('#select-all-students');
-            
-            // Lógica para el botón Seleccionar/Deseleccionar todos
-            $selectAllStudents.change(function() {
-                var isChecked = $(this).prop('checked');
-                $('input[name="student_links_selected"]').prop('checked', isChecked);
-            });
+    {% comment %}
+      display:contents so the two swapped field groups still lay out as
+      siblings in this bar. The wrapper exists only to be an htmx target.
+    {% endcomment %}
+    <div id="course-dependents" class="contents">
+      {% include "adminage/_course_dependents.html" %}
+    </div>
 
+    <button type="submit"
+            class="py-2.5 px-5 rounded-[5px] border border-line-2 text-[12.5px] font-[650]
+                   text-ink-2 hover:text-ink hover:border-accent">
+      Cargar sección</button>
+  </form>
 
-            // 🔑 Obtenemos el ID del año escolar y el ID del curso preseleccionado
-            var schoolYearId = '{{ school_year_id|default:"" }}'; 
-            var initialCourseId = $courseSection.data('selected-id'); 
-            var initialCourseType = $courseType.val();
-            
-            // --- Funciones AJAX y de Reset ---
-            
-            function resetDropdowns(levelReset, sectionReset) {
-                if (levelReset) {
-                    $courseLevel.empty().append('<option value="">-- Seleccionar Nivel --</option>').prop('disabled', true);
-                }
-                if (sectionReset) {
-                    $courseSection.empty().append('<option value="">-- Seleccionar Sección --</option>').prop('disabled', true);
-                }
-                $hiddenCourseId.val('');
-                $submitButton.prop('disabled', true);
-                $sectionNameDisplay.text('(Ninguna Sección Seleccionada)');
-            }
-            
-            function loadLevels(courseType, selectedLevel) {
-                resetDropdowns(true, true);
-                $courseLevel.empty().append('<option value="">Cargando niveles...</option>').prop('disabled', true);
+  <form method="post" novalidate class="flex flex-col flex-1 min-h-0">
+    {% csrf_token %}
+    {% comment %}
+      Both hidden fields are what the POST branch reads — the view takes
+      course_id and school_year_id from request.POST, not from the query
+      string, and redirects back to the same scope afterwards.
+    {% endcomment %}
+    <input type="hidden" name="course_id" value="{{ selected_course_id|default:'' }}">
+    <input type="hidden" name="school_year_id" value="{{ school_year_id|default:'' }}">
 
-                $.ajax({
-                    url: "{% url 'load_course_sections' %}",
-                    data: {
-                        'school_year_id': schoolYearId, 
-                        'course_type': courseType
-                    },
-                    dataType: 'json',
-                    success: function(data) {
-                        $courseLevel.empty().append('<option value="">-- Seleccionar Nivel --</option>');
-                        
-                        if (data.mode === 'LEVELS' && data.data.length > 0) {
-                            $.each(data.data, function(index, item) {
-                                var option = $('<option>', {
-                                    value: item.value, 
-                                    text: item.text    
-                                });
-                                if (selectedLevel === item.value) {
-                                    option.attr('selected', 'selected');
-                                }
-                                $courseLevel.append(option);
-                            });
-                            $courseLevel.prop('disabled', false);
-                            
-                            if (selectedLevel) {
-                                loadSections(courseType, selectedLevel, initialCourseId);
-                            }
-                            
-                        } else {
-                            $courseLevel.append('<option value="">No hay niveles disponibles</option>');
-                        }
-                    }
-                });
-            }
+    <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[22px] pb-3">
+      <span class="lbl">Sección seleccionada</span>
+      <b class="text-[15px] font-semibold tracking-[-.01em]">
+        {% if target_course %}{{ target_course.Tipo }} {{ target_course.Section }}{% else %}Ninguna{% endif %}</b>
+    </div>
 
-            function loadSections(courseType, level, selectedSectionId) {
-                resetDropdowns(false, true);
-                $courseSection.empty().append('<option value="">Cargando secciones...</option>').prop('disabled', true);
+    {% if form.non_field_errors %}
+    <div class="shrink-0 px-pad pb-3 text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
 
-                $.ajax({
-                    url: "{% url 'load_course_sections' %}",
-                    data: {
-                        'school_year_id': schoolYearId, 
-                        'course_type': courseType,
-                        'level': level 
-                    },
-                    dataType: 'json',
-                    success: function(data) {
-                        $courseSection.empty().append('<option value="">-- Seleccionar Sección --</option>');
+    <div class="flex flex-wrap gap-x-3.5 gap-y-[15px] shrink-0 px-pad pb-[22px]">
+      {% for field in form.visible_fields %}
+      <div class="flex flex-col gap-[7px] w-full sm:w-[240px]">
+        <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}
+        {# The id matches the aria-describedby Django emits for any field with help text. #}
+        <span id="{{ field.auto_id }}_helptext"
+              class="text-[11.5px] text-ink-3">{{ field.help_text }}</span>
+        {% endif %}
+        {% if field.errors %}
+        <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
 
-                        if (data.mode === 'SECTIONS' && data.data.length > 0) {
-                            var sectionFound = false;
-                            
-                            $.each(data.data, function(index, item) {
-                                var option = $('<option>', {
-                                    value: item.id,   
-                                    text: item.text   
-                                });
-                                if (selectedSectionId && selectedSectionId == item.id) {
-                                    option.attr('selected', 'selected');
-                                    sectionFound = true;
-                                }
-                                $courseSection.append(option);
-                            });
-                            $courseSection.prop('disabled', false);
-                            
-                            // Si la sección inicial fue encontrada, forzar la redirección para cargar estudiantes
-                            if (sectionFound) {
-                                window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId + "&course_id=" + selectedSectionId;
-                            }
-                        } else {
-                            $courseSection.append('<option value="">No hay secciones disponibles</option>');
-                        }
-                    }
-                });
-            }
-            
-            // --- Handlers ---
-            
-            // 1. Evento al cambiar el Tipo de Curso
-            $courseType.change(function() {
-                var courseType = $(this).val();
-                if (courseType && schoolYearId) {
-                    loadLevels(courseType, null);
-                } else {
-                    resetDropdowns(true, true);
-                }
-            });
+      {% comment %}
+        `trimesters_selected` is not a Form field — the view reads it with
+        request.POST.getlist — so its label and `ctl` belong here. The sizing
+        rules for a multiple select live in app.css already.
+      {% endcomment %}
+      <div class="flex flex-col gap-[7px] w-full sm:w-[240px]">
+        <label class="lbl" for="id_trimesters_selected">Trimestres</label>
+        <select name="trimesters_selected" id="id_trimesters_selected" class="ctl"
+                multiple {% if trimesters %}size="{{ trimesters|length }}"{% endif %}
+                aria-describedby="id_trimesters_selected_helptext">
+          {% for trimester in trimesters %}
+          <option value="{{ trimester.pk }}">Trimestre {{ trimester.Name }}</option>
+          {% empty %}
+          <option value="" disabled>Este año escolar no tiene trimestres</option>
+          {% endfor %}
+        </select>
+        <span id="id_trimesters_selected_helptext" class="text-[11.5px] text-ink-3">
+          Mantenga Ctrl (o Cmd) para elegir varios.</span>
+      </div>
+    </div>
 
-            // 2. Evento al cambiar el Nivel
-            $courseLevel.change(function() {
-                var courseType = $courseType.val();
-                var level = $(this).val();
-                if (level && schoolYearId) {
-                    loadSections(courseType, level, null);
-                } else {
-                    resetDropdowns(false, true);
-                }
-            });
-            
-            // 3. Evento al cambiar la Sección Final (CRÍTICO: Redirige para cargar la lista de estudiantes)
-            $courseSection.change(function() {
-                var courseId = $(this).val();
-                if (courseId) {
-                    // 💥 Redirección: Forzar un GET para que Django cargue la lista de estudiantes
-                    window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId + "&course_id=" + courseId;
-                } else {
-                    // Si se deselecciona, volvemos a la vista sin course_id
-                    window.location.href = "{% url 'assign_subjects' %}?school_year_id=" + schoolYearId;
-                }
-            });
+    <div class="flex items-center gap-2.5 shrink-0 px-pad py-3 border-y border-line">
+      <span class="lbl" id="roster-h">Alumnado que cursará la asignatura</span>
+      {% if course_students_links %}
+      <span class="ml-auto fig text-[11px] text-ink-3">{{ course_students_links|length }}</span>
+      {% endif %}
+    </div>
 
-            // 4. Lógica de precarga al inicio (si hay un course_id en el GET)
-            if (initialCourseId && schoolYearId && initialCourseType) {
-                // Hacemos una llamada AJAX para obtener el nivel de la sección seleccionada
-                $.ajax({
-                    url: "{% url 'load_course_sections' %}",
-                    data: {
-                        'school_year_id': schoolYearId,
-                        'course_id_lookup': initialCourseId 
-                    },
-                    dataType: 'json',
-                    success: function(data) {
-                        if (data.mode === 'LEVEL_LOOKUP' && data.level && data.course_type) {
-                            $courseType.val(data.course_type);
-                            loadLevels(data.course_type, data.level); 
-                        }
-                    }
-                });
-            } else if (initialCourseType) {
-                loadLevels(initialCourseType, null);
-            }
-        });
-    </script>
-</body>
-</html>
+    {% if course_students_links %}
+    <div role="group" aria-labelledby="roster-h">
+      {% for student_link in course_students_links %}
+      <label class="flex items-center gap-[13px] h-row shrink-0 px-pad border-b border-line
+                    hover:bg-white/[.03] cursor-pointer">
+        <input type="checkbox" name="student_links_selected"
+               value="{{ student_link.pk }}" checked
+               class="shrink-0 w-[15px] h-[15px] accent-accent">
+        <span class="shrink-0 pl-[11px] border-l-2 border-line-2 fig text-[12px] text-ink-3">
+          {{ forloop.counter|stringformat:"02d" }}</span>
+        <span class="min-w-0">
+          <b class="block text-[13.5px] font-semibold tracking-[-.01em] truncate">
+            {{ student_link.student.Name }}</b>
+          <span class="block text-[11px] text-ink-3 truncate">{{ student_link.student.Email }}</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="shrink-0 px-pad py-[15px] border-b border-line text-[12.5px] text-ink-3">
+      {% comment %}
+        Two different reasons for an empty roster, and an administrator needs
+        to be able to tell them apart before deciding what to fix.
+      {% endcomment %}
+      {% if target_course %}Esta sección no tiene alumn@s matriculad@s.
+      {% else %}Elija una sección arriba y pulse «Cargar sección».{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="shrink-0 px-pad pt-[22px] pb-8">
+      <button type="submit"
+              class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift
+                     text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+        Guardar asignación</button>
+    </div>
+
+    <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+  </form>
+</div>
+{% endblock main %}
