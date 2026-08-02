@@ -1,0 +1,31 @@
+{% comment %}
+  PLACEHOLDER — REPLACE AT MERGE.
+
+  The real mainapp/_student_record.html is being written on branch
+  ui-migrate-student-dashboard, where student_dashboard_content.html is split
+  into a shell-free partial. This stub exists only so that branch
+  ui-migrate-student-file runs and tests green before the two are merged;
+  delete it in favour of the real file and keep nothing from here.
+
+  Contract it stands in for — the real partial owns the filter bar, the grades
+  table, the absences table and the CSV download, and reads these off the
+  context, all of which student_detail already supplies:
+
+    student, grades, ausencias,
+    all_school_years, available_trimesters,
+    selected_year_id, selected_trimester_id,
+    is_tutor, selected_child   (so filter links keep propagating ?child=),
+    user.profile.role          (role branching)
+
+  Shell-free: no extends and no blocks, so including it emits these elements
+  and nothing else. student_file.html supplies the document around it.
+{% endcomment %}
+<div class="flex flex-col gap-2 shrink-0 px-pad py-[18px] border-y border-line">
+  <span class="lbl">Expediente</span>
+  <p class="text-[12.5px] text-ink-3 max-w-[64ch]">
+    Marcador de posici&oacute;n: las notas y ausencias de {{ student.Name }} se muestran aqu&iacute;
+    cuando se integre la rama <span class="fig">ui-migrate-student-dashboard</span>.
+    Registros en contexto: <span class="fig">{{ grades|length }}</span> notas,
+    <span class="fig">{{ ausencias|length }}</span> ausencias.
+  </p>
+</div>

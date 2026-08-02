@@ -1941,3 +1941,177 @@ class WriteFormTemplateTests(V2CascadeAssertions, AccessControlTestCase):
         response = self.as_(self.professor).get(self.ausencia_url())
 
         self.assertContains(response, 'class="ctl"')
+
+
+class StudentFileMigrationTests(V2CascadeAssertions, AccessControlTestCase):
+    """Stage 2: the student/tutor record page onto the v2 cascade.
+
+    This page is the one migration that is also a bug fix. `student_file.html`
+    had no `{% extends %}` at all — a `{% block %}` outside an inheriting
+    template is a no-op, so its contents were emitted raw, ahead of any
+    doctype. The document that did arrive arrived sideways: the page included
+    `student_dashboard_content.html`, which extends `base.html`, and including
+    a template that extends another renders the whole extended document
+    inline. The response was a complete legacy page nested inside a `<div>`,
+    with the page's own `</div>` trailing after `</html>`.
+
+    Both halves are pinned below: the page extends a real base, and it no
+    longer pulls a shell-bearing template in through an include.
+    """
+
+    URL = '/student/'
+
+    # --- cascade ------------------------------------------------------------
+
+    def assert_v2_cascade_without_the_teacher_shell(self, response):
+        """`V2CascadeAssertions.assert_v2_only` also asserts `base_shell_v2`.
+
+        This page deliberately extends `base_v2` directly: it is served to
+        students and tutors, and every destination in that shell's nav is
+        `@teacher_required`, so its whole chrome would answer 403 here. The
+        load-bearing half of the assertion — Tailwind present, none of the four
+        legacy stylesheets — is asserted in full; only the shell is not. The
+        mixin is used unmodified for everything else.
+        """
+        self.assertTemplateUsed(response, 'base_v2.html')
+        self.assertTemplateNotUsed(response, 'base_shell_v2.html')
+        self.assertContains(response, 'css/tailwind.css')
+        for legacy in self.LEGACY_CSS:
+            self.assertNotContains(response, legacy)
+
+    def test_the_student_record_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.pupil).get(self.URL)
+
+        self.assertTemplateUsed(response, 'mainapp/student_file.html')
+        self.assert_v2_cascade_without_the_teacher_shell(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_tutor_view_is_built_on_the_v2_cascade_only(self):
+        response = self.as_(self.tutor).get(self.URL)
+
+        self.assertTemplateUsed(response, 'mainapp/student_file.html')
+        self.assert_v2_cascade_without_the_teacher_shell(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    # --- the missing {% extends %} -----------------------------------------
+
+    def test_the_page_is_a_complete_document_for_both_roles(self):
+        """The regression that mattered: markup ahead of the doctype."""
+        for user in (self.pupil, self.tutor):
+            with self.subTest(user=user.username):
+                response = self.as_(user).get(self.URL)
+                body = response.content.decode()
+
+                self.assertTrue(body.lstrip().startswith('<!doctype html>'))
+                self.assertEqual(body.lower().count('<!doctype'), 1)
+                self.assertIn('<html lang="es"', body)
+                self.assertIn('</html>', body)
+                # The wrapper that used to precede the doctype.
+                self.assertNotIn('page-content-wrap', body)
+
+    def test_no_shell_bearing_template_arrives_through_the_include(self):
+        """`student_dashboard_content.html` extends `base.html`, so including
+        it rendered a second full document inside this one. The record is a
+        shell-free partial now."""
+        for user in (self.pupil, self.tutor):
+            with self.subTest(user=user.username):
+                response = self.as_(user).get(self.URL)
+
+                self.assertTemplateUsed(response, 'mainapp/_student_record.html')
+                self.assertTemplateNotUsed(
+                    response, 'mainapp/student_dashboard_content.html')
+                self.assertTemplateNotUsed(response, 'base.html')
+                self.assertTemplateNotUsed(response, 'navbar.html')
+                self.assertTemplateNotUsed(response, 'sidebar.html')
+
+    def test_the_page_titles_itself(self):
+        """An empty <title> was the visible half of the missing extends."""
+        response = self.as_(self.pupil).get(self.URL)
+
+        self.assertContains(response, f'<title>Ficha · {self.student.Name}')
+
+    # --- the child selector, rebuilt ---------------------------------------
+
+    def test_the_child_selector_is_links_rather_than_a_scripted_select(self):
+        """The legacy control was a `<select data-autosubmit>` driven by
+        behaviors.js, which `base_v2` does not load. Real hrefs need no
+        JavaScript and produce the ?child= index the view already reads."""
+        tutor = self._user('tut2', 'tutor',
+                           children=[self.student, self.other_student])
+        response = self.as_(tutor).get(self.URL)
+
+        self.assertContains(response, '?child=0')
+        self.assertContains(response, '?child=1')
+        self.assertNotContains(response, 'data-autosubmit')
+        self.assertNotContains(response, '<select')
+
+    def test_the_child_links_carry_the_active_filters(self):
+        """Switching child must not silently reset the year and trimester."""
+        tutor = self._user('tut3', 'tutor',
+                           children=[self.student, self.other_student])
+        response = self.as_(tutor).get(
+            f'{self.URL}?school_year_id={self.year.pk}'
+            f'&trimester_id={self.trimester.pk}')
+
+        self.assertContains(
+            response,
+            f'?child=1&amp;school_year_id={self.year.pk}'
+            f'&amp;trimester_id={self.trimester.pk}')
+
+    def test_a_student_gets_no_child_selector(self):
+        response = self.as_(self.pupil).get(self.URL)
+
+        self.assertNotContains(response, '?child=')
+        self.assertNotContains(response, 'Alumn@s a tu cargo')
+
+    def test_a_tutor_with_no_children_gets_a_message_not_empty_controls(self):
+        """The view returns early here with neither a student nor a year list,
+        so the record and its filter bar would render as empty controls."""
+        tutor = self._user('tut4', 'tutor')
+        response = self.as_(tutor).get(self.URL)
+
+        self.assertContains(response, 'Sin alumn@s asociad@s')
+        self.assertTemplateNotUsed(response, 'mainapp/_student_record.html')
+        self.assert_no_leaked_template_comments(response)
+
+    # --- scoping: unchanged by the migration -------------------------------
+
+    def test_a_student_sees_their_own_record(self):
+        response = self.as_(self.pupil).get(self.URL)
+
+        self.assertContains(response, self.student.Name)
+        self.assertNotContains(response, self.other_student.Name)
+
+    def test_a_tutor_sees_the_selected_child(self):
+        tutor = self._user('tut5', 'tutor',
+                           children=[self.student, self.other_student])
+
+        first = self.as_(tutor).get(f'{self.URL}?child=0')
+        self.assertContains(first, f'>{self.student.Name}</h1>')
+
+        second = self.as_(tutor).get(f'{self.URL}?child=1')
+        self.assertContains(second, f'>{self.other_student.Name}</h1>')
+
+    def test_a_tutor_cannot_reach_a_child_who_is_not_theirs(self):
+        """`?child=` is an index into this tutor's own `profile.children`, and
+        the view clamps it. Out of range, negative and non-numeric must all
+        fall back to their own first child rather than reaching anyone else."""
+        for raw in ('1', '99', '-3', 'abc', ''):
+            with self.subTest(child=raw):
+                response = self.as_(self.tutor).get(f'{self.URL}?child={raw}')
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, self.student.Name)
+                self.assertNotContains(response, self.other_student.Name)
+
+    def test_a_professor_cannot_reach_the_student_record_page(self):
+        response = self.as_(self.professor).get(self.URL)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_an_anonymous_caller_is_redirected(self):
+        self.assertEqual(self.client.get(self.URL).status_code, 302)

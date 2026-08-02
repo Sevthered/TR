@@ -1,39 +1,152 @@
-{% load static %}
+{% extends "base_v2.html" %}
 
-{% block content %}
-<div class="page-content-wrap">
-    {% if user.profile.role == 'tutor' %}
-        <p>Estudiante {{ selected_child_obj.student.Name }}</p>
+{% comment %}
+  Direction C · Registro. Migrated in stage 2 — off nothing at all, which was
+  the bug.
+
+  This template previously opened with a load tag and a content block and had
+  no extends at any point. A block outside an inheriting template is a no-op,
+  so the block's contents were emitted raw: the response began with
+  <div class="page-content-wrap"> and the "Estudiante <name>" line *before* any
+  doctype. The document that did arrive came in sideways — the partial this
+  page includes extends base.html, and including a template that extends
+  another renders the entire extended document inline, so a complete second
+  page (doctype, head, all four legacy stylesheets, navbar, sidebar, footer,
+  </html>) was nested inside that div, with the page's own </div> trailing
+  after </html>. Browsers recover in quirks mode; the title was empty and the
+  child selector sat outside <html>.
+
+  Both halves of that are fixed here: this file extends a real base, and it
+  includes mainapp/_student_record.html — a shell-free partial with no extends
+  of its own — instead of student_dashboard_content.html.
+
+  Division of labour with that partial: it owns the record itself (the filter
+  bar, the grades table, the absences table and the CSV download). This page
+  owns the shell, the heading that names whose record is on screen, and the
+  child selector. Nothing here re-implements the tables.
+
+  Shell: base_v2 directly, not base_shell_v2. This page is served to students
+  and tutors (@role_required('tutor', 'legal_tutor', 'student')), and every
+  destination in that shell's nav — teacher_dashboard, the three section_courses
+  links and the student-search box — is @teacher_required. Extending it would
+  hand this audience a chrome whose every control answers 403. The header below
+  is the same 52px rule-separated bar carrying the one navigation action these
+  roles actually have. A role-aware shell is the real fix; base_shell_v2 belongs
+  to another slice.
+
+  No averages, totals or rates: the view issues no aggregate, and grade_count
+  has no denominator — a student can hold unbounded grades per subject per
+  trimester.
+
+  The child selector was a self-submitting <select data-autosubmit>, driven by
+  behaviors.js. base_v2 loads htmx and nothing else, so that hook is inert
+  here — it is a row of real <a href> links now, matching the scope bar in
+  _class_scope.html. Same URLs, no JavaScript, nothing for the CSP to block.
+{% endcomment %}
+
+{% block page_title %}Ficha · {{ student.Name }}{% endblock page_title %}
+
+{% block shell %}
+<div class="flex flex-col min-h-screen">
+
+  {# ---------- minimal chrome: no teacher nav, no student search ---------- #}
+  <header class="sticky top-0 z-10 flex items-center gap-2.5 h-[52px] shrink-0 px-pad
+                 border-b border-line bg-ground">
+    <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                 text-accent-lift text-[10px] font-bold">TR</span>
+    <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+    <span class="hidden sm:block text-[12.5px] text-ink-3 truncate">
+      · {% if is_tutor %}Seguimiento de mis hij@s{% else %}Mi expediente{% endif %}</span>
+    <span class="ml-auto hidden sm:block text-[11.5px] text-ink-3 truncate">
+      @{{ user.username }} · {{ user.profile.get_role_display }}</span>
+    <a href="{% url 'logout' %}"
+       class="shrink-0 px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+              text-ink-2 hover:text-ink hover:border-accent">Salir</a>
+  </header>
+
+  {% if messages %}
+  <div class="border-b border-line shrink-0">
+    {% for message in messages %}
+    <div class="px-pad py-3 text-[12.5px] {% if message.tags == 'error' %}text-bad{% else %}text-ink-2{% endif %}">
+      {{ message }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <main id="page" class="flex flex-col flex-1 min-w-0">
+
+    {% if is_tutor and not children_info %}
+    {% comment %}
+      The view returns early for this case with only is_tutor and children_info
+      in the context — there is no student, no grade list and no year list, so
+      the record partial would render a filter bar of empty controls.
+    {% endcomment %}
+    <div class="flex flex-col gap-3.5 px-pad pt-[26px] pb-[22px]">
+      <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Sin alumn@s asociad@s</h1>
+      <p class="text-[13px] text-ink-2 max-w-[52ch]">
+        Tu cuenta de tutor@ no tiene ning&uacute;n alumn@ asignado todav&iacute;a, as&iacute; que no hay
+        notas ni ausencias que mostrar. Ponte en contacto con la secretar&iacute;a del centro.
+      </p>
+    </div>
+    <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+
     {% else %}
-        <p>Estudiante {{ student.Name }}</p>
-    {% endif %}
-    {% if user.is_authenticated %}
-        <p>Has iniciado sesión como {{ user.username }}</p>
-    {% else %}
-        <p>No has iniciado sesión.</p>
-    {% endif %}
-    <br>
+
+    {# ---------- whose record this is ---------- #}
+    <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+      <span aria-hidden="true"
+            class="self-center shrink-0 pl-[11px] border-l-2 border-accent text-[11px] font-[650]
+                   tracking-[.04em] text-accent-lift">{{ initials }}</span>
+      <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">{{ student.Name }}</h1>
+      <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+        {% if selected_year %}{{ selected_year.year }}{% else %}Todos los años{% endif %}{% if selected_trimester %} · T{{ selected_trimester.Name }}{% endif %}
+      </span>
+      <span class="ml-auto fig text-[12.5px] text-ink-3 truncate">{{ student.Email }}</span>
+    </div>
+
     {% if children_info %}
-        <form method="get" id="child-select-form">
-            <label for="child-select">Selecciona un niñ@:</label>
-            <select id="child-select" name="child" data-autosubmit="child-select-form">
-                {% for child in children_info %}
-                <option value="{{ forloop.counter0 }}" {% if forloop.counter0 == selected_child %}selected{% endif %}>
-                    {{ child.student.Name }}
-                </option>
-                {% endfor %}
-            </select>
-        </form>
-        
-        {% if selected_child_obj %}
-            {% include "mainapp/student_dashboard_content.html" with student=selected_child_obj.student grades=selected_child_obj.grades ausencias=selected_child_obj.ausencias %}
-        {% endif %}
-    {% else %}
-        {% if is_tutor %}
-            <p>No children assigned to your account.</p>
-        {% else %}
-            {% include "mainapp/student_dashboard_content.html" with student=student grades=grades ausencias=ausencias %}
-        {% endif %}
+    {% comment %}
+      The child selector, rebuilt from the inert <select data-autosubmit>.
+      These are real links into the same ?child= index the view already reads,
+      and they carry the active year and trimester so switching child does not
+      silently reset the filters.
+
+      The index is a position in this tutor's own profile.children, and the
+      view clamps it into range, so it can only ever name a child of theirs —
+      an out-of-range or negative ?child= falls back to their first child
+      rather than reaching anyone else's record. That scoping stays in the
+      view; nothing here widens it.
+    {% endcomment %}
+    <div class="flex flex-wrap items-center gap-x-3.5 gap-y-2 shrink-0 px-pad py-3 border-t border-line">
+      <span class="lbl">Alumn@</span>
+      <div class="flex gap-0.5 flex-wrap" aria-label="Alumn@s a tu cargo">
+        {% for child in children_info %}
+        <a href="?child={{ forloop.counter0 }}{% if selected_year_id %}&amp;school_year_id={{ selected_year_id }}{% endif %}{% if selected_trimester_id %}&amp;trimester_id={{ selected_trimester_id }}{% endif %}"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-[5px] text-[12.5px]
+                  {% if forloop.counter0 == selected_child %}bg-accent-dim text-accent-lift font-semibold{% else %}text-ink-2 hover:text-ink hover:bg-white/[.04]{% endif %}"
+           {% if forloop.counter0 == selected_child %}aria-current="true"{% endif %}>
+          <span aria-hidden="true" class="fig text-[10.5px] text-ink-3">{{ child.initials }}</span>
+          {{ child.student.Name }}</a>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% comment %}
+      The with-override is what makes the *selected* child's record render:
+      _student_record.html reads student/grades/ausencias off the context, and
+      these three names must point at the selected entry rather than the
+      view's defaults.
+    {% endcomment %}
+    {% if selected_child_obj %}
+    {% include "mainapp/_student_record.html" with student=selected_child_obj.student grades=selected_child_obj.grades ausencias=selected_child_obj.ausencias %}
     {% endif %}
+
+    {% else %}
+    {% include "mainapp/_student_record.html" %}
+    {% endif %}
+
+    {% endif %}
+  </main>
 </div>
-{% endblock content %}
+{% endblock shell %}

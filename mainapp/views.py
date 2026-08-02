@@ -536,19 +536,27 @@ def student_detail(request):
     selected_year_id_raw = request.GET.get('school_year_id')
     selected_trimester_id_raw = request.GET.get('trimester_id')
 
-    # Convert to int.
+    # Convert to int. The matched object is kept alongside the id: the page
+    # names the active year and trimester in its heading, and re-deriving that
+    # in the template means a loop over a list this scan already walked.
     selected_year_id = None
+    selected_year = None
     if selected_year_id_raw:
         try:
             candidate = int(selected_year_id_raw)
         except (ValueError, TypeError):
             candidate = None
-        if candidate is not None and any(s.SchoolYearID == candidate for s in all_school_years):
-            selected_year_id = candidate
+        if candidate is not None:
+            match = next(
+                (s for s in all_school_years if s.SchoolYearID == candidate), None)
+            if match is not None:
+                selected_year_id = candidate
+                selected_year = match
 
     # Get available trimesters.
     available_trimesters = []
     selected_trimester_id = None
+    selected_trimester = None
     if selected_year_id:
         available_trimesters = Trimester.objects.filter(
             school_year__SchoolYearID=selected_year_id
@@ -558,8 +566,12 @@ def student_detail(request):
                 t_candidate = int(selected_trimester_id_raw)
             except (ValueError, TypeError):
                 t_candidate = None
-            if t_candidate is not None and any(t.TrimesterID == t_candidate for t in available_trimesters):
-                selected_trimester_id = t_candidate
+            if t_candidate is not None:
+                t_match = next(
+                    (t for t in available_trimesters if t.TrimesterID == t_candidate), None)
+                if t_match is not None:
+                    selected_trimester_id = t_candidate
+                    selected_trimester = t_match
 
     else:
         selected_trimester_id = None
@@ -612,6 +624,9 @@ def student_detail(request):
 
             children_info.append({
                 'student': child,
+                # Same glyph the class register uses, so a person is marked the
+                # same way on every list. Display only.
+                'initials': student_initials(child.Name),
                 'grades': child_grades.select_related('subject', 'trimester', 'school_year'),
                 'ausencias': child_ausencias.select_related('subject', 'trimester', 'school_year'),
             })
@@ -621,17 +636,21 @@ def student_detail(request):
     # PREPARE CONTEXT
     context = {
         "student": student,
+        "initials": student_initials(student.Name) if student else '',
         "grades": grades,
         "ausencias": ausencias,
         "is_tutor": is_tutor,
         "children_info": children_info if is_tutor else None,
         "selected_child": selected_child if is_tutor else None,
         "selected_child_obj": selected_child_obj if is_tutor else None,
-        # Filter variables.
+        # Filter variables. The objects accompany the ids so the heading can
+        # name the active scope without re-deriving it in the template.
         "all_school_years": all_school_years,
         "available_trimesters": available_trimesters,
         "selected_year_id": selected_year_id,
         "selected_trimester_id": selected_trimester_id,
+        "selected_year": selected_year,
+        "selected_trimester": selected_trimester,
     }
 
     return render(request, "mainapp/student_file.html", context)
