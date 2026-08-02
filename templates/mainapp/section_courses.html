@@ -39,7 +39,11 @@
             {% for course in courses %}
             <tr>
               <td>
-                <a href="{% url 'class_dashboard' course.CourseID %}?school_year_id={{ selected_year_id }}">
+                {# No ?school_year_id=: class_dashboard takes its year from
+                   Course.school_year and ignores the param. The scope params
+                   it does read — trimester_id, subject_courses_id — have no
+                   value here, so the class page picks its own defaults. #}
+                <a href="{% url 'class_dashboard' course.CourseID %}">
                     {{ course.Section }}
                 </a>
               </td>

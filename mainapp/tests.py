@@ -8,6 +8,8 @@ Note: these use `force_login`, not `client.login()`. django-axes' backend
 requires a `request` argument that `client.login()` does not supply.
 """
 
+import csv
+import io
 from datetime import timedelta
 from decimal import Decimal
 
@@ -431,6 +433,171 @@ class CsvImportTests(AccessControlTestCase):
         self.assertNotContains(response, 'Nombre Inventado')
 
 
+class CsvRoundTripTests(AccessControlTestCase):
+    """The template `download_class_list` hands out must import back in.
+
+    It did not. The template's `Año_Escolar` came from `timezone.now()` while
+    `import_grades` looks years up and deliberately does not create them, so
+    every row failed with "año escolar no encontrado" whenever the calendar
+    year and the school year disagreed — which is most of any school year.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # A year that cannot coincide with the calendar year, so this keeps
+        # catching the old code whenever it is run.
+        cls.old_year = School_year.objects.create(year='2019-2020')
+        cls.old_trimester = Trimester.objects.create(
+            Name=1, school_year=cls.old_year)
+        cls.old_course = Course.objects.create(
+            Tipo='Eso', Section='3C', school_year=cls.old_year)
+        Students_Courses.objects.create(
+            student=cls.student, course_section=cls.old_course)
+        Subjects_Courses.objects.create(
+            subject=cls.subject, teacher=cls.teacher_a, course=cls.old_course,
+            trimester=cls.old_trimester)
+
+    def template(self, course):
+        """Download the import template and return (fieldnames, rows)."""
+        response = self.as_(self.professor).get(
+            f'/download/class-list/{course.CourseID}/')
+        self.assertEqual(response.status_code, 200)
+
+        reader = csv.DictReader(io.StringIO(response.content.decode('utf-8')))
+        return reader.fieldnames, list(reader)
+
+    def reupload(self, course, fieldnames, rows):
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+        upload = SimpleUploadedFile(
+            'grades.csv', out.getvalue().encode('utf-8'),
+            content_type='text/csv')
+        return self.as_(self.professor).post(
+            f'/import/grades/{course.CourseID}/', {'csv_file': upload},
+            follow=True)
+
+    def test_template_year_comes_from_the_course(self):
+        _, rows = self.template(self.old_course)
+
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row['Año_Escolar'], self.old_year.year)
+
+    def test_template_year_is_not_derived_from_the_calendar(self):
+        calendar_year = timezone.now().year
+        _, rows = self.template(self.old_course)
+
+        self.assertNotIn(
+            f'{calendar_year}-{calendar_year + 1}',
+            [row['Año_Escolar'] for row in rows])
+
+    def test_template_headers_are_the_ones_the_importer_reads(self):
+        fieldnames, _ = self.template(self.old_course)
+
+        self.assertEqual(fieldnames, [
+            'Nombre_Estudiante', 'Asignatura', 'Trimestre', 'Año_Escolar',
+            'Nota', 'Tipo_Nota', 'Numero_Tipo_Nota', 'Comentarios'])
+
+    def test_the_downloaded_template_imports_back_in(self):
+        """The whole point: fill in the blanks the teacher is meant to fill in."""
+        fieldnames, rows = self.template(self.old_course)
+        for row in rows:
+            row['Asignatura'] = self.subject.Name
+            row['Trimestre'] = str(self.old_trimester.Name)
+            row['Nota'] = '7.5'
+
+        self.reupload(self.old_course, fieldnames, rows)
+
+        grade = Grade.objects.get(student=self.student)
+        self.assertEqual(grade.school_year, self.old_year)
+        self.assertEqual(grade.trimester, self.old_trimester)
+        self.assertEqual(float(grade.grade), 7.5)
+
+    def test_the_template_no_longer_reports_a_missing_year(self):
+        fieldnames, rows = self.template(self.old_course)
+        for row in rows:
+            row['Asignatura'] = self.subject.Name
+            row['Trimestre'] = str(self.old_trimester.Name)
+            row['Nota'] = '7.5'
+
+        response = self.reupload(self.old_course, fieldnames, rows)
+
+        self.assertNotContains(response, 'año escolar')
+
+    def test_a_genuinely_missing_year_is_named_in_the_error(self):
+        """Years are not PII, and a bare 'no encontrado' is unactionable."""
+        fieldnames, rows = self.template(self.old_course)
+        for row in rows:
+            row['Asignatura'] = self.subject.Name
+            row['Trimestre'] = str(self.old_trimester.Name)
+            row['Nota'] = '7.5'
+            row['Año_Escolar'] = '9999-0000'
+
+        response = self.reupload(self.old_course, fieldnames, rows)
+
+        self.assertContains(response, '9999-0000')
+        self.assertFalse(Grade.objects.exists())
+
+    def test_the_importer_still_refuses_to_create_the_year(self):
+        """Re-asserted here: the fix is at the producer, not the consumer."""
+        before = School_year.objects.count()
+        fieldnames, rows = self.template(self.old_course)
+        for row in rows:
+            row['Asignatura'] = self.subject.Name
+            row['Trimestre'] = str(self.old_trimester.Name)
+            row['Nota'] = '7.5'
+            row['Año_Escolar'] = '9999-0000'
+
+        self.reupload(self.old_course, fieldnames, rows)
+
+        self.assertEqual(School_year.objects.count(), before)
+
+
+class ClassDashboardLinkTests(AccessControlTestCase):
+    """Links into `class_dashboard` must carry scope it reads, or nothing.
+
+    `resolve_class_scope` reads `trimester_id` and `subject_courses_id` and
+    ignores `school_year_id` — `Course.school_year` fixes the year. A link
+    appending the ignored param reads as a filter that does not exist.
+    """
+
+    def hrefs(self, html, course):
+        """Every href in `html` pointing at this course's class dashboard."""
+        needle = f'/class/{course.CourseID}/dashboard/'
+        return [chunk.split('"')[0]
+                for chunk in html.split(f'href="{needle}')[1:]]
+
+    def test_section_listing_does_not_append_the_ignored_year(self):
+        response = self.as_(self.professor).get('/section/eso/courses/')
+        html = response.content.decode('utf-8')
+
+        links = self.hrefs(html, self.course)
+        self.assertTrue(links)
+        for link in links:
+            self.assertNotIn('school_year_id', link)
+
+    def test_teacher_dashboard_does_not_append_the_ignored_year(self):
+        response = self.as_(self.professor).get('/teacher/')
+        html = response.content.decode('utf-8')
+
+        links = self.hrefs(html, self.course)
+        self.assertTrue(links)
+        for link in links:
+            self.assertNotIn('school_year_id', link)
+
+    def test_a_listing_link_lands_on_the_courses_own_year(self):
+        """The dropped param was redundant as well as ignored."""
+        response = self.as_(self.professor).get(
+            f'/class/{self.course.CourseID}/dashboard/')
+
+        self.assertEqual(
+            response.context['scope'].school_year, self.course.school_year)
+
+
 class UnlinkedTeacherTests(AccessControlTestCase):
     """Scoping must fail closed: no Teachers link means no data, not all data."""
 
@@ -617,7 +784,7 @@ class ClassScopeTests(AccessControlTestCase):
         self.assertIn(f'trimester_id={self.trimester.pk}', scope.query_string)
 
     def test_dashboard_ignores_school_year_id_from_section_courses_links(self):
-        """section_courses.html appends it; the course already fixes the year."""
+        """No in-app link appends it any more, but bookmarks still carry it."""
         response = self.as_(self.professor).get(
             f'/class/{self.course.pk}/dashboard/?school_year_id=999999')
 
