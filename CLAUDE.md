@@ -13,6 +13,7 @@ source venv/bin/activate          # all commands below assume active venv
 
 podman-compose up -d              # start PostgreSQL (compose.yaml, port 5432)
 python manage.py migrate
+python manage.py createcachetable # REQUIRED — see the rate-limiting section below
 python manage.py runserver        # http://127.0.0.1:8000/
 
 python manage.py makemigrations mainapp
@@ -166,7 +167,8 @@ Three different header sets exist and they do **not** all match:
 |---|---|
 | `download_class_list` (import template) | `Nombre_Estudiante, Asignatura, Trimestre, Año_Escolar, Nota, Tipo_Nota, Numero_Tipo_Nota, Comentarios` |
 | `import_grades` (accepted) | same as above, or English fallbacks (`student_name`, `subject_name`, …) |
-| `grades_csv` / `class_grades_download` (exports) | `Estudiante, Asignatura, Trimestre, Año Escolar, Nota, Tipo de Nota, …, Comentario` |
+| `grades_csv` (export) | `Estudiante, Asignatura, Trimestre, Año Escolar, Nota, Tipo de Nota, Numero tipo de Nota, Comentario` |
+| `class_grades_download` (export) | as above **except** `Numero_Tipo_Nota` — the two exports disagree on that one column |
 
 `download_class_list` is the only producer whose *headers* the importers accept; the two export sets must be re-headered before re-import.
 
@@ -185,6 +187,14 @@ The four items previously listed here (duplicate `GradeForm`, stray imports, unf
 - **`sort_key_section`** (`views.py:663-673`) raises on any `Section` not shaped `<digit><letter>`.
 - **`views.py:854-858`** swallows every exception in the bulk-absence loop, so an `IntegrityError` and a `ValidationError` look identical to the teacher.
 - **`LANGUAGE_CODE = 'es-es'`.** Decimals render `2,66` and dates take Spanish formats app-wide. Two consequences worth knowing before adding a widget: `<input type="datetime-local">` and `type="date"` need an explicit `format='%Y-%m-%dT%H:%M'` on the widget, because Django otherwise renders `DATETIME_INPUT_FORMATS[0]` of the locale and the browser **silently blanks the control**; and anything writing a number into a file rather than a page must keep going through `str()`, not the locale.
+
+## Rate limiting needs a cache table the test suite creates for you
+
+`CACHES` is `DatabaseCache` on table `django_cache` (`settings.py:250-255`), and that table is created by **`manage.py createcachetable`, not by a migration**. Every `@ratelimit` view — `grades_csv`, `search_students`, `import_grades`, `class_grades_download` — raises `ProgrammingError: relation "django_cache" does not exist` and returns 500 without it.
+
+**The suite is structurally blind to this**, because Django's test runner calls `createcachetable` itself during `create_test_db`. A green run says nothing about whether the real database has the table. `.github/workflows/ci.yml` runs the command; the setup block above now does too. Verified present in the current dev database on 2026-08-03.
+
+Rate-limit rejections come back as **429** via `RatelimitTo429Middleware`, deliberately distinct from the 403 a role check produces so logs can tell them apart. One caveat: django-axes 6.x also defaults to 429 for a lockout and `settings.py` does not override `AXES_HTTP_RESPONSE_CODE`, so the two are currently indistinguishable in logs after all.
 
 ## Content-Security-Policy
 
