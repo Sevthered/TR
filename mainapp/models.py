@@ -6,9 +6,24 @@ from django.utils import timezone
 
 class School_year(models.Model):
     # Academic cycle (e.g., '2023-2024').
+    #
+    # `year` is unique, and that is a correctness constraint rather than
+    # tidiness. Two rows named '2025-2026' are indistinguishable in every
+    # select in the app, and `School_year.objects.get(year=...)` — which is how
+    # the CSV importer resolves the column — starts raising
+    # MultipleObjectsReturned, so *every row of every import* fails with a
+    # generic message. `order_by('-year').first()`, the app-wide default year,
+    # also becomes an arbitrary pick between the two.
     SchoolYearID = models.AutoField(primary_key=True)
     year = models.CharField(
-        max_length=9, help_text="Format: '2023-2024'")
+        max_length=9, unique=True, help_text="Format: '2023-2024'",
+        error_messages={
+            # Reaches SchoolYearForm through Model.unique_error_message(),
+            # which uses the field's own 'unique' message for a single-field
+            # check. Without it the administrator gets Django's English default
+            # on a Spanish page.
+            'unique': "Ya existe un año escolar con ese nombre.",
+        })
 
     def __str__(self):
         return self.year
@@ -89,6 +104,16 @@ class Course(models.Model):
     Tipo = models.CharField(max_length=20, choices=COURSE_TYPE_CHOICES)
     Section = models.CharField(max_length=2)
     school_year = models.ForeignKey(School_year, on_delete=models.CASCADE)
+
+    class Meta:
+        # A section is identified by its type, its section string and its year,
+        # and nothing else — "Eso 1A of 2025-2026" names one class. Without
+        # this, running the create-courses flow twice for the same type and
+        # level left two `IB 1A` rows in one year: identical in every Sección
+        # select, different primary keys, and a roster split between them, with
+        # `Students_Courses` unique on (student, course_section) so a student
+        # could sit in both at once.
+        unique_together = ('Tipo', 'Section', 'school_year')
 
     def __str__(self):
         return f"{self.Tipo} {self.Section}"

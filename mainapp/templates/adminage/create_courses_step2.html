@@ -77,6 +77,17 @@
         {% if form_section.num_subsections.errors %}
         <span class="w-full text-[11.5px] text-bad">{{ form_section.num_subsections.errors|striptags }}</span>
         {% endif %}
+
+        {% comment %}
+          main_course_name is hidden, and nothing renders a hidden field's
+          errors for you — as_p collects them at the top of the form, but this
+          page does not use as_p. Since the field is now validated against
+          MAIN_COURSES, a rejection with nowhere to show would re-render the
+          page looking untouched under a generic "corrige los errores".
+        {% endcomment %}
+        {% if form_section.main_course_name.errors %}
+        <span class="w-full text-[11.5px] text-bad">{{ form_section.main_course_name.errors|striptags }}</span>
+        {% endif %}
       </div>
       {% endfor %}
     </div>

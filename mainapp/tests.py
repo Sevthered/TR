@@ -18,7 +18,8 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import connection
+from django.db import connection, transaction
+from django.db.utils import IntegrityError
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -3035,6 +3036,443 @@ class StudentFileMigrationTests(V2CascadeAssertions, AccessControlTestCase):
 
     def test_an_anonymous_caller_is_redirected(self):
         self.assertEqual(self.client.get(self.URL).status_code, 302)
+
+
+class AdminFlowCorrectnessTests(AccessControlTestCase):
+    """Nine confirmed defects across the administrator flows.
+
+    They divide into three kinds, and the kinds are worth keeping apart because
+    each says something different about why a green suite did not catch them.
+
+    *A value computed and then not passed on.* `assign_subjects_view` builds
+    `target_course`, uses it through the rest of the view, and never puts it in
+    the context — so the template's two `{% if target_course %}` branches were
+    both dead. `reassign_students` does the identical thing correctly with
+    `origin_course` and is pinned by `test_the_two_empty_states_do_not_read_
+    alike`; this page simply had no equivalent test.
+
+    *An `except` clause naming too narrow an exception.* Django raises
+    `ValueError` while adapting a non-numeric value to an integer primary key,
+    which never reaches `Model.DoesNotExist`. Five routes on these flows had the
+    right Spanish branch written and unreachable for the commonest bad input,
+    and answered `?school_year_id=abc` with a 500.
+
+    *A model with no uniqueness where the domain has some.* `School_year.year`
+    and `Course(Tipo, Section, school_year)` both name one thing in the world
+    and neither was constrained, so the create flows could silently produce two
+    rows indistinguishable in every select in the app.
+
+    Placed before `LegacyCascadeTeardownTests` rather than at end of file: three
+    slices appending classes at EOF is how this file was corrupted once already.
+    """
+
+    COURSES_URL = '/adminage/create-courses/'
+    ASSIGN_URL = '/adminage/assign-subjects/'
+    STUDENT_URL = '/adminage/create-student-class/'
+    REASSIGN_URL = '/reassign-students/'
+    YEAR_URL = '/adminage/create-school-year/'
+
+    # The three shapes a non-numeric id arrives in: a word, a word that looks
+    # like a null, and something with a statement separator in it.
+    BAD_IDS = ('abc', 'null', '1;drop')
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # A second year, for the "the year and the course disagree" cases.
+        cls.next_year = School_year.objects.create(year='2026-2027')
+        cls.next_class = Course.objects.create(
+            Tipo='Eso', Section='1A', school_year=cls.next_year)
+        # A course of another type, so a level from one type can be pointed at
+        # a course of another and be seen not to stick.
+        cls.bach = Course.objects.create(
+            Tipo='Bachillerato', Section='1A', school_year=cls.year)
+        cls.mover = Students.objects.create(
+            Name='Mover Test', Email='mover@example.com')
+
+    # --- helpers -----------------------------------------------------------
+
+    def confirm_sections(self, course_tipo='IB', level='1', subsections=2,
+                         year=None):
+        """Step 2 of the course-creation flow, as the template posts it."""
+        year = year or self.year
+        return self.as_(self.admin).post(
+            f'{self.COURSES_URL}?school_year_id={year.pk}',
+            {
+                'step': 'confirm_sections',
+                'course_tipo': course_tipo,
+                'school_year': str(year.pk),
+                'form-TOTAL_FORMS': '1',
+                'form-INITIAL_FORMS': '0',
+                'form-MIN_NUM_FORMS': '0',
+                'form-MAX_NUM_FORMS': '1000',
+                'form-0-main_course_name': level,
+                'form-0-display_name': f'{level}º {course_tipo}',
+                'form-0-num_subsections': str(subsections),
+            }, follow=True)
+
+    def sections(self, course_tipo, year=None):
+        return sorted(Course.objects.filter(
+            Tipo=course_tipo, school_year=year or self.year
+        ).values_list('Section', flat=True))
+
+    # --- 1. assign_subjects never told the template which section ----------
+
+    def test_the_selected_section_is_named_rather_than_ninguna(self):
+        """The badge read «Sección seleccionada · Ninguna» over that very
+        section's roster, because `target_course` never reached the context."""
+        response = self.as_(self.admin).get(
+            f'{self.ASSIGN_URL}?course_id={self.course.pk}')
+
+        self.assertContains(response, 'Eso 1A')
+        self.assertNotContains(response, 'Ninguna')
+
+    def test_the_two_assign_empty_states_do_not_read_alike(self):
+        """The equivalent of `ReassignStudentsV2Tests.test_the_two_empty_
+        states_do_not_read_alike`, which is the test this page did not have.
+        «Esta sección no tiene alumn@s» was dead code: with `target_course`
+        absent from the context it always lost to «Elija una sección arriba»."""
+        self.assertContains(self.as_(self.admin).get(self.ASSIGN_URL),
+                            'Elija una sección arriba')
+
+        Students_Courses.objects.filter(
+            course_section=self.other_course).delete()
+
+        self.assertContains(
+            self.as_(self.admin).get(
+                f'{self.ASSIGN_URL}?course_id={self.other_course.pk}'),
+            'no tiene alumn@s matriculad@s')
+
+    def test_a_bad_course_id_does_not_leave_a_section_named(self):
+        """Guard on the fix: the warning branch clears `selected_course_id`, so
+        it has to clear `target_course` with it or the badge names a course the
+        page has just refused to use."""
+        response = self.as_(self.admin).get(
+            f'{self.ASSIGN_URL}?course_id=999999')
+
+        self.assertContains(response, 'Ninguna')
+
+    # --- 2. five routes answered a non-numeric id with a 500 ---------------
+
+    def test_create_courses_answers_a_non_numeric_year_with_a_404(self):
+        for bad in self.BAD_IDS:
+            with self.subTest(school_year_id=bad):
+                response = self.as_(self.admin).get(
+                    f'{self.COURSES_URL}?school_year_id={bad}')
+
+                self.assertEqual(response.status_code, 404)
+
+    def test_assign_subjects_names_a_non_numeric_year_in_spanish(self):
+        for bad in self.BAD_IDS:
+            with self.subTest(school_year_id=bad):
+                response = self.as_(self.admin).get(
+                    f'{self.ASSIGN_URL}?school_year_id={bad}', follow=True)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, 'El año escolar no es válido')
+
+    def test_assign_subjects_names_a_non_numeric_course_in_spanish(self):
+        for bad in self.BAD_IDS:
+            with self.subTest(course_id=bad):
+                response = self.as_(self.admin).get(
+                    f'{self.ASSIGN_URL}?course_id={bad}', follow=True)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(
+                    response, 'El identificador de curso no es válido')
+
+    def test_posting_a_non_numeric_course_to_assign_subjects_is_not_a_500(self):
+        for bad in self.BAD_IDS:
+            with self.subTest(course_id=bad):
+                response = self.as_(self.admin).post(
+                    self.ASSIGN_URL,
+                    {'course_id': bad, 'school_year_id': str(self.year.pk),
+                     'subject': str(self.subject.pk),
+                     'teacher': str(self.teacher_a.pk)}, follow=True)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, 'El curso no es válido')
+
+    def test_posting_a_non_numeric_course_to_create_student_is_not_a_500(self):
+        """No student may be created either: the row is written inside the
+        `else` of that same try, so the crash was availability rather than
+        integrity — but only by accident of ordering."""
+        before = Students.objects.count()
+
+        for bad in self.BAD_IDS:
+            with self.subTest(course_id=bad):
+                response = self.as_(self.admin).post(
+                    self.STUDENT_URL,
+                    {'Name': 'Nuevo Alumno', 'Email': 'nuevo@example.com',
+                     'course_id': bad}, follow=True)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(
+                    response, 'La sección seleccionada no es válida')
+
+        self.assertEqual(Students.objects.count(), before)
+
+    # --- 3. reassign filled a gap in `level` instead of overriding it ------
+
+    def test_the_course_row_overrides_a_disagreeing_level(self):
+        """`?course_id=<Bachillerato 1A>&level=4` rendered the heading and the
+        hidden course_id as Bachillerato 1A while Nivel had nothing selected
+        and Sección said «Este nivel no tiene secciones» — the scope bar
+        contradicting the page under it. The docstring already promised the row
+        would override; only year and type actually did."""
+        body = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?course_id={self.bach.pk}&level=4'
+        ).content.decode()
+
+        # Qualified by the option's text, not just its value: a level number
+        # and a course primary key are both small integers and collide.
+        self.assertIn('<option value="1" selected>1º Bachillerato', body)
+        self.assertNotIn('Este nivel no tiene secciones', body)
+        self.assertIn(f'<option value="{self.bach.pk}" selected>1A', body)
+
+    def test_arriving_with_only_a_course_id_still_recovers_the_level(self):
+        """Guard against over-tightening: dropping the `if not level` guard
+        must not stop the level being derived when none was submitted."""
+        body = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?course_id={self.bach.pk}').content.decode()
+
+        self.assertIn('<option value="1" selected>1º Bachillerato', body)
+
+    # --- 4. choosing a new year with JavaScript off reverted it ------------
+
+    def test_choosing_a_new_year_keeps_the_year_and_drops_the_course(self):
+        """With JavaScript off the scope bar is an ordinary GET form: pick a
+        year, press «Cargar alumnado», and the section select resubmits
+        untouched, carrying a `course_id` from the old year. The course used to
+        override, which silently undid the only thing just chosen — while
+        `_course_dependents.html` states in as many words that the no-JS path
+        works."""
+        body = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id={self.next_year.pk}'
+            f'&course_id={self.course.pk}').content.decode()
+
+        self.assertIn(
+            f'<option value="{self.next_year.pk}" selected>{self.next_year.year}',
+            body)
+        self.assertNotIn(
+            f'<option value="{self.year.pk}" selected>{self.year.year}', body)
+
+    def test_the_stale_class_is_not_left_loaded_under_the_new_year(self):
+        """Keeping the year but still showing the old year's roster would be
+        the same contradiction the other way round."""
+        response = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id={self.next_year.pk}'
+            f'&course_id={self.course.pk}')
+
+        self.assertNotContains(response, 'Ana Lopez')
+        self.assertContains(response, 'otro año escolar')
+
+    def test_an_agreeing_year_and_course_still_load_the_roster(self):
+        """Guard against over-tightening: the post-POST redirect carries both
+        params and they agree, so this is the ordinary path."""
+        response = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id={self.year.pk}'
+            f'&course_id={self.course.pk}')
+
+        self.assertContains(response, 'Ana Lopez')
+
+    # --- 5. two school years could share a name ----------------------------
+
+    def test_a_duplicate_school_year_cannot_be_written(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            School_year.objects.create(year=self.year.year)
+
+    def test_the_year_form_refuses_a_duplicate_in_spanish(self):
+        """An IntegrityError page is not an answer. The message is attached to
+        the model field so `Model.unique_error_message()` carries it into the
+        form, rather than Django's English default on a Spanish page."""
+        before = School_year.objects.count()
+
+        response = self.as_(self.admin).post(
+            self.YEAR_URL, {'year': self.year.year})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Ya existe un año escolar')
+        self.assertEqual(School_year.objects.count(), before)
+
+    def test_a_refused_year_creates_no_trimesters(self):
+        """The duplicate used to arrive with three more trimesters behind it,
+        which is what made the resulting import failures so hard to read."""
+        before = Trimester.objects.count()
+
+        self.as_(self.admin).post(self.YEAR_URL, {'year': self.year.year})
+
+        self.assertEqual(Trimester.objects.count(), before)
+
+    def test_a_genuinely_new_year_is_still_created(self):
+        response = self.as_(self.admin).post(
+            self.YEAR_URL, {'year': '2030-2031'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(School_year.objects.filter(year='2030-2031').exists())
+
+    # --- 6. two course sections could share a name -------------------------
+
+    def test_a_duplicate_section_cannot_be_written(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Course.objects.create(
+                Tipo=self.course.Tipo, Section=self.course.Section,
+                school_year=self.year)
+
+    def test_the_same_section_in_another_year_is_still_allowed(self):
+        """The constraint is per year, not global — `Eso 1A` exists every
+        year, and the fixture's `next_class` is exactly that."""
+        self.assertTrue(Course.objects.filter(
+            Tipo='Eso', Section='1A', school_year=self.next_year).exists())
+
+    def test_running_the_course_flow_twice_creates_no_duplicates(self):
+        """`bulk_create` over a model with no uniqueness left two `IB 1A` rows
+        in one year: identical in every Sección select, different primary keys,
+        and a roster split between them."""
+        self.confirm_sections()
+        after_first = self.sections('IB')
+
+        self.confirm_sections()
+
+        self.assertEqual(after_first, ['1A', '1B'])
+        self.assertEqual(self.sections('IB'), after_first)
+
+    def test_the_second_run_says_which_sections_already_existed(self):
+        """Skipping silently would look identical to creating them. Named
+        rather than counted: which ones decides whether anything is wrong."""
+        self.confirm_sections()
+
+        response = self.confirm_sections()
+
+        self.assertContains(response, 'Ya existían')
+        self.assertContains(response, 'IB 1A')
+        self.assertContains(response, '0 sección(es) creada(s)')
+
+    def test_a_second_run_still_adds_the_sections_that_are_new(self):
+        """Adding a section C to a level that already has A and B is an
+        ordinary thing to do and has no other route in the UI, so skipping
+        must be per section rather than per level."""
+        self.confirm_sections(subsections=2)
+
+        self.confirm_sections(subsections=3)
+
+        self.assertEqual(self.sections('IB'), ['1A', '1B', '1C'])
+
+    # --- 7. an unvalidated hidden field created out-of-range courses -------
+
+    def test_a_level_outside_main_courses_is_refused(self):
+        """`main_course_name` rode in a hidden input as a bare CharField, so a
+        crafted POST created `Eso 9A` although MAIN_COURSES['Eso'] is 1-4."""
+        response = self.confirm_sections(course_tipo='Eso', level='9')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'no existe para este tipo de curso')
+        self.assertFalse(
+            Course.objects.filter(Tipo='Eso', Section='9A').exists())
+
+    def test_a_level_too_long_for_the_column_is_refused_not_a_500(self):
+        """`Section` is max_length=2 and `bulk_create` validates nothing, so
+        `main_course_name=10` reached the database as a DataError and a 500."""
+        response = self.confirm_sections(course_tipo='Eso', level='10')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Course.objects.filter(Tipo='Eso', Section__startswith='10').exists())
+
+    def test_a_level_from_the_wrong_course_type_is_refused(self):
+        """Eso goes to 4; Bachillerato and IB stop at 2. The level is only
+        meaningful next to a type, which is why the type is passed in."""
+        response = self.confirm_sections(course_tipo='Bachillerato', level='4')
+
+        self.assertContains(response, 'no existe para este tipo de curso')
+        self.assertEqual(self.sections('Bachillerato'), ['1A'])
+
+    def test_a_level_inside_main_courses_still_creates_its_sections(self):
+        """Guard against over-tightening: the flow this validation sits in
+        front of has to keep working."""
+        self.confirm_sections(course_tipo='Eso', level='4', subsections=2)
+
+        self.assertEqual(self.sections('Eso'), ['1A', '2B', '4A', '4B'])
+
+    # --- 8. an all-unchanged submit said nothing at all --------------------
+
+    def test_an_all_unchanged_reassign_submit_says_so(self):
+        """Every row on «Sin cambios» gives success_count == 0 and
+        error_count == 0, so neither message fired and the redirect was
+        indistinguishable from a save that worked."""
+        response = self.as_(self.admin).post(
+            self.REASSIGN_URL,
+            {'school_year_id': str(self.year.pk),
+             'course_id': str(self.course.pk),
+             'assignments': ['', '']}, follow=True)
+
+        self.assertContains(response, 'No se seleccionó ningún cambio')
+
+    def test_a_real_reassign_does_not_claim_nothing_happened(self):
+        """Guard against over-tightening: the informational message must not
+        ride along with a successful save."""
+        response = self.as_(self.admin).post(
+            self.REASSIGN_URL,
+            {'school_year_id': str(self.year.pk),
+             'course_id': str(self.course.pk),
+             'assignments': [f'{self.student.pk}:{self.other_course.pk}']},
+            follow=True)
+
+        self.assertNotContains(response, 'No se seleccionó ningún cambio')
+        self.assertContains(response, 'reasignad')
+
+    # --- 9. two enrolments in the destination year read as a failure -------
+
+    def test_a_student_already_in_the_destination_is_not_a_failure(self):
+        """The lookup asked "is the *first* same-year row the destination?"
+        rather than "is any row the destination?". With two enrolments in that
+        year it picked the other one, repointing it tripped unique_together,
+        and a request whose state was already correct was reported back as «no
+        se pudieron aplicar»."""
+        Students_Courses.objects.create(
+            student=self.mover, course_section=self.course)
+        Students_Courses.objects.create(
+            student=self.mover, course_section=self.other_course)
+
+        response = self.as_(self.admin).post(
+            self.REASSIGN_URL,
+            {'assignments': [f'{self.mover.pk}:{self.other_course.pk}']},
+            follow=True)
+
+        self.assertNotContains(response, 'no se pudieron aplicar')
+        self.assertContains(response, 'reasignad')
+
+    def test_the_already_correct_rows_are_left_exactly_as_they_were(self):
+        """The state was already what was asked for, so nothing may move —
+        including the *other* same-year enrolment the old code repointed."""
+        Students_Courses.objects.create(
+            student=self.mover, course_section=self.course)
+        Students_Courses.objects.create(
+            student=self.mover, course_section=self.other_course)
+
+        self.as_(self.admin).post(
+            self.REASSIGN_URL,
+            {'assignments': [f'{self.mover.pk}:{self.other_course.pk}']})
+
+        self.assertEqual(
+            sorted(sc.course_section_id for sc in
+                   Students_Courses.objects.filter(student=self.mover)),
+            sorted([self.course.pk, self.other_course.pk]))
+
+    def test_a_single_enrolment_move_is_untouched_by_the_fix(self):
+        """Guard against over-tightening: the ordinary one-row move is the
+        path `ReassignStudentsTests` describes and must not change."""
+        Students_Courses.objects.create(
+            student=self.mover, course_section=self.course)
+
+        self.as_(self.admin).post(
+            self.REASSIGN_URL,
+            {'assignments': [f'{self.mover.pk}:{self.other_course.pk}']})
+
+        self.assertEqual(
+            [sc.course_section_id for sc in
+             Students_Courses.objects.filter(student=self.mover)],
+            [self.other_course.pk])
 
 
 class LegacyCascadeTeardownTests(TestCase):

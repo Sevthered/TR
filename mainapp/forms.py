@@ -238,6 +238,18 @@ class SchoolYearForm(forms.ModelForm):
 
 class CourseSectionForm(forms.Form):
     # Base form for dynamic sections (Step 2).
+    #
+    # `main_course_name` is the level number the row belongs to, and it travels
+    # in a hidden input, so it is attacker-controlled like any other POST
+    # field. As a bare CharField it accepted anything: `main_course_name=9`
+    # created an `Eso 9A` that MAIN_COURSES says cannot exist, and
+    # `main_course_name=10` produced a three-character Section against
+    # `Course.Section`'s max_length=2 — which `bulk_create` does not validate,
+    # so it reached the database as a DataError and a 500. The same string
+    # later feeds `sort_key_section`, which is strict about its shape.
+    #
+    # The level is only meaningful next to a course type, so the type is passed
+    # in by the view (`form_kwargs` on the formset) rather than guessed here.
 
     main_course_name = forms.CharField(widget=forms.HiddenInput())
 
@@ -256,6 +268,25 @@ class CourseSectionForm(forms.Form):
         help_text="Por ejemplo, 3 creará 1A, 1B y 1C.",
         widget=forms.NumberInput(attrs={'class': 'ctl'})
     )
+
+    def __init__(self, *args, **kwargs):
+        # Absent — the initial render in `_render_step2`, which validates
+        # nothing — the check below simply has no valid set and rejects, which
+        # is the right way round for a field nobody ever types into.
+        self.course_tipo = kwargs.pop('course_tipo', None)
+        super().__init__(*args, **kwargs)
+
+    def clean_main_course_name(self):
+        value = self.cleaned_data['main_course_name']
+        valid = [str(level)
+                 for level in MAIN_COURSES.get(self.course_tipo or '', [])]
+
+        if value not in valid:
+            raise forms.ValidationError(
+                "El nivel «%(level)s» no existe para este tipo de curso.",
+                code='invalid_level', params={'level': value})
+
+        return value
 
 
 class CourseCreationForm(forms.Form):
