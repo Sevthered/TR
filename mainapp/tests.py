@@ -561,6 +561,304 @@ class CsvRoundTripTests(AccessControlTestCase):
         self.assertEqual(School_year.objects.count(), before)
 
 
+class CsvImportCorrectnessTests(AccessControlTestCase):
+    """What a green import hides.
+
+    `CsvImportTests` above pins that the importer validates, and it does. But
+    every grade it uploads is 7.5, 6 or 7,5 — and those are binary-exact, the
+    one set of values the float conversion below happened not to corrupt. Four
+    grades in five could not be imported at all and 307 tests stayed green.
+
+    The rest are the same shape: faults on the paths a successful upload never
+    walks — the second half of a file that fails to decode, a re-uploaded
+    template, a header that is not the one the importer reads.
+    """
+
+    HEADER = ('Nombre_Estudiante,Asignatura,Trimestre,Año_Escolar,'
+              'Nota,Tipo_Nota,Numero_Tipo_Nota,Comentarios')
+
+    def url(self, scoped=False):
+        return (f'/import/grades/{self.course.CourseID}/' if scoped
+                else '/import/grades/')
+
+    def row(self, grade='7.7', student=None, subject=None, trimester='1',
+            year='2025-2026', gtype='examen', number='1', comments=''):
+        name = (student or self.student).Name
+        return (f'{name},{subject or self.subject.Name},{trimester},{year},'
+                f'{grade},{gtype},{number},{comments}')
+
+    def upload(self, *rows, scoped=False, body=None, header=None):
+        """POST a CSV and return the page. Never `follow=True`: the result is
+        rendered in place, and following would hide a regression to a
+        redirect."""
+        if body is None:
+            body = '\n'.join([header or self.HEADER, *rows]).encode('utf-8')
+        upload = SimpleUploadedFile(
+            'grades.csv', body, content_type='text/csv')
+        return self.as_(self.professor).post(
+            self.url(scoped), {'csv_file': upload})
+
+    def a_grade(self, value='4.00', comments='', number=1):
+        return Grade.objects.create(
+            student=self.student, subject=self.subject,
+            trimester=self.trimester, school_year=self.year,
+            grade=Decimal(value), grade_type='examen',
+            grade_type_number=number, comments=comments)
+
+    # --- 1. the blocker: float -> DecimalField ------------------------------
+
+    def test_a_grade_that_is_not_binary_exact_still_imports(self):
+        """`grade.grade = float(...)` on a DecimalField(decimal_places=2).
+
+        Django converts an assigned float with `create_decimal_from_float()`,
+        so float('7.7') arrives as a Decimal with three decimal places and
+        `DecimalValidator` rejects it. Of the 101 one-decimal grades from 0.0
+        to 10.0 exactly 21 imported — the multiples of 0.5.
+        """
+        for number, value in enumerate(('7.7', '2.66', '8.3', '9.99'), 1):
+            with self.subTest(grade=value):
+                Grade.objects.all().delete()
+                self.upload(self.row(grade=value, number=str(number)))
+
+                self.assertEqual(Grade.objects.get().grade, Decimal(value))
+
+    def test_the_only_grade_in_the_live_database_can_be_imported(self):
+        """2.66 — and therefore its own export, re-headered. Quoted, as a real
+        es-ES spreadsheet writes it."""
+        response = self.upload(self.row(grade='"2,66"'))
+
+        self.assertEqual(Grade.objects.get().grade, Decimal('2.66'))
+        self.assertEqual(response.context['result']['error_count'], 0)
+
+    def test_the_management_command_imports_the_same_values(self):
+        """The identical line lived in the CLI importer too."""
+        import tempfile
+        from django.core.management import call_command
+
+        with tempfile.NamedTemporaryFile(
+                'w', suffix='.csv', encoding='utf-8', delete=False,
+                newline='') as handle:
+            handle.write(f'{self.HEADER}\n{self.row(grade="7.7")}\n')
+            path = handle.name
+
+        call_command('import_grades', path)
+
+        self.assertEqual(Grade.objects.get().grade, Decimal('7.7'))
+
+    # --- 2. a decode error mid-file ----------------------------------------
+
+    def test_rows_committed_before_a_decode_error_are_still_reported(self):
+        """Two rows land, the third fails to decode, and the summary used to
+        be discarded — so the page said only "no se ha podido leer" while two
+        grades sat in the database."""
+        lines = [self.HEADER.encode('utf-8'),
+                 self.row(grade='7.5', number='1').encode('utf-8'),
+                 self.row(grade='6.5', number='2').encode('utf-8'),
+                 # A latin-1 accented byte: not valid UTF-8, so iterdecode
+                 # raises on this line and not before it.
+                 'Ana Lópe'.encode('latin-1') + b',x,1,2025-2026,5,examen,3,']
+        response = self.upload(body=b'\n'.join(lines))
+
+        self.assertEqual(Grade.objects.count(), 2)
+        self.assertIsNotNone(response.context['result'])
+        self.assertEqual(response.context['result']['created'], 2)
+        self.assertContains(response, 'Filas leídas')
+
+    # --- 3. the Excel BOM ---------------------------------------------------
+
+    def test_a_utf8_bom_does_not_turn_into_a_missing_student(self):
+        """Excel's default "CSV UTF-8" writes one. Decoded as plain utf-8 it
+        becomes part of the first header name, the student column is never
+        read, and every row fails blaming the roster."""
+        body = ('﻿' + self.HEADER + '\n'
+                + self.row(grade='7.5')).encode('utf-8')
+        response = self.upload(body=body)
+
+        self.assertTrue(Grade.objects.exists())
+        self.assertNotContains(response, 'Alumno no encontrado')
+
+    # --- 4. the comment wipe ------------------------------------------------
+
+    def test_a_blank_comment_column_does_not_erase_the_comment(self):
+        """`download_class_list` always ships `Comentarios` blank, so the
+        documented workflow — download, fill in one grade, upload — erased the
+        comment on every grade it touched."""
+        grade = self.a_grade(comments='Muy buen trimestre')
+        self.upload(self.row(grade='8.5', comments=''))
+
+        grade.refresh_from_db()
+        self.assertEqual(grade.comments, 'Muy buen trimestre')
+        self.assertEqual(grade.grade, Decimal('8.5'))
+
+    def test_a_comment_the_teacher_typed_still_overwrites(self):
+        """Blank means "not stated", not "keep whatever is there whatever I
+        write" — the fix must not make comments unwritable."""
+        grade = self.a_grade(comments='Muy buen trimestre')
+        self.upload(self.row(grade='8.5', comments='Ha mejorado'))
+
+        grade.refresh_from_db()
+        self.assertEqual(grade.comments, 'Ha mejorado')
+
+    # --- 5. the unscoped subject lookup -------------------------------------
+
+    def test_a_subject_the_teacher_does_not_teach_is_refused(self):
+        """The student lookup was scoped and this one was not, so any subject
+        in the catalogue could be graded as long as the student was yours."""
+        foreign = Subjects.objects.create(Name='Fisica')
+        response = self.upload(self.row(grade='7.5', subject='Fisica'))
+
+        self.assertFalse(Grade.objects.filter(subject=foreign).exists())
+        self.assertContains(response, 'Fisica')
+
+    def test_the_teachers_own_subject_is_still_importable(self):
+        """Guards the fix against over-reaching: scoping must not refuse the
+        subject the teacher is actually assigned to."""
+        self.upload(self.row(grade='7.5'), scoped=True)
+
+        self.assertTrue(Grade.objects.filter(subject=self.subject).exists())
+
+    # --- 6. one message for four causes -------------------------------------
+
+    def test_each_invalid_value_is_reported_as_itself(self):
+        """Out of range, unknown type, too many decimals and a negative number
+        all rendered the same sentence, and Django's own message — which had
+        already said "no más de 2 decimales" — was discarded. That is why the
+        float bug above was invisible."""
+        cases = (
+            ('demasiados decimales', self.row(grade='7.777'), 'Nota:'),
+            ('fuera de rango', self.row(grade='11'), 'Nota:'),
+            ('tipo inexistente', self.row(gtype='inventado'), 'Tipo_Nota:'),
+            ('numero negativo', self.row(number='-1'),
+             'Numero_Tipo_Nota:'),
+        )
+        for label, row, column in cases:
+            with self.subTest(case=label):
+                response = self.upload(row)
+
+                self.assertFalse(Grade.objects.exists())
+                self.assertContains(response, column)
+                self.assertNotContains(response, 'Valores no válidos')
+
+    # --- 7. the year the file names vs the year the course is in ------------
+
+    def test_a_class_scoped_import_refuses_another_years_row(self):
+        """`Course.school_year` fixes the year, exactly as it does for
+        `resolve_class_scope`. A row naming a different *existing* year was
+        written into that other year without a word."""
+        other = School_year.objects.create(year='2024-2025')
+        Trimester.objects.create(Name=1, school_year=other)
+
+        response = self.upload(
+            self.row(grade='7.5', year='2024-2025'), scoped=True)
+
+        self.assertFalse(Grade.objects.exists())
+        self.assertContains(response, '2024-2025')
+        self.assertContains(response, '2025-2026')
+
+    def test_the_unscoped_route_still_accepts_any_year_it_knows(self):
+        """There is no course to disagree with, so the check must not fire."""
+        other = School_year.objects.create(year='2024-2025')
+        Trimester.objects.create(Name=1, school_year=other)
+
+        self.upload(self.row(grade='7.5', year='2024-2025'))
+
+        self.assertTrue(Grade.objects.filter(school_year=other).exists())
+
+    # --- 8 and 10. what the counters count, and what the cap hides ----------
+
+    def test_the_row_limit_notice_survives_the_error_display_cap(self):
+        """It was appended to `errors` last and `errors` is sliced to 50, so
+        on the only kind of file that can trigger it the notice was the first
+        thing hidden. And "Filas leídas" counted it as a row."""
+        from unittest.mock import patch
+
+        rows = [f'Fantasma {n},{self.subject.Name},1,2025-2026,7.5,examen,{n},'
+                for n in range(52)]
+        with patch('mainapp.views.MAX_IMPORT_ROWS', 51):
+            response = self.upload(*rows)
+
+        self.assertContains(response, 'límite de 51 filas')
+        self.assertEqual(response.context['result']['rows'], 51)
+
+    def test_an_empty_file_is_refused_rather_than_reported_as_success(self):
+        response = self.upload(body=b'')
+
+        self.assertContains(response, 'vacío')
+        self.assertNotContains(response, 'Filas leídas')
+
+    def test_a_headers_only_file_says_there_was_nothing_to_import(self):
+        """0 / 0 / 0 and no message reads as a successful import."""
+        response = self.upload()
+
+        self.assertContains(response, 'solo tiene la cabecera')
+        self.assertNotContains(response, 'Filas leídas')
+
+    # --- 9. structural faults are faults of the file ------------------------
+
+    def test_an_export_reuploaded_unchanged_is_refused_as_a_whole(self):
+        """This is what makes re-importing an export say "Alumno no
+        encontrado": `Estudiante` is not `Nombre_Estudiante`, so every cell
+        reads empty and the rows fail one by one for the wrong reason."""
+        header = ('Estudiante,Asignatura,Trimestre,Año Escolar,Nota,'
+                  'Tipo de Nota,Numero,Comentario')
+        response = self.upload(
+            f'{self.student.Name},{self.subject.Name},1,2025-2026,7.5,'
+            f'examen,1,', header=header)
+
+        self.assertContains(response, 'Faltan columnas en la cabecera')
+        self.assertNotContains(response, 'Alumno no encontrado')
+        self.assertNotContains(response, 'Filas leídas')
+
+    def test_a_semicolon_separated_file_is_refused_as_a_whole(self):
+        body = (self.HEADER.replace(',', ';') + '\n'
+                + self.row(grade='7.5').replace(',', ';')).encode('utf-8')
+        response = self.upload(body=body)
+
+        self.assertContains(response, 'Faltan columnas en la cabecera')
+        self.assertNotContains(response, 'Alumno no encontrado')
+
+    def test_a_missing_column_is_named_rather_than_inferred(self):
+        header = self.HEADER.replace(',Nota,', ',')
+        response = self.upload(
+            f'{self.student.Name},{self.subject.Name},1,2025-2026,'
+            f'examen,1,', header=header)
+
+        self.assertContains(response, 'Faltan columnas en la cabecera')
+        self.assertContains(response, 'Nota')
+
+    def test_a_short_row_says_its_columns_do_not_match(self):
+        """It used to be reported as whichever cell happened to end up empty
+        — "Falta la nota" for a row that is missing five columns."""
+        response = self.upload(f'{self.student.Name},{self.subject.Name}')
+
+        self.assertContains(response, 'menos columnas')
+        self.assertNotContains(response, 'Falta la nota')
+
+    # --- the upsert, made visible -------------------------------------------
+
+    def test_an_overwritten_grade_is_named_with_its_old_value(self):
+        """Import is an upsert and stays one — whether a file may replace an
+        existing grade is the user's call. But "actualizadas: 1" does not say
+        what was replaced, and the old value is gone by the time it is read.
+        """
+        self.a_grade(value='4.00')
+        response = self.upload(self.row(grade='8.5'))
+
+        updates = response.context['result']['updates']
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]['old'], Decimal('4.00'))
+        self.assertEqual(updates[0]['new'], Decimal('8.5'))
+        self.assertEqual(updates[0]['student'], self.student.Name)
+        self.assertContains(response, 'Notas sustituidas')
+
+    def test_an_import_that_creates_shows_no_overwrite_table(self):
+        """An empty "Notas sustituidas" heading claims an overwrite."""
+        response = self.upload(self.row(grade='8.5'))
+
+        self.assertContains(response, 'Notas creadas')
+        self.assertNotContains(response, 'Notas sustituidas')
+
+
 class ClassDashboardLinkTests(AccessControlTestCase):
     """Links into `class_dashboard` must carry scope it reads, or nothing.
 

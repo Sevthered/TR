@@ -2,7 +2,7 @@ import codecs
 import csv
 import logging
 import unicodedata
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from django.contrib import messages
@@ -1450,6 +1450,77 @@ def search_students(request):
     return render(request, 'mainapp/search_results.html', context)
 
 
+# The columns `import_grades` reads, primary name first (the set
+# `download_class_list` writes) and the English fallback second. Only these
+# five are required: `Tipo_Nota`, `Numero_Tipo_Nota` and `Comentarios` all
+# have defaults, so a file may legitimately omit them.
+IMPORT_REQUIRED_COLUMNS = (
+    ('Nombre_Estudiante', 'student_name'),
+    ('Asignatura', 'subject_name'),
+    ('Trimestre', 'trimester_name'),
+    ('Año_Escolar', 'school_year'),
+    ('Nota', 'grade'),
+)
+
+# Model field -> the CSV column that carries it. `full_clean` names the field
+# it rejected; a teacher is looking at a spreadsheet and needs the column.
+IMPORT_FIELD_COLUMNS = {
+    'grade': 'Nota',
+    'grade_type': 'Tipo_Nota',
+    'grade_type_number': 'Numero_Tipo_Nota',
+    'comments': 'Comentarios',
+    '__all__': 'la fila',
+}
+
+
+def missing_import_columns(fieldnames):
+    """Required columns absent from `fieldnames`, by their primary name.
+
+    A structural fault is a fault of the *file*. Without this check an export
+    re-uploaded unchanged, a `;`-separated file or a file missing a column all
+    parse into rows whose every cell is empty, and then fail one by one with
+    "Alumno no encontrado" — which blames the roster for a header problem.
+    """
+    present = set(fieldnames or ())
+    return [primary for primary, fallback in IMPORT_REQUIRED_COLUMNS
+            if primary not in present and fallback not in present]
+
+
+def import_validation_message(exc):
+    """Django's own validation messages, named by CSV column.
+
+    The four unrelated causes this used to flatten into one sentence — out of
+    range, unknown `grade_type`, more than two decimals, negative
+    `Numero_Tipo_Nota` — are each already described exactly by Django, and the
+    text was being discarded. None of it is PII: the messages name fields and
+    bounds, never the value a person's row carried.
+    """
+    detail = getattr(exc, 'message_dict', None)
+    if not detail:
+        return '; '.join(exc.messages)
+    return '; '.join(
+        f'{IMPORT_FIELD_COLUMNS.get(field, field)}: {" ".join(msgs)}'
+        for field, msgs in sorted(detail.items()))
+
+
+def teacher_subjects(teacher, course=None):
+    """Subjects this teacher is assigned to teach, optionally in one course.
+
+    The counterpart of `teacher_students`: the student lookup was scoped and
+    the subject lookup was not, so a professor could file a grade under any
+    subject in the catalogue as long as the student was theirs.
+
+    `course` is a keyword of the same `filter()` call rather than a second
+    `.filter()` deliberately — chaining them across a multi-valued relation
+    joins twice, and would match a subject this teacher teaches *elsewhere*
+    that somebody else happens to teach here.
+    """
+    criteria = {'subjects_courses__teacher': teacher}
+    if course is not None:
+        criteria['subjects_courses__course'] = course
+    return Subjects.objects.filter(**criteria).distinct()
+
+
 @ratelimit(key='user', rate='10/h', block=True)
 @teacher_required
 def import_grades(request, course_id=None):
@@ -1468,6 +1539,10 @@ def import_grades(request, course_id=None):
     if course:
         importable_students = importable_students.filter(
             students_courses__course_section=course)
+
+    # The same scoping for the subject. Mirrors the students exactly: what the
+    # teacher teaches, narrowed to this class when the import is class-scoped.
+    importable_subjects = teacher_subjects(profile.teacher, course)
 
     # Whole-file refusals stay in `messages` — they are one statement about the
     # upload, not a list. Per-row failures go in `result` and are tabulated.
@@ -1505,11 +1580,18 @@ def import_grades(request, course_id=None):
                 f'{MAX_IMPORT_BYTES // 1024 // 1024} MB.')
             return page()
 
-        # Counters.
+        # Counters. `rows_read` counts data lines actually taken off the file.
+        # "Filas leídas" used to be derived as created + updated + errors,
+        # which is a coincidence rather than a count — it holds only while
+        # every row lands in exactly one bucket, and the row-limit notice went
+        # into `errors` without being a row at all, so a truncated file
+        # reported one row more than it read.
+        rows_read = 0
         created_count = 0
         updated_count = 0
         error_count = 0
         errors = []
+        updates = []
 
         # Errors used to be pushed into `messages` one banner per row, capped
         # at ten, which is the page's actual job rendered as a wall of text.
@@ -1517,28 +1599,119 @@ def import_grades(request, course_id=None):
         # number is a column rather than a prefix. The limit is a display
         # limit only — `error_count` still counts every failed row.
         ERROR_DISPLAY_LIMIT = 50
+        UPDATE_DISPLAY_LIMIT = 50
 
         def add_error(message, row_num=None):
             """Record one row failure. Messages must never echo a student
             name: they are shown in the browser and a roster is PII."""
             errors.append({'row': row_num, 'message': message})
 
+        def add_update(row_num, grade, old_value):
+            """Record one overwrite.
+
+            Import is an upsert and always has been: a row colliding on the
+            unique key replaces the existing grade. That stays — whether an
+            import may overwrite is the user's call — but it was reported as a
+            bare counter, so a teacher could not tell *what* had been
+            replaced. This names it.
+
+            Unlike an error row this may carry the student's name: the row
+            matched, so the student is definitionally one this teacher already
+            teaches. The anonymity rule exists because a *failed* row echoes
+            whatever string the file contained.
+            """
+            updates.append({
+                'row': row_num,
+                'student': grade.student.Name,
+                'initials': student_initials(grade.student.Name),
+                'subject': grade.subject.Name,
+                'trimester': grade.trimester.Name,
+                'grade_type': grade.grade_type,
+                'old': old_value,
+                'new': grade.grade,
+            })
+
+        def summary():
+            """The result strip, built from the counters alone.
+
+            Called on the way out of *both* the normal path and the read
+            failure below. A decode error part-way through a file used to
+            discard `result` entirely, so rows already committed were reported
+            as nothing at all — the teacher read "no se ha podido leer el
+            archivo" as "nothing was imported" while grades were in the
+            database. Rolling the whole import back instead would be a
+            different product decision; reporting what happened is not.
+            """
+            return {
+                'created': created_count,
+                'updated': updated_count,
+                'error_count': error_count,
+                'rows': rows_read,
+                'errors': errors[:ERROR_DISPLAY_LIMIT],
+                'hidden_errors': max(len(errors) - ERROR_DISPLAY_LIMIT, 0),
+                'updates': updates[:UPDATE_DISPLAY_LIMIT],
+                'hidden_updates': max(len(updates) - UPDATE_DISPLAY_LIMIT, 0),
+            }
+
         try:
             # Streamed, not read() into memory. iterdecode keeps peak memory
             # proportional to one row rather than to the whole file.
-            reader = csv.DictReader(codecs.iterdecode(csv_file, 'utf-8'))
+            #
+            # utf-8-sig, not utf-8: Excel's "CSV UTF-8" writes a BOM, which
+            # under plain utf-8 becomes part of the first header name. The
+            # student column was then never found and every row failed with
+            # "Alumno no encontrado" — a header fault reported as a roster
+            # fault. utf-8-sig reads a BOM-less file identically.
+            reader = csv.DictReader(codecs.iterdecode(csv_file, 'utf-8-sig'))
+
+            # Whole-file checks, before any row is touched. Each of these is
+            # one statement about the upload, so each is a message.
+            if reader.fieldnames is None:
+                messages.error(request, 'El archivo está vacío.')
+                return page()
+
+            missing = missing_import_columns(reader.fieldnames)
+            if missing:
+                messages.error(
+                    request,
+                    'Faltan columnas en la cabecera: '
+                    f'{", ".join(missing)}. El importador espera '
+                    'Nombre_Estudiante, Asignatura, Trimestre, Año_Escolar, '
+                    'Nota, Tipo_Nota, Numero_Tipo_Nota y Comentarios, '
+                    'separadas por comas — las que trae «Lista de clase». '
+                    'Las exportaciones de notas usan otras cabeceras y hay '
+                    'que renombrarlas antes de importarlas.')
+                return page()
 
             # Iterate rows.
             for row_num, row in enumerate(reader, start=2):
-                if row_num - 1 > MAX_IMPORT_ROWS:
-                    # Not row-scoped: it is a statement about the file, so it
-                    # carries no row number.
-                    add_error(
+                if rows_read >= MAX_IMPORT_ROWS:
+                    # A statement about the file, so it goes to `messages`.
+                    # As a trailing entry in `errors` it was the first thing
+                    # the 50-row display limit hid, which is precisely the
+                    # file it is most likely to be reporting on.
+                    messages.warning(
+                        request,
                         f'Se ha alcanzado el límite de {MAX_IMPORT_ROWS} filas; '
                         f'el resto del archivo se ha ignorado.')
-                    error_count += 1
                     break
+                rows_read += 1
                 try:
+                    # DictReader pads a short row with None and collects the
+                    # surplus of a long one under the None key. Either way the
+                    # row does not match its own header, and saying so beats
+                    # reporting whichever cell happened to end up empty.
+                    if None in row:
+                        add_error('La fila tiene más columnas que la '
+                                  'cabecera.', row_num)
+                        error_count += 1
+                        continue
+                    if any(value is None for value in row.values()):
+                        add_error('La fila tiene menos columnas que la '
+                                  'cabecera.', row_num)
+                        error_count += 1
+                        continue
+
                     # `or` binds tighter than the method call, so
                     # `a or b.strip()` only ever strips the fallback. Wrap the
                     # whole expression instead.
@@ -1557,18 +1730,43 @@ def import_grades(request, course_id=None):
                         add_error('Falta la nota.', row_num)
                         error_count += 1
                         continue
-                    grade_value = float(grade_raw.replace(',', '.'))
+                    # Decimal, not float. `Grade.grade` is DecimalField(
+                    # decimal_places=2) and Django converts an assigned float
+                    # with `create_decimal_from_float()`, so float('7.7')
+                    # arrives as Decimal('7.700000000000000177635683940025')
+                    # rounded to three places — three decimals, which
+                    # DecimalValidator then rejects. Only binary-exact values
+                    # survived that: of the 101 one-decimal grades from 0.0 to
+                    # 10.0, exactly the 21 multiples of 0.5 imported. Decimal()
+                    # parses the string as written, so 7.7 stays 7.7.
+                    grade_value = Decimal(grade_raw.replace(',', '.'))
                     grade_type_number = int(number_raw or 0)
 
                     # Scoped: a professor may only write grades for students
                     # they actually teach, whatever the uploaded file names.
                     student = importable_students.get(Name=student_name)
-                    subject = Subjects.objects.get(Name=subject_name)
+                    # Scoped the same way. This was `Subjects.objects.get`,
+                    # so a professor could file a grade under a subject they
+                    # do not teach as long as the student was theirs.
+                    subject = importable_subjects.get(Name=subject_name)
                     # Looked up, never created: an upload must not be able to
                     # invent school years or trimesters.
                     school_year = School_year.objects.get(year=school_year_str)
                     trimester = Trimester.objects.get(
                         Name=int(trimester_name), school_year=school_year)
+
+                    # On the class-scoped route the course fixes the year, in
+                    # the same way `resolve_class_scope` lets `Course.school_
+                    # year` fix it. A row naming a different existing year was
+                    # written into that other year without a word, which is
+                    # the wrong-year enrolment bug wearing a different hat.
+                    if course and school_year != course.school_year:
+                        add_error(
+                            f'El año escolar «{school_year_str}» no es el de '
+                            f'esta clase («{course.school_year.year}»).',
+                            row_num)
+                        error_count += 1
+                        continue
 
                     with transaction.atomic():
                         key = dict(
@@ -1578,10 +1776,18 @@ def import_grades(request, course_id=None):
                             grade_type_number=grade_type_number)
                         grade = Grade.objects.filter(**key).first()
                         created = grade is None
+                        old_value = None if created else grade.grade
                         if created:
                             grade = Grade(**key)
                         grade.grade = grade_value
-                        grade.comments = comments
+                        # Only when the file actually says something. The
+                        # `Comentarios` column of `download_class_list` always
+                        # ships blank, so the documented workflow — download
+                        # the template, fill in one grade, upload — wiped the
+                        # comment on every grade it touched. A comment the
+                        # teacher did type still overwrites.
+                        if comments or created:
+                            grade.comments = comments
                         # update_or_create skips validators entirely, which is
                         # how out-of-range grades and invalid grade types got in.
                         grade.full_clean()
@@ -1591,13 +1797,20 @@ def import_grades(request, course_id=None):
                         created_count += 1
                     else:
                         updated_count += 1
+                        add_update(row_num, grade, old_value)
 
                 except Students.DoesNotExist:
                     add_error(
                         'Alumno no encontrado o fuera de tu clase.', row_num)
                     error_count += 1
                 except Subjects.DoesNotExist:
-                    add_error('Asignatura no encontrada.', row_num)
+                    # Says which of the two it is, the way the student message
+                    # does: the subject may well exist and simply not be one
+                    # this teacher is assigned to. Subject names are not PII.
+                    add_error(
+                        f'La asignatura «{subject_name}» no existe o no la '
+                        + ('impartes en esta clase.' if course
+                           else 'impartes.'), row_num)
                     error_count += 1
                 except School_year.DoesNotExist:
                     # Name the value. Years and trimesters are not PII, and a
@@ -1616,12 +1829,21 @@ def import_grades(request, course_id=None):
                         f'El trimestre «{trimester_name}» no existe en el '
                         f'año escolar «{school_year_str}».', row_num)
                     error_count += 1
-                except ValidationError:
-                    add_error(
-                        'Valores no válidos (nota fuera de 0-10, o tipo de '
-                        'nota incorrecto).', row_num)
+                except ValidationError as exc:
+                    # Django already said exactly what was wrong — out of
+                    # range, unknown grade type, more than two decimals,
+                    # negative `Numero_Tipo_Nota` — and the message was being
+                    # thrown away in favour of one sentence covering all four.
+                    # That is why the float bug above stayed invisible for so
+                    # long: "Asegúrese de que no haya más de 2 dígitos
+                    # decimales" was raised on every non-binary-exact grade
+                    # and never reached the page.
+                    add_error(import_validation_message(exc), row_num)
                     error_count += 1
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, InvalidOperation):
+                    # InvalidOperation is Decimal's ValueError: it is what
+                    # `Decimal('siete')` raises, and it inherits from
+                    # ArithmeticError rather than ValueError.
                     add_error('Formato numérico no válido.', row_num)
                     error_count += 1
                 except Exception:
@@ -1632,23 +1854,31 @@ def import_grades(request, course_id=None):
                   updated=updated_count, errors=error_count,
                   course_id=course.pk if course else None)
 
+            if not rows_read:
+                # 0/0/0 with no message read as a successful import of an
+                # empty file, which is the one thing it certainly was not.
+                messages.error(
+                    request,
+                    'El archivo solo tiene la cabecera: no hay ninguna fila '
+                    'que importar.')
+                return page()
+
             # The summary is rendered on the page rather than pushed through
             # `messages`: three counters and a table read at a glance, where
             # thirteen stacked banners did not.
-            result = {
-                'created': created_count,
-                'updated': updated_count,
-                'error_count': error_count,
-                'rows': created_count + updated_count + error_count,
-                'errors': errors[:ERROR_DISPLAY_LIMIT],
-                'hidden_errors': max(len(errors) - ERROR_DISPLAY_LIMIT, 0),
-            }
+            result = summary()
 
         except Exception:
+            # The rows already committed are reported, not discarded. See
+            # `summary()`: a decode error half-way down a file left the page
+            # showing this banner and nothing else, so an import that had
+            # written two grades looked like an import that had written none.
+            result = summary()
             messages.error(
                 request,
-                'No se ha podido leer el archivo. Comprueba que es un CSV '
-                'válido codificado en UTF-8.')
+                'No se ha podido leer el archivo entero. Comprueba que es un '
+                'CSV válido codificado en UTF-8; lo importado hasta el punto '
+                'de la lectura fallida se detalla abajo.')
 
     return page(result)
 
