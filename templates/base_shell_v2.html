@@ -17,7 +17,15 @@
   Each role's entries stay written out as literals rather than looped over a
   context variable, for the same reason the professor's three always were: this
   shell is extended by pages that know nothing about the nav, and a missing
-  variable would render an empty one silently.
+  variable would render an empty one silently. They live in `_nav_links.html`
+  now, included once for each width — a partial rather than a loop, so the
+  literals are still literals.
+
+  **There are two navs and they are exact complements.** Below `md` a
+  `<details>` drawer; from `md` up the 224px column. Every element of each
+  carries `md:hidden` or `hidden md:*`, so exactly one is rendered to any
+  viewport, and both are in the DOM at once — which is why nothing inside
+  `_nav_links.html` may carry an `id`.
 
   A role with no branch gets the mark and the identity footer and no links.
   That is the fallback, not the norm: forbidden.html extends this shell too,
@@ -38,148 +46,114 @@
   <nav class="flex flex-col border-b md:border-b-0 md:border-r border-line md:sticky md:top-0 md:h-screen"
        aria-label="Principal">
     {% comment %}
-      The brand bar is the whole of this nav below `md`: every role's link
-      block is `hidden md:block` and the identity footer is `hidden md:flex`,
-      so a phone renders this row and nothing else of the shell.
-
-      That is why the second sign-out control lives here. `logoutUser` no
-      longer acts on GET, which was the right fix for a route an `<img src>`
-      could trigger — but it also removed the escape hatch, because typing
-      /logout/ stopped signing anyone out. With the only control inside
-      `hidden md:flex`, a narrow viewport had no way to sign out at all.
-      (That URL now renders a confirmation rather than a bare 405, but a URL
-      someone has to know and type is not a control.)
-
-      `md:hidden` is the exact complement of the footer's `hidden md:flex`, so
-      the two never render together and the desktop layout is untouched. It
-      repeats the footer's markup rather than sharing it: hoisting one control
-      into a place both widths can see would mean either moving the footer off
-      `mt-auto` — which is what pins it to the bottom of a full-height nav —
-      or an absolutely-positioned control this dialect has no precedent for.
-
-      `LogoutReachabilityTests` walks the rendered ancestor chain rather than
-      searching for the string `/logout/`: the older assertion was satisfied
-      the entire time the control could not be reached.
-    {% endcomment %}
-    <div class="flex items-center gap-2.5 h-[52px] px-pad border-b border-line shrink-0">
-      <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
-                   text-accent-lift text-[10px] font-bold">TR</span>
-      <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
-      <span class="md:hidden ml-auto min-w-0 truncate text-[11.5px] text-ink-3">@{{ user.username }}</span>
-      <form action="{% url 'logout' %}" method="post" class="md:hidden shrink-0">{% csrf_token %}
-        <button type="submit" title="Cerrar sesión"
-                class="block px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
-                       text-ink-2 hover:text-ink hover:border-accent">Salir</button>
-      </form>
-    </div>
-
-    {% comment %}
       Active state is read off the resolved URL rather than a context variable,
       so a page gets it by existing at that route and no view has to remember
       to pass a flag. `section_courses` takes its section from the URL kwargs
-      for the same reason. The `with` spans every role's block.
+      for the same reason. The `with` spans **both** include sites below.
     {% endcomment %}
     {% with url_name=request.resolver_match.url_name section=request.resolver_match.kwargs.section role=user.profile.role %}
 
-    {% if role == 'professor' %}
-    <div class="hidden md:block pt-[18px] pb-1.5">
-      <span class="lbl block px-pad pb-2.5">Docencia</span>
-      {% comment %}
-        The three literals mirror Course.COURSE_TYPE_CHOICES, which is a fixed
-        schema enum. Counts are deliberately absent: nothing in this context
-        knows them, and an invented one is how the first mockup went wrong.
-      {% endcomment %}
-      <a href="{% url 'teacher_dashboard' %}"
-         {% if url_name == 'teacher_dashboard' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'teacher_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Mis clases</a>
-      {% comment %}
-        The three literals stay written out rather than looped over a context
-        variable: this shell is extended by pages that do not know about the
-        nav, and a missing variable would silently render an empty one.
-      {% endcomment %}
-      <a href="{% url 'section_courses' section='eso' %}"
-         {% if url_name == 'section_courses' and section == 'eso' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'section_courses' and section == 'eso' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Eso</a>
-      <a href="{% url 'section_courses' section='bachillerato' %}"
-         {% if url_name == 'section_courses' and section == 'bachillerato' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'section_courses' and section == 'bachillerato' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Bachillerato</a>
-      <a href="{% url 'section_courses' section='ib' %}"
-         {% if url_name == 'section_courses' and section == 'ib' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'section_courses' and section == 'ib' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">IB</a>
-    </div>
-
-    {% elif role == 'student' or role == 'tutor' or role == 'legal_tutor' %}
     {% comment %}
-      One destination, because there is genuinely one: `student_dashboard`
-      serves both roles and decides from the profile which record to show. The
-      tutor's child picker belongs to that page, not to the nav — the nav does
-      not know how many children the account has, and inventing a count here is
-      the mistake the professor's block already refuses to make.
+      ── Below `md`: the drawer ──────────────────────────────────────────────
 
-      'legal_tutor' is listed because `student_detail` is decorated with it.
-      It is not one of Profile.ROLE_CHOICES, so no account currently holds it;
-      the branch matches the decorator rather than the enum on purpose, so the
-      shell does not go blank if that role is ever finished.
+      This used to be a brand bar and nothing else. Every role's link block was
+      `hidden md:block` and the identity footer `hidden md:flex`, so a phone
+      rendered the row and *no destination at all*: a professor could not reach
+      "Mis clases" or any section, an administrator none of the six admin
+      flows. Verified in a browser at 500px — all four links in the DOM, none
+      of them visible. Sebas chose the disclosure over a scrolling row, a
+      bottom tab bar, or an overlay.
+
+      **`<details>` and not a script.** `script-src 'self'` with no
+      `unsafe-inline` is not negotiable here, and a blocked script fails
+      *silently* — which is exactly how the CSP remediation left every
+      `data-action` in the app inert. A disclosure needs no JavaScript at all,
+      so there is nothing to block, nothing to vendor, and it works with
+      JavaScript off like every other control in this shell.
+
+      The links themselves live in `_nav_links.html`, included **twice** —
+      here and in the desktop column. The alternative was 120 lines of link
+      markup written out a second time, which is where copying stops being
+      cheaper than a partial. Both copies are in the DOM at once, so nothing
+      in that partial may carry an `id`; see the note at the top of it.
+
+      `md:hidden` here is the exact complement of `hidden md:block` /
+      `hidden md:flex` below, so exactly one of the two is ever rendered and
+      the desktop layout is untouched.
+
+      The summary is `flex`, which removes the disclosure triangle in every
+      engine — hence the "Menú" chip, which is also the dialect's answer to an
+      icon it has no icons for. `[&::-webkit-details-marker]:hidden` is belt
+      and braces for the WebKit pseudo-element, which survives `display`.
+
+      `LogoutReachabilityTests` walks the rendered ancestor chain rather than
+      searching for the string `/logout/`: the older assertion was satisfied
+      the entire time the control could not be reached. It now also refuses to
+      count a control sealed inside a closed `<details>` whose own summary is
+      hidden, which is the shape this change could have failed as.
     {% endcomment %}
-    <div class="hidden md:block pt-[18px] pb-1.5">
-      <span class="lbl block px-pad pb-2.5">{% if role == 'student' %}Mi expediente{% else %}Seguimiento{% endif %}</span>
-      <a href="{% url 'student_dashboard' %}"
-         {% if url_name == 'student_dashboard' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'student_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">{% if role == 'student' %}Notas y ausencias{% else %}Alumn@s a mi cargo{% endif %}</a>
-    </div>
+    <details class="md:hidden shrink-0">
+      <summary class="flex items-center gap-2.5 h-[52px] px-pad cursor-pointer list-none
+                      [&::-webkit-details-marker]:hidden">
+        <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                     text-accent-lift text-[10px] font-bold">TR</span>
+        <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+        <span class="ml-auto min-w-0 truncate text-[11.5px] text-ink-3">@{{ user.username }}</span>
+        <span class="shrink-0 px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+                     text-ink-2">Menú</span>
+      </summary>
 
-    {% elif role == 'administrator' %}
+      <div class="border-t border-line pb-1.5">
+        {% include "_nav_links.html" %}
+
+        {% comment %}
+          The drawer's own identity row. The brand bar used to carry a bare
+          "Salir" button, added when it was the only affordance a phone had;
+          it is folded in here, because a sign-out control belongs beside the
+          account it signs out and the drawer is now where the account lives.
+          A form and not an <a href>: `logoutUser` does not act on GET, since
+          on GET the route was a cross-site logout.
+        {% endcomment %}
+        <div class="flex items-center gap-2.5 px-pad py-[13px] border-t border-line">
+          <span class="grid place-items-center w-[26px] h-[26px] rounded shrink-0 border border-line-2
+                       text-ink-2 text-[10px] font-bold">{{ user.username|slice:":2"|upper }}</span>
+          <span class="min-w-0">
+            <b class="block text-[12.5px] font-semibold truncate">
+              {% firstof user.profile.teacher.Name user.profile.student.Name user.get_full_name user.username %}</b>
+            <span class="block text-[11.5px] text-ink-3 truncate">@{{ user.username }} · {{ user.profile.get_role_display }}</span>
+          </span>
+          <form action="{% url 'logout' %}" method="post" class="ml-auto shrink-0">{% csrf_token %}
+            <button type="submit" title="Cerrar sesión"
+                    class="block px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+                           text-ink-2 hover:text-ink hover:border-accent">Salir</button>
+          </form>
+        </div>
+      </div>
+    </details>
+
     {% comment %}
-      The six administrator destinations, in the order the flows actually run:
-      a school year exists before courses do, courses before subject
-      assignments, and a student is created before being moved. Every one is a
-      real route in urls.py; none is a placeholder.
-    {% endcomment %}
-    <div class="hidden md:block pt-[18px] pb-1.5">
-      <span class="lbl block px-pad pb-2.5">Administración</span>
-      <a href="{% url 'adminage_dashboard' %}"
-         {% if url_name == 'adminage_dashboard' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'adminage_dashboard' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Panel</a>
-      <a href="{% url 'create_school_year' %}"
-         {% if url_name == 'create_school_year' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'create_school_year' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Años escolares</a>
-      <a href="{% url 'create_courses_sections' %}"
-         {% if url_name == 'create_courses_sections' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'create_courses_sections' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Cursos</a>
-      <a href="{% url 'assign_subjects' %}"
-         {% if url_name == 'assign_subjects' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'assign_subjects' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Asignaturas</a>
-      <a href="{% url 'create_and_assign_student' %}"
-         {% if url_name == 'create_and_assign_student' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'create_and_assign_student' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Alta de alumn@</a>
-      <a href="{% url 'reassign_students' %}"
-         {% if url_name == 'reassign_students' %}aria-current="page"{% endif %}
-         class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
-                border-l-2 hover:text-ink hover:bg-white/[.03]
-                {% if url_name == 'reassign_students' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Reasignar alumn@s</a>
-    </div>
-    {% endif %}
+      ── From `md` up: the column, unchanged ─────────────────────────────────
 
+      The brand bar is a plain row again here, because the drawer above owns
+      the toggle and this width never needs one.
+    {% endcomment %}
+    <div class="hidden md:flex items-center gap-2.5 h-[52px] px-pad border-b border-line shrink-0">
+      <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                   text-accent-lift text-[10px] font-bold">TR</span>
+      <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+    </div>
+
+    <div class="hidden md:block">{% include "_nav_links.html" %}</div>
+
+    {% comment %}
+      Deliberately **not** in `_nav_links.html`, and so deliberately not in the
+      drawer. `class-enrolled` is an out-of-band swap target from
+      `_class_scope.html`, and the partial is included twice — two elements
+      answering to one id would make the swap pick whichever the parser saw
+      first. Nothing is lost below `md`: this block is a `<span>`, an
+      indicator rather than a destination, and the page it indicates is the
+      page you are already on.
+    {% endcomment %}
     {% if scope.course %}
     <div class="hidden md:block pt-[18px] pb-1.5">
       <span class="lbl block px-pad pb-2.5">Esta clase</span>
@@ -201,11 +175,16 @@
       page's, not the account's. There was no logout control in this shell at
       all — the legacy navbar had one, and it did not survive the rebuild.
 
-      It is a form and not an <a href> because `logoutUser` is now
-      @require_POST. On GET the route was a cross-site logout: an
-      `<img src="/logout/">` anywhere cleared the session, since a GET carries
-      no CSRF token to check. The button keeps the link's own styling, so the
-      shell looks unchanged.
+      It is a form and not an <a href> because `logoutUser` does not act on
+      GET. On GET the route was a cross-site logout: an `<img src="/logout/">`
+      anywhere cleared the session, since a GET carries no CSRF token to
+      check. The button keeps the link's own styling, so the shell looks
+      unchanged.
+
+      The drawer above carries the same row, because `mt-auto` is what pins
+      this one to the bottom of a full-height nav and a single shared control
+      would have to give that up. `hidden md:flex` and the drawer's
+      `md:hidden` are exact complements, so the two never render together.
     {% endcomment %}
     <div class="hidden md:flex items-center gap-2.5 mt-auto px-pad py-[13px] border-t border-line">
       <span class="grid place-items-center w-[26px] h-[26px] rounded shrink-0 border border-line-2

@@ -4267,12 +4267,13 @@ class LegacyCascadeTeardownTests(TestCase):
         self.assertEqual(present, ['tailwind.css'])
 
     # `base_v2.html` is the root of the cascade and so extends nothing by
-    # definition. The four `_`-prefixed files are partials, and carry no
+    # definition. The five `_`-prefixed files are partials, and carry no
     # `{% extends %}` on purpose: including a template that extends another
     # renders the *entire* extended document inline, which is how
     # `student_file.html` once emitted a second complete <html> inside a div.
     CASCADE_EXEMPT = ('base_v2.html', '_class_scope.html', '_course_dependents.html',
-                      '_student_record.html', '_trimester_options.html')
+                      '_nav_links.html', '_student_record.html',
+                      '_trimester_options.html')
 
     def test_every_template_is_on_the_v2_cascade(self):
         """The overhaul's closing assertion: no page is its own document.
@@ -4796,15 +4797,24 @@ class AdminDashboardV2Tests(V2CascadeAssertions, AccessControlTestCase):
 
     def test_it_does_not_restate_the_nav(self):
         """The four action buttons are gone, and the two destinations with no
-        per-year form appear exactly once in the response — in the nav."""
+        per-year form appear **only** in the nav.
+
+        This counted occurrences in the whole response and expected exactly
+        one, which was the same claim only while the nav rendered once. It now
+        renders twice — the `<details>` drawer below md and the column from md
+        up, two complementary copies of `_nav_links.html` — so the count went
+        to two without anything being restated. The page body is what the test
+        is about, so the nav is now cut out and the body asserted directly.
+        """
         response = self.as_(self.admin).get(self.URL)
         html = response.content.decode()
+        body = html[:html.index('<nav')] + html[html.index('</nav>'):]
 
         for label in self.LEGACY_BUTTONS:
             with self.subTest(label=label):
                 self.assertNotContains(response, label)
-        self.assertEqual(html.count('/adminage/create-student-class/'), 1)
-        self.assertEqual(html.count('/reassign-students/'), 1)
+        self.assertNotIn('/adminage/create-student-class/', body)
+        self.assertNotIn('/reassign-students/', body)
 
     def test_only_the_newest_year_is_marked_and_it_is_the_one_assign_falls_back_to(self):
         """Not a status field — School_year has none. The marker is the
@@ -5349,17 +5359,35 @@ class _LogoutControlFinder(HTMLParser):
     overrides it from 768px up, so visibility is decided by the whole ancestor
     chain and not by the element's own class attribute. Reading the chain is
     the only way to answer "can a phone reach this".
+
+    It also tracks enclosing `<details>`. A control inside a closed one is in
+    the DOM, visible to every class-chain check, and reachable by nobody who
+    cannot find the `<summary>` — which is the same shape as the bug this
+    class was written for, one level further in. `sealed_by` names the closed
+    disclosures a control sits inside; `summaries` says which `<details>` each
+    summary belongs to and what hides *it*.
     """
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack = []
         self.controls = []
+        self.summaries = []
+        self.links = []
+        self.details = {}
+        self._next_details = 0
+
+    def _chain(self, classes):
+        chain = set(classes)
+        for _, ancestor, _ in self.stack:
+            chain |= ancestor
+        return chain
+
+    def _enclosing_details(self):
+        return [d for _, _, d in self.stack if d is not None]
 
     def _record(self, kind, attrs, classes):
-        chain = set(classes)
-        for _, ancestor in self.stack:
-            chain |= ancestor
+        chain = self._chain(classes)
         self.controls.append({
             'kind': kind,
             'method': (attrs.get('method') or '').lower(),
@@ -5367,6 +5395,8 @@ class _LogoutControlFinder(HTMLParser):
             'chain': chain,
             'hidden_below_md': 'hidden' in chain,
             'hidden_from_md': 'md:hidden' in chain,
+            'sealed_by': [d for d in self._enclosing_details()
+                          if not self.details[d]['open']],
         })
 
     def handle_starttag(self, tag, attrs):
@@ -5376,8 +5406,35 @@ class _LogoutControlFinder(HTMLParser):
             self._record('form', attrs, classes)
         elif tag == 'a' and '/logout/' in (attrs.get('href') or ''):
             self._record('link', attrs, classes)
+        elif tag == 'summary':
+            enclosing = self._enclosing_details()
+            self.summaries.append({
+                'details': enclosing[-1] if enclosing else None,
+                'chain': self._chain(classes),
+            })
+
+        # Every anchor, not only the logout ones: the drawer and the column
+        # are two renderings of one list, and the assertion that matters is
+        # that they offer the same destinations. See NavDrawerTests.
+        if tag == 'a' and attrs.get('href'):
+            self.links.append({
+                'href': attrs['href'],
+                'chain': self._chain(classes),
+                'in_nav': any(t == 'nav' for t, _, _ in self.stack),
+                'sealed_by': [d for d in self._enclosing_details()
+                              if not self.details[d]['open']],
+            })
+
+        details_id = None
+        if tag == 'details':
+            details_id = self._next_details
+            self._next_details += 1
+            self.details[details_id] = {
+                'open': 'open' in attrs,
+                'chain': self._chain(classes),
+            }
         if tag not in VOID_ELEMENTS:
-            self.stack.append((tag, classes))
+            self.stack.append((tag, classes, details_id))
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -5415,10 +5472,28 @@ class LogoutReachabilityTests(AccessControlTestCase):
     PAGES = (('professor', '/teacher/'), ('student', '/student/'),
              ('tutor', '/student/'), ('administrator', '/adminage/'))
 
-    def _controls(self, response):
+    def _finder(self, response):
         finder = _LogoutControlFinder()
         finder.feed(response.content.decode('utf-8'))
-        return finder.controls
+        return finder
+
+    def _controls(self, response):
+        return self._finder(response).controls
+
+    @staticmethod
+    def _summary_reachable_below_md(finder, details_id):
+        """A closed `<details>` is openable below md only if its own summary
+        renders there."""
+        summaries = [s for s in finder.summaries if s['details'] == details_id]
+        return any('hidden' not in s['chain'] for s in summaries)
+
+    def _reachable_below_md(self, finder):
+        """Not `display:none` at a narrow width, and not sealed inside a
+        closed disclosure nobody can open there."""
+        return [c for c in finder.controls
+                if not c['hidden_below_md']
+                and all(self._summary_reachable_below_md(finder, d)
+                        for d in c['sealed_by'])]
 
     def _user_for(self, role):
         return {'professor': self.professor, 'student': self.pupil,
@@ -5428,16 +5503,15 @@ class LogoutReachabilityTests(AccessControlTestCase):
         """The regression this class exists for."""
         for role, url in self.PAGES:
             with self.subTest(role=role):
-                response = self.as_(self._user_for(role)).get(url)
-                controls = self._controls(response)
+                finder = self._finder(self.as_(self._user_for(role)).get(url))
 
-                self.assertTrue(controls, 'no logout control at all')
-                reachable = [c for c in controls if not c['hidden_below_md']]
+                self.assertTrue(finder.controls, 'no logout control at all')
                 self.assertTrue(
-                    reachable,
-                    'every logout control is inside a `hidden` container, so a '
+                    self._reachable_below_md(finder),
+                    'every logout control is inside a `hidden` container or a '
+                    'closed <details> with no summary of its own, so a '
                     'viewport below md cannot sign out: '
-                    f'{[sorted(c["chain"]) for c in controls]}')
+                    f'{[sorted(c["chain"]) for c in finder.controls]}')
 
     def test_every_role_can_still_sign_out_on_a_wide_viewport(self):
         """The other half of the same claim: a mobile-only control would move
@@ -5458,10 +5532,39 @@ class LogoutReachabilityTests(AccessControlTestCase):
         who needs to sign out and back in as somebody else."""
         response = self.as_(self.pupil).get('/teacher/')
         self.assertEqual(response.status_code, 403)
-        controls = self._controls(response)
+        finder = self._finder(response)
 
-        self.assertTrue([c for c in controls if not c['hidden_below_md']])
-        self.assertTrue([c for c in controls if not c['hidden_from_md']])
+        self.assertTrue(self._reachable_below_md(finder))
+        self.assertTrue([c for c in finder.controls if not c['hidden_from_md']])
+
+    def test_a_control_sealed_in_a_closed_drawer_does_not_count(self):
+        """The check that makes the one above mean something.
+
+        Every logout control below `md` now lives inside the `<details>`
+        drawer. A class-chain reading alone cannot tell that apart from a
+        control nobody can reach: `md:hidden` on the drawer says nothing about
+        whether the drawer opens. This asserts the summary is what makes it
+        count, by removing the summary from the accounting and watching the
+        answer change.
+        """
+        finder = self._finder(self.as_(self.professor).get('/teacher/'))
+        sealed = [c for c in finder.controls if c['sealed_by']]
+
+        self.assertTrue(
+            sealed, 'no logout control is inside a <details> at all — if the '
+                    'drawer was replaced, this test is now vacuous')
+        for control in sealed:
+            for details_id in control['sealed_by']:
+                self.assertTrue(
+                    self._summary_reachable_below_md(finder, details_id),
+                    'a logout control sits inside a closed <details> whose '
+                    'summary is itself hidden below md: nothing can open it')
+
+        finder.summaries = []
+        self.assertEqual(
+            [c for c in self._reachable_below_md(finder) if c['sealed_by']], [],
+            'the accounting ignores the summary, so it would pass for a '
+            'drawer that cannot be opened')
 
     def test_no_logout_control_is_a_plain_link(self):
         """A GET control would reach the confirmation page instead of signing
@@ -5501,6 +5604,118 @@ class LogoutReachabilityTests(AccessControlTestCase):
         ).read_text(encoding='utf-8')
 
         self.assertIn('hidden md:flex items-center gap-2.5 mt-auto', source)
+
+
+class NavDrawerTests(AccessControlTestCase):
+    """Below 768px the shell used to render its brand bar and nothing else.
+
+    Every role's link block was `hidden md:block` and the identity footer
+    `hidden md:flex`, so a phone had **no destination at all**: a professor
+    could not reach "Mis clases" or any section, an administrator none of the
+    six admin flows. All of them were in the DOM the whole time, which is why
+    a presence assertion would have passed throughout — the same trap
+    `LogoutReachabilityTests` was written for, one list wider.
+
+    The fix is a `<details>` drawer, chosen over a scrolling row or a bottom
+    tab bar. It needs no JavaScript, which matters more here than it looks:
+    `script-src 'self'` with no `unsafe-inline` means a script would have to
+    be vendored, and a blocked one fails *silently*.
+    """
+
+    PAGES = (('professor', '/teacher/'), ('student', '/student/'),
+             ('tutor', '/student/'), ('administrator', '/adminage/'))
+
+    def _user_for(self, role):
+        return {'professor': self.professor, 'student': self.pupil,
+                'tutor': self.tutor, 'administrator': self.admin}[role]
+
+    def _nav(self, role):
+        finder = _LogoutControlFinder()
+        finder.feed(self.as_(self._user_for(role))
+                    .get(dict(self.PAGES)[role]).content.decode('utf-8'))
+        return finder
+
+    @staticmethod
+    def _openable(finder, link):
+        return all(
+            any('hidden' not in s['chain']
+                for s in finder.summaries if s['details'] == d)
+            for d in link['sealed_by'])
+
+    def _below_md(self, finder):
+        return {link['href'] for link in finder.links
+                if link['in_nav'] and 'hidden' not in link['chain']
+                and self._openable(finder, link)}
+
+    @staticmethod
+    def _from_md(finder):
+        return {link['href'] for link in finder.links
+                if link['in_nav'] and 'md:hidden' not in link['chain']}
+
+    def test_every_role_can_reach_a_destination_below_md(self):
+        """The regression this class exists for. Asserted per role, because
+        the branch is per role and three of the four were written after the
+        professor's."""
+        for role, _ in self.PAGES:
+            with self.subTest(role=role):
+                self.assertTrue(
+                    self._below_md(self._nav(role)),
+                    'the nav offers no reachable destination below md')
+
+    def test_both_widths_offer_the_same_destinations(self):
+        """The relation, not the values — which is the assertion that would
+        have caught the whole *never render a disagreement* class.
+
+        `_nav_links.html` is included twice. Nothing forces the two copies to
+        stay in step except this: a link added to one and not the other is a
+        nav that says different things about the same account depending on how
+        wide the window is, and every individual href would still be correct.
+        """
+        for role, _ in self.PAGES:
+            with self.subTest(role=role):
+                finder = self._nav(role)
+
+                self.assertEqual(self._below_md(finder),
+                                 self._from_md(finder))
+
+    def test_the_drawer_is_a_disclosure_and_not_a_script(self):
+        """`hx-on:` evals a string and violates the policy; an inline handler
+        needs `unsafe-inline`; a vendored script fails silently when blocked.
+        A `<details>` has none of those failure modes."""
+        body = self.as_(self.professor).get('/teacher/').content.decode('utf-8')
+        nav = body[body.index('<nav'):body.index('</nav>')]
+
+        self.assertIn('<details', nav)
+        self.assertIn('<summary', nav)
+        self.assertNotIn('<script', nav)
+        self.assertNotIn('hx-on', nav)
+        self.assertNotIn('data-action', nav)
+
+    def test_the_drawer_and_the_column_never_render_together(self):
+        """Two navs in one DOM is only safe while they are exact
+        complements: `md:hidden` against `hidden md:*`."""
+        finder = self._nav('professor')
+        nav_links = [link for link in finder.links if link['in_nav']]
+
+        for link in nav_links:
+            with self.subTest(href=link['href']):
+                self.assertNotEqual(
+                    'hidden' in link['chain'], 'md:hidden' in link['chain'],
+                    'a nav link is hidden at both widths, or at neither')
+
+    def test_the_duplicated_partial_carries_no_id(self):
+        """`class-enrolled` is an out-of-band swap target, and the drawer is
+        the reason a second one would be easy to introduce. Asserted on
+        `class_dashboard`, the only page that renders it at all."""
+        body = self.as_(self.professor).get(
+            f'/class/{self.course.pk}/dashboard/').content.decode('utf-8')
+
+        ids = re.findall(r'\sid="([^"]+)"', body)
+
+        self.assertIn('class-enrolled', ids)
+        self.assertEqual(sorted(ids), sorted(set(ids)),
+                         f'duplicate id in the page: '
+                         f'{[i for i in set(ids) if ids.count(i) > 1]}')
 
 
 class LogoutConfirmationTests(AccessControlTestCase):
