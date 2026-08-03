@@ -170,6 +170,12 @@
       "Salir" lives here rather than in the top bar because the top bar is the
       page's, not the account's. There was no logout control in this shell at
       all — the legacy navbar had one, and it did not survive the rebuild.
+
+      It is a form and not an <a href> because `logoutUser` is now
+      @require_POST. On GET the route was a cross-site logout: an
+      `<img src="/logout/">` anywhere cleared the session, since a GET carries
+      no CSRF token to check. The button keeps the link's own styling, so the
+      shell looks unchanged.
     {% endcomment %}
     <div class="hidden md:flex items-center gap-2.5 mt-auto px-pad py-[13px] border-t border-line">
       <span class="grid place-items-center w-[26px] h-[26px] rounded shrink-0 border border-line-2
@@ -179,9 +185,11 @@
           {% firstof user.profile.teacher.Name user.profile.student.Name user.get_full_name user.username %}</b>
         <span class="block text-[11.5px] text-ink-3 truncate">@{{ user.username }} · {{ user.profile.get_role_display }}</span>
       </span>
-      <a href="{% url 'logout' %}" title="Cerrar sesión"
-         class="ml-auto shrink-0 px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
-                text-ink-2 hover:text-ink hover:border-accent">Salir</a>
+      <form action="{% url 'logout' %}" method="post" class="ml-auto shrink-0">{% csrf_token %}
+        <button type="submit" title="Cerrar sesión"
+                class="block px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+                       text-ink-2 hover:text-ink hover:border-accent">Salir</button>
+      </form>
     </div>
     {% endwith %}
   </nav>

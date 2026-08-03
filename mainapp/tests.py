@@ -19,7 +19,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -3159,6 +3159,293 @@ class LegacyCascadeTeardownTests(TestCase):
             for path in (self.TEMPLATES / root).rglob('*.html'):
                 with self.subTest(template=path.name):
                     self.assertNotIn("js/behaviors.js'", path.read_text())
+
+
+class ConfirmedBugRegressionTests(TransactionTestCase):
+    """The eight failure modes found by reading the routes, one class.
+
+    A `TransactionTestCase` rather than the usual `AccessControlTestCase`,
+    and that is load-bearing for exactly one test in here. `ATOMIC_REQUESTS`
+    is unset, so production runs in autocommit: a duplicate row raises
+    `IntegrityError` and the *next* insert in the same loop still works.
+    `TestCase` wraps each test in an atomic block, where the first
+    `IntegrityError` poisons the transaction and every later statement raises
+    `TransactionManagementError` instead — so the partial-batch test would
+    describe a failure production cannot produce. The rest of the class rides
+    along rather than being split off, since a second fixture set is the more
+    expensive kind of duplication.
+
+    Fixtures are built in `setUp`: `setUpTestData` is a `TestCase` facility
+    and does nothing useful without the class-wide transaction.
+    """
+
+    def setUp(self):
+        self.year = School_year.objects.create(year='2025-2026')
+        self.trimester = Trimester.objects.create(Name=1, school_year=self.year)
+        self.course = Course.objects.create(
+            Tipo='Eso', Section='1A', school_year=self.year)
+
+        self.student = Students.objects.create(
+            Name='Ana Lopez', Email='ana@example.com')
+        self.second_student = Students.objects.create(
+            Name='Beto Ruiz', Email='beto@example.com')
+        for student in (self.student, self.second_student):
+            Students_Courses.objects.create(
+                student=student, course_section=self.course)
+
+        self.subject = Subjects.objects.create(Name='Matematicas')
+        self.teacher = Teachers.objects.create(Name='Profesora A')
+        Subjects_Courses.objects.create(
+            subject=self.subject, teacher=self.teacher, course=self.course,
+            trimester=self.trimester)
+
+        self.professor = self._user('prof1', 'professor', teacher=self.teacher)
+        self.unlinked_professor = self._user('prof0', 'professor')
+        # The two states the denial bugs live in: a student account whose
+        # `student` FK was never filled, and a role no branch recognises.
+        # Both are reachable — roles are assigned by hand in Django admin.
+        self.unlinked_pupil = self._user('alum0', 'student')
+        self.oddball = self._user('raro1', 'desconocido')
+
+    def _user(self, username, role, student=None, teacher=None):
+        user = User.objects.create_user(username, password=PW)
+        Profile.objects.create(
+            user=user, role=role, student=student, teacher=teacher)
+        return user
+
+    def as_(self, user):
+        self.client.force_login(user)
+        return self.client
+
+    # --- 1. A view rendering a template that has never existed -------------
+
+    def test_a_student_with_no_student_row_gets_a_403_not_a_missing_template(self):
+        """`student_detail` rendered `mainapp/student_profile.html`, which has
+        never been committed on any branch, so the route answered 500 with a
+        TemplateDoesNotExist. `forbidden.html` already says why access was
+        refused and names the account, which is what an administrator needs in
+        order to fix it."""
+        response = self.as_(self.unlinked_pupil).get('/student/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, 'forbidden.html')
+        self.assertContains(response, 'ficha de estudiante', status_code=403)
+        self.assertContains(response, 'alum0', status_code=403)
+
+    # --- 2. Denials returned as HTTP 200 ----------------------------------
+
+    def test_login_refuses_an_unroutable_role_with_403_on_get(self):
+        """An authenticated GET of `/` with a role no branch recognises. It
+        rendered forbidden.html at 200 — the failure mode this module's
+        docstring says already shipped once."""
+        response = self.as_(self.oddball).get('/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, 'forbidden.html')
+
+    def test_login_refuses_an_unroutable_role_with_403_on_post(self):
+        """Same denial down the POST branch: the password was right and the
+        account is still refused, which is a denial like any other."""
+        response = self.client.post(
+            '/', {'username': 'raro1', 'password': PW})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, 'forbidden.html')
+
+    def test_the_csv_route_refuses_with_403_and_not_a_downloadable_denial(self):
+        """The worst of the three: `grades_csv` answers `text/csv`, so a 200
+        carrying an HTML denial body is a file the browser saves to disk."""
+        response = self.as_(self.unlinked_pupil).get('/grades/csv/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn('text/csv', response['Content-Type'])
+
+    # --- 3. One bad Section broke every professor's dashboard -------------
+
+    def test_the_section_sort_key_is_total(self):
+        """`Section` is unvalidated on the way in — `main_course_name` is a
+        hidden field concatenated straight into it, and `Course` is registered
+        raw in Django admin. The key read `section[0]` and `section[1]`, so one
+        bad row raised ValueError or IndexError for every professor, on a page
+        they had no way to diagnose."""
+        from .views import sort_key_section
+
+        for section in ('A1', '9', '10', '', 'Eso 1', '1A'):
+            with self.subTest(section=section):
+                course = Course(Tipo='Eso', Section=section)
+                self.assertIsInstance(sort_key_section(course), tuple)
+
+    def test_ten_sorts_after_nine_not_before_it(self):
+        """The single-character slice read '10' as (1, '0'), which sorts it
+        between '1A' and '2A'. It never raised, so it was the one of the three
+        that was silently wrong rather than loud."""
+        from .views import sort_key_section
+
+        courses = [Course(Tipo='Eso', Section=s) for s in ('10A', '9A', '2A')]
+
+        ordered = [c.Section for c in sorted(courses, key=sort_key_section)]
+
+        self.assertEqual(ordered, ['2A', '9A', '10A'])
+
+    def test_the_dashboard_survives_a_malformed_section(self):
+        """The end of the same story: a section an administrator can create
+        today must not 500 a different role's landing page."""
+        Course.objects.create(Tipo='Eso', Section='A1', school_year=self.year)
+        Subjects_Courses.objects.create(
+            subject=self.subject, teacher=self.teacher, trimester=self.trimester,
+            course=Course.objects.get(Section='A1'))
+
+        response = self.as_(self.professor).get('/teacher/')
+
+        self.assertEqual(response.status_code, 200)
+
+    # --- 4. Non-numeric ids answered 500 ----------------------------------
+
+    def test_non_numeric_ids_are_bad_filters_not_server_errors(self):
+        """`except Model.DoesNotExist` does not catch what a non-numeric
+        primary key raises — Django's integer coercion raises `ValueError`. The
+        same file already guards this in `section_courses`,
+        `student_dashboard_content` and `grades_csv`."""
+        client = self.as_(self.professor)
+
+        for url in ('/teacher/?school_year=abc',
+                    '/search/?q=Ana&course=abc',
+                    '/ajax/load-trimesters/?school_year=abc',
+                    '/ajax/load-trimesters/?school_year_id=abc'):
+            with self.subTest(url=url):
+                self.assertEqual(client.get(url).status_code, 200)
+
+    def test_the_trimester_fragment_forces_evaluation_inside_its_guard(self):
+        """`load_trimesters` is the odd one: its queryset was returned lazily,
+        so the ValueError landed during template rendering, past any guard
+        around the `.filter()` call. It has to be evaluated inside the guard —
+        the shape `_course_levels` already uses."""
+        response = self.as_(self.professor).get(
+            '/ajax/load-trimesters/?school_year=abc')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, str(self.trimester.pk))
+
+    def test_the_class_csv_download_survives_a_non_numeric_filter(self):
+        """POST-side twin of the above, and lazy in the same way: the filtered
+        queryset is only walked while the CSV is being written."""
+        response = self.as_(self.professor).post(
+            f'/class/{self.course.pk}/grades/download/', {'subject': 'abc'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/csv', response['Content-Type'])
+
+    # --- 5. A partly-failed bulk absence reported as success --------------
+
+    def _absence_post(self, students, when='2026-05-01T10:00'):
+        return {
+            'students': [s.pk for s in students],
+            'subject': self.subject.pk,
+            'trimester': self.trimester.pk,
+            'school_year': self.year.pk,
+            'Tipo': 'Ausencia',
+            'date_time': when,
+        }
+
+    def test_a_partly_failed_bulk_absence_names_who_was_skipped(self):
+        """`except Exception: continue` reported "creadas para 1" and stopped
+        there. At thirty students, "creadas para 28" gives a teacher no way to
+        find the other two.
+
+        The colliding row is seeded *through the form*, not the ORM. `Ausencias`
+        is unique on (student, subject, trimester, date_time) and `USE_TZ` is on
+        with `TIME_ZONE='Europe/Madrid'`, so a row from `timezone.now()` and one
+        parsed from a naive form string are different instants — an ORM-seeded
+        duplicate would not collide at all.
+        """
+        url = f'/class/{self.course.pk}/dashboard/'
+        client = self.as_(self.professor)
+        client.post(url, self._absence_post([self.student]), follow=True)
+        self.assertEqual(Ausencias.objects.count(), 1)
+
+        response = client.post(
+            url, self._absence_post([self.student, self.second_student]),
+            follow=True)
+
+        self.assertEqual(Ausencias.objects.count(), 2)
+        body = response.content.decode()
+        self.assertIn('Ausencias creadas para 1 estudiante(s).', body)
+        self.assertIn('Ya existía esa ausencia', body)
+        self.assertIn(self.student.Name, body)
+
+    def test_a_wholly_duplicate_batch_says_duplicate_rather_than_guessing(self):
+        """Total failure was already reported, but as "(posibles duplicados)" —
+        a guess at a cause the exception already names."""
+        url = f'/class/{self.course.pk}/dashboard/'
+        client = self.as_(self.professor)
+        client.post(url, self._absence_post([self.student]), follow=True)
+
+        response = client.post(
+            url, self._absence_post([self.student]), follow=True)
+
+        body = response.content.decode()
+        self.assertIn('Ya existía esa ausencia para 1 estudiante(s)', body)
+        self.assertNotIn('Ausencias creadas para', body)
+        self.assertNotIn('posibles duplicados', body)
+
+    # --- 6. The one professor route that did not fail closed --------------
+
+    def test_the_trimester_endpoint_requires_a_teachers_link(self):
+        """It was `@role_required('professor')` while every other professor
+        route is `@teacher_required` — the single cell of the role x route
+        matrix that answered 200 to an unlinked account."""
+        response = self.as_(self.unlinked_professor).get(
+            f'/ajax/load-trimesters/?school_year={self.year.pk}')
+
+        self.assertEqual(response.status_code, 403)
+
+    # --- 7. Logout acted on GET -------------------------------------------
+
+    def test_a_cross_site_get_can_no_longer_sign_anyone_out(self):
+        """`<img src="/logout/">` on any page cleared the session: a GET
+        carries no CSRF token, so there was nothing to check. Django's own
+        LogoutView has been POST-only since 4.1."""
+        client = self.as_(self.professor)
+
+        response = client.get('/logout/', HTTP_REFERER='https://evil.example')
+
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(client.get('/teacher/').status_code, 200)
+
+    def test_the_shell_signs_out_with_a_post_and_a_token(self):
+        """The only logout control in the app. It has to keep working, and it
+        has to keep looking the same — hence a button styled as the link was."""
+        response = self.as_(self.professor).get('/teacher/')
+
+        self.assertContains(response, 'action="/logout/" method="post"')
+        self.assertContains(response, 'csrfmiddlewaretoken')
+        self.assertContains(response, '>Salir</button>')
+
+        self.assertEqual(self.client.post('/logout/').status_code, 302)
+        self.assertEqual(self.client.get('/teacher/').status_code, 302)
+
+    # --- 8. The 429 body ---------------------------------------------------
+
+    def test_the_429_body_is_a_spanish_page_and_not_a_bare_string(self):
+        """It answered `Too many requests.` as text/html. Rendered off
+        `base_v2`, not `base_shell_v2`: some limits are keyed by IP, so an
+        anonymous caller reaches this and the shell's nav branches on a role
+        such a caller does not have."""
+        from django.test import RequestFactory
+        from django_ratelimit.exceptions import Ratelimited
+
+        from .middleware import RatelimitTo429Middleware
+
+        request = RequestFactory().get('/grades/csv/')
+        middleware = RatelimitTo429Middleware(lambda r: None)
+
+        response = middleware.process_exception(request, Ratelimited())
+
+        self.assertEqual(response.status_code, 429)
+        body = response.content.decode()
+        self.assertIn('Demasiadas peticiones', body)
+        self.assertIn('css/tailwind.css', body)
+        self.assertNotIn('Too many requests', body)
 
 
 class RoleAwareShellTests(V2CascadeAssertions, AccessControlTestCase):

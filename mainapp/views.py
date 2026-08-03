@@ -1,6 +1,7 @@
 import codecs
 import csv
 import logging
+import re
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
@@ -17,6 +18,7 @@ from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import urlencode
+from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
 from .forms import (
@@ -432,7 +434,12 @@ def loginPage(request):
         elif profile.role == 'administrator':
             return redirect('adminage_dashboard')
         else:
-            return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+            # A denial, so it says 403 — the same status `role_required` uses.
+            # Reached by an unrecognised role and by a student Profile whose
+            # `student` FK is NULL.
+            return render(request, "forbidden.html",
+                          {"user": request.user, "profile": profile},
+                          status=403)
 
     # Process login form.
     if request.method == "POST":
@@ -465,8 +472,12 @@ def loginPage(request):
             elif profile.role == 'administrator':
                 return redirect('adminage_dashboard')
             else:
-                # Unknown role.
-                return render(request, "forbidden.html", {"user": request.user, "profile": profile})
+                # Unknown role, or a student Profile with no `student` FK.
+                # 403, not 200: the credentials were right and the account is
+                # still refused, which is a denial like any other.
+                return render(request, "forbidden.html",
+                              {"user": request.user, "profile": profile},
+                              status=403)
         else:
             # Invalid credentials. Logged without the attempted username:
             # failed-login volume is the signal, not who was targeted.
@@ -479,8 +490,16 @@ def loginPage(request):
     return render(request, "mainapp/login.html")
 
 
+@require_POST
 def logoutUser(request):
-    # Logs out user.
+    """Sign out. POST only, and that is a security property, not a style.
+
+    On GET this was a cross-site logout: `<img src="/logout/">` on any page
+    clears the session, no CSRF token involved, because a GET carries none to
+    check. Django's own `LogoutView` has been POST-only since 4.1 for exactly
+    this. The one control in the app -- base_shell_v2's "Salir" -- is now a
+    small form with a token rather than an <a href>.
+    """
     audit(request, 'logout')
     logout(request)
     return redirect('login')
@@ -530,7 +549,15 @@ def student_detail(request):
     elif profile.role == 'student':
         # Handle Student role.
         if not profile.student:
-            return render(request, "mainapp/student_profile.html", {"user": request.user, "profile": profile})
+            # This used to render `mainapp/student_profile.html`, which has
+            # never existed in any commit — the route answered 500 with a
+            # TemplateDoesNotExist. `forbidden.html` is the right page anyway:
+            # it already states why access was refused and names the account
+            # the server is looking at, which is exactly what an administrator
+            # needs to be told in order to link the profile.
+            return render(request, "forbidden.html",
+                          {"user": request.user, "profile": profile,
+                           "unlinked_student": True}, status=403)
         student = profile.student
 
     # FILTERS: School Year & Trimester
@@ -660,17 +687,58 @@ def student_detail(request):
     return render(request, "mainapp/student_file.html", context)
 
 
+def _name_list(students, limit=8):
+    """Student names for a message, truncated so a whole class still fits.
+
+    A count alone is not actionable: "creadas para 28" of 30 gives a teacher
+    no way to find the two that were skipped. Past `limit` the names stop
+    being readable in a one-line banner, so the tail becomes a count.
+    """
+    names = [s.Name for s in students]
+    if len(names) <= limit:
+        return ', '.join(names)
+    return f"{', '.join(names[:limit])} y {len(names) - limit} más"
+
+
+def _as_pk(value):
+    """A query-string value as an integer primary key, or None.
+
+    `except Model.DoesNotExist` does not catch what a non-numeric pk actually
+    raises: Django's integer field coercion raises `ValueError`, so
+    `?course=abc` reached the caller as a 500. Worse, a queryset built from
+    such a value is lazy -- `Trimester.objects.filter(school_year_id='abc')`
+    returns without raising and blows up during template rendering instead,
+    where no guard around the filter call can see it. Coercing first moves the
+    failure to a place a caller can handle.
+    """
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def sort_key_section(course):
-    # Helper to sort courses by section (e.g., 1A, 2B).
+    """Sort courses by section (e.g. 1A, 2B). Total on any string.
 
-    section = course.Section
-    # Extract number part.
-    number_part = int(section[0])
-    # Extract letter part.
-    letter_part = section[1]
+    Nothing validates `Section` on the way in — `main_course_name` is an
+    unvalidated hidden field concatenated straight into it, and `Course` is
+    registered raw in Django admin. The previous key read `section[0]` and
+    `section[1]` directly, so a single bad row broke `/teacher/` and
+    `/section/<x>/courses/` for every professor, permanently and for a role
+    that could not see why.
 
-    # Return tuple for sorting.
-    return (number_part, letter_part)
+    The number is read greedily rather than a character at a time, so '10'
+    sorts after '9' instead of as (1, '0'). Anything that does not start with
+    a digit sorts last under its own text, which keeps the order stable
+    without hiding the row.
+    """
+    section = (course.Section or '').strip()
+
+    match = re.match(r'(\d+)(\D*)', section)
+    if not match:
+        return (999, section)
+
+    return (int(match.group(1)), match.group(2))
 
 
 @teacher_required
@@ -694,8 +762,11 @@ def teacher_dashboard(request):
             school_year = School_year.objects.get(
                 SchoolYearID=selected_school_year)
             all_courses = my_courses.filter(school_year=school_year)
-        except School_year.DoesNotExist:
-            # Fallback to newest.
+        except (School_year.DoesNotExist, ValueError, TypeError):
+            # Fallback to newest. ValueError is not redundant: Django raises it
+            # -- not DoesNotExist -- for a non-numeric primary key, so
+            # `?school_year=abc` used to be a 500. Same shape as the guards
+            # `section_courses` and `student_dashboard_content` already carry.
             school_year = all_school_years.first()
             all_courses = my_courses.filter(
                 school_year=school_year) if school_year else Course.objects.none()
@@ -843,7 +914,19 @@ def class_dashboard(request, course_id):
             tipo = form.cleaned_data.get('Tipo')
             date_time = form.cleaned_data.get('date_time')
 
-            created = 0
+            # Three outcomes, not two. A bare `except Exception: continue`
+            # reported a partly-failed batch as an unqualified success: select
+            # thirty students, have two collide, and the teacher is told
+            # "creadas para 28" with no way to find the other two. It also made
+            # a duplicate and a validation failure indistinguishable, which is
+            # the difference between "already recorded" and "this did not
+            # save". Each bucket keeps the students, not just a count — they
+            # all come from `scope.students`, the roster the page is already
+            # showing, so naming them leaks nobody the teacher cannot see.
+            created = []
+            duplicated = []
+            failed = []
+
             for s in students_selected:
                 if date_time:
                     a = Ausencias(student=s, subject=subject,
@@ -853,16 +936,42 @@ def class_dashboard(request, course_id):
                                   trimester=trimester, Tipo=tipo, school_year=school_year)
                 try:
                     a.save()
-                    created += 1
+                    created.append(s)
+                except IntegrityError:
+                    # Ausencias is unique on
+                    # (student, subject, trimester, date_time) — the same
+                    # absence is already on file.
+                    duplicated.append(s)
+                except (ValidationError, ValueError):
+                    failed.append(s)
                 except Exception:
-                    continue
+                    # Nothing else is expected. Kept so one odd row cannot
+                    # 500 the whole batch, but logged rather than swallowed.
+                    audit(request, 'ausencia.bulk_error',
+                          student=s.pk, course=course.CourseID)
+                    failed.append(s)
 
+            # One message per outcome that occurred, so a partial batch says
+            # both halves. "posibles duplicados" is gone: the old wording
+            # guessed at a cause the exception already names.
             if created:
                 messages.success(
-                    request, f'Ausencias creadas para {created} estudiante(s).')
-            else:
+                    request, f'Ausencias creadas para {len(created)} estudiante(s).')
+            if duplicated:
+                messages.warning(
+                    request,
+                    f'Ya existía esa ausencia para {len(duplicated)} '
+                    f'estudiante(s): {_name_list(duplicated)}.')
+            if failed:
                 messages.error(
-                    request, 'No se creó ninguna ausencia (posibles duplicados).')
+                    request,
+                    f'No se pudo registrar la ausencia de {len(failed)} '
+                    f'estudiante(s): {_name_list(failed)}.')
+            if not created and not duplicated and not failed:
+                # `students` is required, so this needs an empty POST past the
+                # form to reach. Silence would be worse than a flat statement.
+                messages.error(
+                    request, 'No se creó ninguna ausencia.')
             # Carry the scope through the redirect, or the teacher lands back
             # on the default trimester after every save.
             url = reverse('class_dashboard', args=[course.CourseID])
@@ -1070,8 +1179,11 @@ def grades_csv(request, student_id=None):
             grades = Grade.objects.filter(student__in=my_students)
             filename = "all_grades.csv"
     else:
-        # Access denied.
-        return render(request, 'forbidden.html', {"user": request.user, "profile": profile})
+        # Access denied. The status matters more here than anywhere else in
+        # the file: this route answers `text/csv`, so a 200 with an HTML
+        # denial body is a file the browser saves to disk.
+        return render(request, 'forbidden.html',
+                      {"user": request.user, "profile": profile}, status=403)
 
     # --- APPLY FILTERS ---
     if selected_year_id:
@@ -1144,10 +1256,15 @@ def class_grades_download(request, course_id):
 
     # Handle POST to generate CSV.
     if request.method == 'POST':
-        # Get filters.
-        selected_subject_id = request.POST.get('subject')
-        selected_trimester_id = request.POST.get('trimester')
-        selected_school_year_id = request.POST.get('school_year')
+        # Get filters. Coerced up front rather than passed straight into
+        # `.filter()`: a non-numeric id raises ValueError from the pk
+        # coercion, not DoesNotExist, and these querysets are lazy -- the
+        # exception would surface while writing the CSV, past any guard around
+        # the filter call. An unusable filter is dropped, as `grades_csv`
+        # drops one, rather than 500ing the download.
+        selected_subject_id = _as_pk(request.POST.get('subject'))
+        selected_trimester_id = _as_pk(request.POST.get('trimester'))
+        selected_school_year_id = _as_pk(request.POST.get('school_year'))
         selected_grade_type = request.POST.get('grade_type')
 
         # Base grades.
@@ -1272,7 +1389,7 @@ def create_edit_grade(request, grade_id=None, student_id=None):
 # 2. AJAX VIEW: LOAD TRIMESTERS
 # =================================================================
 
-@role_required('professor')
+@teacher_required
 def load_trimesters(request):
     """Return the trimester <option> list for a school year, as markup.
 
@@ -1284,12 +1401,20 @@ def load_trimesters(request):
     `school_year` is the select's own name (htmx sends an element's value under
     it); `school_year_id` is kept because it is the param every other view in
     this file uses for a year.
-    """
-    school_year_id = (request.GET.get('school_year')
-                      or request.GET.get('school_year_id') or None)
 
-    trimesters = Trimester.objects.filter(
-        school_year_id=school_year_id).order_by('Name')
+    `@teacher_required` rather than `@role_required('professor')`: every other
+    professor route in the file requires the Teachers link too, and this was
+    the one cell of the role x route matrix that did not fail closed.
+
+    An unusable year is an empty list, not a 500. The guard has to force
+    evaluation -- the queryset is lazy, so returning it unevaluated moves the
+    `ValueError` into template rendering, past the `except`.
+    """
+    school_year_id = _as_pk(request.GET.get('school_year')
+                            or request.GET.get('school_year_id'))
+
+    trimesters = list(Trimester.objects.filter(
+        school_year_id=school_year_id).order_by('Name'))
 
     return render(request, 'mainapp/_trimester_options.html',
                   {'trimesters': trimesters})
@@ -1371,7 +1496,9 @@ def search_students(request):
             students_qs = my_students.filter(
                 students_courses__course_section=course_obj
             ).distinct()
-        except Course.DoesNotExist:
+        except (Course.DoesNotExist, ValueError, TypeError):
+            # `?course=abc` raises ValueError from the pk coercion, not
+            # DoesNotExist. An unusable filter is an empty result, not a 500.
             students_qs = Students.objects.none()
     else:
         # No course filter: still scoped to this teacher.

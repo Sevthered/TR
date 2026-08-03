@@ -1,0 +1,59 @@
+{% extends "base_v2.html" %}
+
+{% comment %}
+  Direction C · Registro. The body of a 429.
+
+  `RatelimitTo429Middleware` used to answer a bare `Too many requests.` as
+  text/html — English, in a Spanish app, with no layout and no way back.
+
+  It extends base_v2 rather than base_shell_v2 on purpose. The rate limits are
+  keyed by user *and* by IP (`grades_csv` by user, `loginPage` by IP), so an
+  anonymous caller reaches this page, and base_shell_v2's nav branches on
+  `user.profile.role` — a nav that would render empty for half the callers.
+  Same reasoning `login.html` uses.
+{% endcomment %}
+
+{% block page_title %}Demasiadas peticiones · Instituto{% endblock page_title %}
+
+{% block content %}
+<div class="grid place-items-center min-h-screen px-pad py-10">
+  {# base_v2 already emits <main id="page">; a second main landmark would be one too many. #}
+  <div class="w-full max-w-[420px]" aria-labelledby="ratelimit-title">
+
+    <div class="flex items-center gap-2.5 pb-[26px]">
+      <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
+                   text-accent-lift text-[10px] font-bold">TR</span>
+      <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+    </div>
+
+    <div class="border border-line rounded-[6px] px-[26px] pt-[26px] pb-7">
+      <div class="flex flex-wrap items-baseline gap-3">
+        <h1 id="ratelimit-title" class="text-[24px] font-[650] leading-none tracking-[-.03em]">
+          Demasiadas peticiones</h1>
+        <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-bad bg-bad-dim text-bad">429</span>
+      </div>
+
+      <p class="max-w-[62ch] pt-[18px] text-[12.5px] text-ink-2">
+        Has hecho demasiadas peticiones en poco tiempo y el servidor las ha
+        limitado temporalmente. Espera unos minutos y vuelve a intentarlo.
+      </p>
+      <p class="max-w-[62ch] pt-3 text-[12.5px] text-ink-3">
+        Si necesitas descargar muchos datos de una vez, avisa a administración
+        en lugar de repetir la descarga.
+      </p>
+
+      <div class="pt-[26px]">
+        {% comment %}
+          `login` is the root route, and it redirects a signed-in caller on to
+          their own dashboard — so one link serves both kinds of caller
+          without this page having to know which it is looking at.
+        {% endcomment %}
+        <a href="{% url 'login' %}"
+           class="inline-block px-3.5 py-[7px] rounded-[5px] border border-line-2 text-[12.5px]
+                  text-ink-2 hover:text-ink hover:border-accent">Volver al inicio</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock content %}

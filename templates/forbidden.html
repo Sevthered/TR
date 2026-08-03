@@ -11,6 +11,12 @@
   No action links: this page cannot know a destination the caller is entitled
   to, and the shell's nav is already there. `unlinked_teacher` keeps its
   original wording, since it names the one fix an administrator can apply.
+
+  `unlinked_student` is its counterpart, and it is why this page is reached
+  from `student_detail` at all: that branch used to render
+  `mainapp/student_profile.html`, a template never committed on any branch, so
+  the route answered 500. The two flags say the same thing about the two
+  identity links a Profile can be missing.
 {% endcomment %}
 
 {% block page_title %}Acceso prohibido{% endblock page_title %}
@@ -31,6 +37,10 @@
       Esta cuenta de profesor no está vinculada a ningún registro de
       profesorado, por lo que no tiene ninguna clase asignada. Pide a un
       administrador que enlace tu perfil con tu ficha de profesor.
+      {% elif unlinked_student %}
+      Esta cuenta de estudiante no está vinculada a ninguna ficha de alumn@,
+      por lo que no hay ningún expediente que mostrar. Pide a un administrador
+      que enlace tu perfil con tu ficha de estudiante.
       {% else %}
       Tu cuenta no tiene permiso para ver esta página. Si crees que debería
       tenerlo, pide a un administrador que revise el rol de tu perfil.
