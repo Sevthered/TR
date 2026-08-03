@@ -2082,7 +2082,12 @@ def create_courses_sections_view(request):
     # Get School Year object.
     try:
         school_year = School_year.objects.get(pk=school_year_id)
-    except School_year.DoesNotExist:
+    except (School_year.DoesNotExist, ValueError):
+        # `ValueError` is not redundant: an id that is not a number at all —
+        # `?school_year_id=abc`, from a hand-edited URL or a stale bookmark —
+        # never reaches `DoesNotExist`, because the ORM raises while adapting
+        # the value to the primary key's type. Catching only `DoesNotExist`
+        # turned that into a 500. Same shape as `reassign_students`.
         raise Http404("School Year not found.")
 
     context = {'school_year': school_year}
@@ -2119,11 +2124,29 @@ def create_courses_sections_view(request):
             messages.error(request, "Validation error. Restart.")
             return redirect('adminage_dashboard')
 
+        # The type the formset validates its hidden level numbers against is
+        # the *validated* one, not `request.POST.get('course_tipo')` — see
+        # CourseSectionForm.clean_main_course_name.
+        course_tipo = form_main.cleaned_data.get('course_tipo') or course_tipo
+
         CourseFormSet = formset_factory(CourseSectionForm, extra=0)
-        formset = CourseFormSet(request.POST)
+        formset = CourseFormSet(
+            request.POST, form_kwargs={'course_tipo': course_tipo})
 
         if formset.is_valid():
+            # Which sections this year already holds for this type. Running the
+            # flow a second time for the same type and level is an ordinary
+            # thing to do — an administrator adding a section C to a level that
+            # already has A and B has no other route — and it used to produce a
+            # duplicate row rather than either skipping or refusing. Now that
+            # (Tipo, Section, school_year) is unique, an unfiltered bulk_create
+            # would raise instead, which is not an improvement.
+            existing = set(Course.objects.filter(
+                school_year=school_year, Tipo=course_tipo
+            ).values_list('Section', flat=True))
+
             num_created = 0
+            skipped = []
 
             for form_section in formset:
                 if form_section.cleaned_data:
@@ -2135,10 +2158,15 @@ def create_courses_sections_view(request):
 
                     new_courses = []
                     for letter in subsection_letters:
+                        section = f"{main_course_name}{letter}"
+                        if section in existing:
+                            skipped.append(section)
+                            continue
+                        existing.add(section)
                         new_courses.append(
                             Course(
                                 Tipo=course_tipo,
-                                Section=f"{main_course_name}{letter}",
+                                Section=section,
                                 school_year=school_year
                             )
                         )
@@ -2146,7 +2174,18 @@ def create_courses_sections_view(request):
                     num_created += len(new_courses)
 
             messages.success(
-                request, f"{num_created} sections created for {course_tipo} ({school_year}).")
+                request,
+                f"{num_created} sección(es) creada(s) para {course_tipo} ({school_year}).")
+
+            if skipped:
+                # Named rather than counted: "3 ya existían" leaves the
+                # administrator guessing which three, and the answer decides
+                # whether anything is wrong.
+                messages.info(
+                    request,
+                    "Ya existían y no se han duplicado: "
+                    + ", ".join(f"{course_tipo} {name}"
+                                for name in sorted(skipped)) + ".")
 
             return redirect('adminage_dashboard')
 
@@ -2223,7 +2262,10 @@ def assign_subjects_view(request):
             current_form.fields['teacher'].queryset = Teachers.objects.all().order_by(
                 'Name')
 
-        except School_year.DoesNotExist:
+        except (School_year.DoesNotExist, ValueError):
+            # See create_courses_sections_view: a non-numeric id raises
+            # ValueError out of the ORM, not DoesNotExist, so the Spanish
+            # branch below was unreachable for the commonest bad input.
             messages.error(request, "El año escolar no es válido.")
             return redirect('assign_subjects')
 
@@ -2234,10 +2276,11 @@ def assign_subjects_view(request):
             course_students_links = Students_Courses.objects.filter(
                 course_section=target_course
             ).select_related('student').order_by('student__Name')
-        except Course.DoesNotExist:
+        except (Course.DoesNotExist, ValueError):
             messages.warning(
                 request, "El identificador de curso no es válido.")
             selected_course_id = None
+            target_course = None
 
     # 2. HANDLE POST (Create/Update Assignment)
     if request.method == 'POST':
@@ -2253,7 +2296,7 @@ def assign_subjects_view(request):
 
         try:
             target_course = Course.objects.get(pk=selected_course_id)
-        except Course.DoesNotExist:
+        except (Course.DoesNotExist, ValueError):
             messages.error(request, "El curso no es válido.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
@@ -2375,6 +2418,16 @@ def assign_subjects_view(request):
         'selected_course_type': course_type,
         'current_school_year': current_school_year,
         'trimesters': trimesters,
+        # The course the page is actually scoped to. It was computed here and
+        # used through the whole view but never handed to the template, so both
+        # `{% if target_course %}` branches in assign_subjects.html were dead:
+        # the badge read "Sección seleccionada · Ninguna" over that section's
+        # own roster, and "Esta sección no tiene alumn@s matriculad@s" could
+        # never win over "Elija una sección arriba". `reassign_students` passes
+        # `origin_course` for exactly this and is pinned by
+        # test_the_two_empty_states_do_not_read_alike; this page had no
+        # equivalent, which is why a green suite never noticed.
+        'target_course': target_course,
         # Lista de registros de estudiante-curso
         'course_students_links': course_students_links,
     }
@@ -2512,7 +2565,11 @@ def create_and_assign_student_view(request):
                 try:
                     # Get selected Course.
                     target_course = Course.objects.get(pk=course_id)
-                except Course.DoesNotExist:
+                except (Course.DoesNotExist, ValueError):
+                    # A crafted or stale `course_id` that is not a number
+                    # raises ValueError, not DoesNotExist. Nothing is written
+                    # before this point — the student row is created inside the
+                    # `else` below — so this is availability, not integrity.
                     messages.error(
                         request, "La sección seleccionada no es válida.")
                 else:
@@ -2641,24 +2698,32 @@ def reassign_students(request):
                 # went unnoticed because a student who has only ever been in
                 # one course has exactly one row, which is every student in a
                 # freshly seeded database.
-                existing_assignment = Students_Courses.objects.filter(
+                same_year = Students_Courses.objects.filter(
                     student=student,
                     course_section__school_year=new_course.school_year,
-                ).order_by('pk').first()
+                )
 
-                if existing_assignment is None:
-                    # No enrolment for that year yet: this is an addition, not
-                    # a move.
-                    Students_Courses.objects.create(
-                        student=student,
-                        course_section=new_course
-                    )
-                elif existing_assignment.course_section_id != new_course.pk:
-                    existing_assignment.course_section = new_course
-                    existing_assignment.save()
-                # else: already in the destination course. Repointing the row
-                # onto itself is a no-op, and counting it as an error would
-                # report a failure for a request that is already satisfied.
+                if same_year.filter(course_section=new_course).exists():
+                    # Already in the destination. Asking "is any row already
+                    # the destination?" rather than "is the *first* row the
+                    # destination?" is the whole fix: with two enrolments in
+                    # that year, `.first()` returned the other one, repointing
+                    # it tripped unique_together, and a request whose state was
+                    # already correct was reported as "no se pudieron aplicar".
+                    pass
+                else:
+                    existing_assignment = same_year.order_by('pk').first()
+
+                    if existing_assignment is None:
+                        # No enrolment for that year yet: this is an addition,
+                        # not a move.
+                        Students_Courses.objects.create(
+                            student=student,
+                            course_section=new_course
+                        )
+                    else:
+                        existing_assignment.course_section = new_course
+                        existing_assignment.save()
 
                 success_count += 1
 
@@ -2681,6 +2746,14 @@ def reassign_students(request):
             messages.warning(
                 request,
                 f"{error_count} reasignación(es) no se pudieron aplicar.")
+        if success_count == 0 and error_count == 0:
+            # Every row left on «Sin cambios» submits an empty value, which the
+            # loop above skips, so neither message fired and the redirect was
+            # indistinguishable from a save that worked. Saying nothing after a
+            # submit is the one outcome a form must never have.
+            messages.info(
+                request,
+                "No se seleccionó ningún cambio: no se ha reasignado a nadie.")
 
         return redirect(_reassign_url(request.POST.get('school_year_id'),
                                       request.POST.get('course_id')))
@@ -2712,18 +2785,44 @@ def reassign_students(request):
                 request, "El identificador de curso no es válido.")
             selected_course_id = ''
 
+    if origin_course is not None and school_year_id and (
+            school_year_id != str(origin_course.school_year_id)):
+        # The year and the course disagree, and the year wins.
+        #
+        # With JavaScript off, the scope bar is an ordinary GET form: choosing
+        # a different year and pressing «Cargar alumnado» resubmits the section
+        # select untouched, so a `course_id` from the *old* year travels with
+        # the new year. Letting the course override then silently reverted the
+        # only thing the administrator had just changed — and
+        # `_course_dependents.html` says in as many words that the no-JS path
+        # works. The year is the deliberate choice of the two, so the stale
+        # course is what gets dropped; type and level survive, because they are
+        # not year-specific and the section select repopulates under them.
+        messages.info(
+            request,
+            "La clase elegida pertenece a otro año escolar. "
+            "Seleccione una sección del año escolar actual.")
+        origin_course = None
+        selected_course_id = ''
+
     if origin_course is not None:
         # Arriving with only ?course_id= is the normal case — a bookmark, or
         # this view's own post-POST redirect — and every select above it is
         # recoverable from the row, so all four come back filled before htmx
         # runs once. The row *overrides* the query string rather than filling
-        # gaps in it: a `?school_year_id=` disagreeing with the course would
-        # describe a class that does not exist, which is the same rule
+        # gaps in it: a `?level=` disagreeing with the course would describe a
+        # class that does not exist, which is the same rule
         # `resolve_class_scope` applies on the teacher's side.
+        #
+        # `level` used only to be filled when absent, which left
+        # `?course_id=<Bachillerato 1A>&level=4` rendering the heading and the
+        # hidden course_id as Bachillerato 1A while Nivel showed nothing
+        # selected and Sección said «Este nivel no tiene secciones» — the scope
+        # bar contradicting the page under it.
         school_year_id = str(origin_course.school_year_id)
         course_type = origin_course.Tipo
-        if not level and origin_course.Section[:1].isdigit():
-            level = origin_course.Section[:1]
+        level = (origin_course.Section[:1]
+                 if origin_course.Section[:1].isdigit() else '')
 
     roster = []
     if origin_course is not None:
