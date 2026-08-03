@@ -2633,9 +2633,10 @@ def _destination_groups():
     restricting the destinations to one year would remove the only reason this
     view has to care which enrolment it writes to.
 
-    Ordered in the database rather than through `sort_key_section`, which
-    raises on any `Section` not shaped <digit><letter>. A page that lists every
-    course in the installation is the wrong place to be strict about that.
+    Ordered in the database rather than through `sort_key_section`. That key is
+    total now, so this is no longer the difference between working and raising
+    — but a page listing every course in the installation still has no reason
+    to pull them all into Python to sort them.
     """
     groups = []
     current = None
