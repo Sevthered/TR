@@ -1,4 +1,4 @@
-from django.http import HttpResponse
+from django.shortcuts import render
 from django_ratelimit.exceptions import Ratelimited
 
 
@@ -19,5 +19,10 @@ class RatelimitTo429Middleware:
 
     def process_exception(self, request, exception):
         if isinstance(exception, Ratelimited):
-            return HttpResponse('Too many requests.', status=429)
+            # The body used to be the bare string `Too many requests.`, served
+            # as text/html: English in a Spanish app, no layout, no way back.
+            # The template extends base_v2 rather than base_shell_v2 because
+            # some limits are keyed by IP, so an anonymous caller reaches this
+            # and the shell's nav branches on a role it would not have.
+            return render(request, 'too_many_requests.html', status=429)
         return None
