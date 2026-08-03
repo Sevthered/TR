@@ -42,11 +42,13 @@
       block is `hidden md:block` and the identity footer is `hidden md:flex`,
       so a phone renders this row and nothing else of the shell.
 
-      That is why the second sign-out control lives here. `logoutUser` is
-      @require_POST, which was the right fix for a route an `<img src>` could
-      trigger — but it also removed the escape hatch, because typing /logout/
-      now answers a bare 405 with an empty body. With the only control inside
+      That is why the second sign-out control lives here. `logoutUser` no
+      longer acts on GET, which was the right fix for a route an `<img src>`
+      could trigger — but it also removed the escape hatch, because typing
+      /logout/ stopped signing anyone out. With the only control inside
       `hidden md:flex`, a narrow viewport had no way to sign out at all.
+      (That URL now renders a confirmation rather than a bare 405, but a URL
+      someone has to know and type is not a control.)
 
       `md:hidden` is the exact complement of the footer's `hidden md:flex`, so
       the two never render together and the desktop layout is untouched. It

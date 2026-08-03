@@ -1,0 +1,58 @@
+{% extends "base_shell_v2.html" %}
+
+{% comment %}
+  Direction C · Registro.
+
+  Rendered by `logoutUser` on GET. It exists because `@require_POST` answered a
+  bookmarked `/logout/` with a bare 405 and an empty body — a page that had
+  worked for years became a dead end with nothing on it.
+
+  The security property is unchanged: **only the POST ends the session**. A
+  cross-site `<img src="/logout/">` receives this HTML and nothing happens.
+  The form here is the same control the shell carries, with the same token.
+
+  It extends the shell on purpose. Someone who lands here by typing the URL is
+  as likely to have meant something else, and the nav is the way back — which
+  is the same argument `forbidden.html` makes for keeping its own nav.
+
+  «Cancelar» points at `login`, which is not the login page for someone still
+  signed in: `loginPage`'s GET branch redirects an authenticated caller to
+  their own role's dashboard. It is the one URL in the app that resolves to
+  "wherever this account belongs" without this template knowing the role.
+{% endcomment %}
+
+{% block page_title %}Cerrar sesión{% endblock page_title %}
+
+{% block breadcrumb %}<b class="text-ink-2 font-medium">Cerrar sesión</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Cerrar sesión</h1>
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-line-2 text-ink-2">@{{ user.username }}</span>
+  </div>
+
+  <div class="shrink-0 px-pad py-4 border-y border-line">
+    <p class="max-w-[62ch] text-[13px] text-ink-2">
+      ¿Quieres cerrar la sesión de esta cuenta? Tendrás que volver a
+      identificarte para entrar de nuevo.
+    </p>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2.5 shrink-0 px-pad py-4 border-b border-line">
+    <form action="{% url 'logout' %}" method="post">{% csrf_token %}
+      <button type="submit"
+              class="block px-3.5 py-[7px] rounded-[5px] border border-accent bg-accent-dim text-[12.5px]
+                     text-accent-lift hover:border-accent-lift">Cerrar sesión</button>
+    </form>
+    <a href="{% url 'login' %}"
+       class="block px-3.5 py-[7px] rounded-[5px] border border-line-2 text-[12.5px]
+              text-ink-2 hover:text-ink hover:border-accent">Cancelar</a>
+  </div>
+
+  {# Ruled blank lines, like a paper register — no markup, no invented rows. #}
+  <div class="flex-1 min-h-[120px] ruled" aria-hidden="true"></div>
+
+</div>
+{% endblock main %}

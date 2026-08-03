@@ -4551,12 +4551,18 @@ class ConfirmedBugRegressionTests(TransactionTestCase):
     def test_a_cross_site_get_can_no_longer_sign_anyone_out(self):
         """`<img src="/logout/">` on any page cleared the session: a GET
         carries no CSRF token, so there was nothing to check. Django's own
-        LogoutView has been POST-only since 4.1."""
+        LogoutView has been POST-only since 4.1.
+
+        The assertion is on the **session**, not on the status code. The fix
+        was `@require_POST` and a 405; the GET now renders a confirmation
+        instead, because the 405 had an empty body and broke a bookmark. Both
+        shapes satisfy the property this test is about, so it asserts the
+        property: after the GET, the account is still signed in."""
         client = self.as_(self.professor)
 
         response = client.get('/logout/', HTTP_REFERER='https://evil.example')
 
-        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(client.get('/teacher/').status_code, 200)
 
     def test_the_shell_signs_out_with_a_post_and_a_token(self):
@@ -5388,12 +5394,17 @@ class _LogoutControlFinder(HTMLParser):
 class LogoutReachabilityTests(AccessControlTestCase):
     """Signing out has to be possible at every width, on every role's page.
 
-    `logoutUser` became `@require_POST` because on GET it was a cross-site
-    logout — an `<img src="/logout/">` anywhere cleared the session. That fix
-    is right and stays. What it removed was the *escape hatch*: before it, a
-    phone user with no visible control could still type `/logout/` in the URL
-    bar. Afterwards that answers a bare 405 with an empty body, so the only
-    remaining route to signing out is a control that must actually be visible.
+    `logoutUser` stopped acting on GET because that was a cross-site logout —
+    an `<img src="/logout/">` anywhere cleared the session. That fix is right
+    and stays. What it removed was the *escape hatch*: before it, a phone user
+    with no visible control could still type `/logout/` in the URL bar and be
+    signed out by the GET itself.
+
+    Typing the URL now reaches a confirmation page rather than a bare 405, so
+    the escape hatch is technically back — but a URL a person has to know and
+    type is not an affordance, and the confirmation still needs its own button
+    pressed. The requirement this class states is unchanged: every role, at
+    every width, must have a *visible* control.
 
     The nav collapses to its brand bar below `md` — every role's link block is
     `hidden md:block` and the identity footer is `hidden md:flex` — so the
@@ -5453,8 +5464,9 @@ class LogoutReachabilityTests(AccessControlTestCase):
         self.assertTrue([c for c in controls if not c['hidden_from_md']])
 
     def test_no_logout_control_is_a_plain_link(self):
-        """A GET control would answer 405 with an empty body, and worse, it is
-        the shape that made the route forgeable in the first place."""
+        """A GET control would reach the confirmation page instead of signing
+        anyone out — an extra click for no reason — and worse, it is the shape
+        that made the route forgeable in the first place."""
         for role, url in self.PAGES:
             with self.subTest(role=role):
                 controls = self._controls(
@@ -5489,6 +5501,63 @@ class LogoutReachabilityTests(AccessControlTestCase):
         ).read_text(encoding='utf-8')
 
         self.assertIn('hidden md:flex items-center gap-2.5 mt-auto', source)
+
+
+class LogoutConfirmationTests(AccessControlTestCase):
+    """A bookmarked `/logout/` answered a blank 405 once the view went
+    POST-only. The GET branch restores it without giving back the property.
+
+    The property is *not* "GET returns 405" — it is "a GET does not end a
+    session". A 405 satisfies it; so does a confirmation page whose button is
+    the POST. `test_a_cross_site_get_can_no_longer_sign_anyone_out` asserts the
+    session, which is the thing with the effect, so it survived this change
+    unedited except for the status code it happens to observe.
+    """
+
+    def test_a_get_renders_a_confirmation_and_leaves_the_session_alone(self):
+        client = self.as_(self.professor)
+
+        response = client.get('/logout/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'mainapp/logout_confirm.html')
+        self.assertEqual(client.get('/teacher/').status_code, 200)
+
+    def test_the_confirmation_acts_through_a_post_with_a_token(self):
+        """If the button were a link, the page would be the forgeable shape
+        again — one click further away, and no CSRF token either way."""
+        body = self.as_(self.professor).get('/logout/').content.decode('utf-8')
+
+        forms = re.findall(
+            r'<form[^>]*action="[^"]*/logout/"[^>]*>(.*?)</form>', body, re.S)
+        self.assertTrue(forms)
+        for form in forms:
+            self.assertIn('csrfmiddlewaretoken', form)
+        self.assertNotIn('<a href="/logout/"', body)
+
+    def test_the_post_still_signs_out(self):
+        client = self.as_(self.professor)
+
+        response = client.post('/logout/')
+
+        self.assertRedirects(response, '/', fetch_redirect_response=False)
+        self.assertEqual(client.get('/teacher/').status_code, 302)
+
+    def test_an_anonymous_caller_is_sent_to_the_login_page(self):
+        """There is no session to end, and the shell's nav branches on
+        `user.profile.role` — rendering the confirmation to nobody would
+        render an empty nav to nobody."""
+        response = self.client.get('/logout/')
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn('logout_confirm', response.get('Location', ''))
+
+    def test_every_other_method_is_still_refused(self):
+        """`require_http_methods(['GET', 'POST'])`, not an open door."""
+        client = self.as_(self.professor)
+
+        self.assertEqual(client.delete('/logout/').status_code, 405)
+        self.assertEqual(client.get('/teacher/').status_code, 200)
 
 
 class RateLimitPageTests(AccessControlTestCase):

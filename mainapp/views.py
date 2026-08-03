@@ -18,7 +18,7 @@ from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import urlencode
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods
 from django_ratelimit.decorators import ratelimit
 
 from .forms import (
@@ -490,16 +490,31 @@ def loginPage(request):
     return render(request, "mainapp/login.html")
 
 
-@require_POST
+@require_http_methods(['GET', 'POST'])
 def logoutUser(request):
-    """Sign out. POST only, and that is a security property, not a style.
+    """Sign out. **Only the POST branch ends a session**, and that is a
+    security property, not a style.
 
-    On GET this was a cross-site logout: `<img src="/logout/">` on any page
-    clears the session, no CSRF token involved, because a GET carries none to
-    check. Django's own `LogoutView` has been POST-only since 4.1 for exactly
-    this. The one control in the app -- base_shell_v2's "Salir" -- is now a
-    small form with a token rather than an <a href>.
+    On GET this used to act: `<img src="/logout/">` on any page cleared the
+    session, no CSRF token involved, because a GET carries none to check.
+    Django's own `LogoutView` has been POST-only since 4.1 for exactly this.
+
+    But `@require_POST` answered a bookmarked `/logout/` with a bare 405 and an
+    empty body -- a route that worked for years, now a blank page with no way
+    forward. The GET branch restores the bookmark *and* keeps the property,
+    because it renders a confirmation whose button is the POST: a cross-site
+    `<img>` gets HTML back and nothing else happens. This is what Django's own
+    `LogoutView` template does, and the reason it has one.
+
+    Anonymous callers are redirected rather than shown a form -- there is no
+    session to end, and the shell would render a nav for a `user` with no
+    `profile`.
     """
+    if request.method == 'GET':
+        if not request.user.is_authenticated:
+            return redirect('login')
+        return render(request, 'mainapp/logout_confirm.html')
+
     audit(request, 'logout')
     logout(request)
     return redirect('login')
