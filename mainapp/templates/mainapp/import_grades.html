@@ -118,6 +118,69 @@
   </section>
   {% endif %}
 
+  {% if result.updates %}
+  {% comment %}
+    The overwrites, in the same shape as the errors above. Import is an upsert
+    and stays one — whether a file may replace an existing grade is the user's
+    call, not this page's — but a bare "actualizadas: 7" does not say *what*
+    was replaced, and the old value is gone by the time the teacher reads it.
+    This is the one table on the page that names a student, and it may: a row
+    only reaches it by matching a student this teacher already teaches, where
+    a failed row echoes whatever string the file happened to carry.
+  {% endcomment %}
+  <section class="flex flex-col min-w-0 shrink-0" aria-labelledby="upd-h">
+    <div class="flex items-center gap-2.5 shrink-0 px-pad pt-[15px] pb-3">
+      <span class="lbl" id="upd-h">Notas sustituidas</span>
+      <span class="ml-auto fig text-[11px] text-ink-3">{{ result.updated }}</span>
+    </div>
+
+    <table class="w-full border-collapse">
+      <thead>
+        <tr>
+          <th scope="col" class="w-[80px] text-left pl-pad pr-3 py-2 border-y border-line lbl"
+              title="Número de línea dentro del archivo CSV, contando la cabecera">Fila</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Alumn@</th>
+          <th scope="col" class="text-left px-3 py-2 border-y border-line lbl">Nota</th>
+          <th scope="col" class="w-[150px] text-left px-3 py-2 border-y border-line lbl">Antes</th>
+          <th scope="col" class="w-[150px] text-left px-3 py-2 border-y border-line lbl">Ahora</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for update in result.updates %}
+        <tr>
+          <td class="align-top p-0 border-b border-line">
+            <div class="pl-pad pr-3 py-3.5 fig text-[11.5px] text-ink-3">{{ update.row }}</div>
+          </td>
+          <td class="align-top p-0 border-b border-line">
+            <div class="flex items-baseline gap-2.5 px-3 py-3.5">
+              <span class="fig text-[10.5px] text-ink-3">{{ update.initials }}</span>
+              <span class="text-[12.5px] text-ink-2">{{ update.student }}</span>
+            </div>
+          </td>
+          <td class="align-top p-0 border-b border-line">
+            <div class="px-3 py-3.5 text-[12px] text-ink-3">
+              {{ update.subject }} · T{{ update.trimester }} · {{ update.grade_type }}</div>
+          </td>
+          <td class="align-top p-0 border-b border-line">
+            <div class="px-3 py-3.5 fig text-[12.5px] text-ink-3 line-through">{{ update.old }}</div>
+          </td>
+          <td class="align-top p-0 border-b border-line">
+            <div class="px-3 py-3.5 fig text-[12.5px] text-ink">{{ update.new }}</div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if result.hidden_updates %}
+        <tr>
+          <td colspan="5" class="px-pad py-3.5 border-b border-line text-[12px] text-ink-3">
+            y {{ result.hidden_updates }} nota{{ result.hidden_updates|pluralize:"s" }} más
+            sustituida{{ result.hidden_updates|pluralize:"s" }}, no mostrada{{ result.hidden_updates|pluralize:"s" }} aquí.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] flex-1 min-h-0">
 
     {% comment %} ---------- the upload itself ---------- {% endcomment %}

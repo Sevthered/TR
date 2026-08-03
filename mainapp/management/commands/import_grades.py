@@ -1,4 +1,5 @@
 import csv
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
@@ -35,7 +36,11 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
 
         try:
-            handle = open(options['csv_file'], newline='', encoding='utf-8')
+            # utf-8-sig: Excel's "CSV UTF-8" writes a BOM, which under plain
+            # utf-8 lands inside the first header name and makes the student
+            # column unreadable. A BOM-less file decodes identically.
+            handle = open(
+                options['csv_file'], newline='', encoding='utf-8-sig')
         except OSError as exc:
             raise CommandError(f'Could not open the CSV: {exc}')
 
@@ -48,7 +53,9 @@ class Command(BaseCommand):
                     updated += not was_created
                 except (Students.DoesNotExist, Subjects.DoesNotExist,
                         School_year.DoesNotExist, Trimester.DoesNotExist,
-                        ValidationError, ValueError, TypeError, KeyError) as exc:
+                        ValidationError, ValueError, TypeError, KeyError,
+                        # Decimal's ValueError, and not a subclass of it.
+                        InvalidOperation) as exc:
                     # Row numbers only: names and emails in a log line are a
                     # liability, and this stream is usually aggregated.
                     self.stderr.write(
@@ -96,8 +103,18 @@ class Command(BaseCommand):
         created = grade is None
         if created:
             grade = Grade(**key)
-        grade.grade = float(grade_raw.replace(',', '.'))
-        grade.comments = _cell(row, 'Comentarios', 'comments')
+        # Decimal, not float: `Grade.grade` is DecimalField(decimal_places=2)
+        # and Django converts an assigned float through
+        # `create_decimal_from_float()`, so float('7.7') reaches the validator
+        # with three decimal places and is rejected. Only binary-exact values
+        # — the multiples of 0.5 — ever imported. Same fix as the view.
+        grade.grade = Decimal(grade_raw.replace(',', '.'))
+        comments = _cell(row, 'Comentarios', 'comments')
+        # Blank means "not stated", not "erase it": the `download_class_list`
+        # template always ships `Comentarios` empty, so re-uploading it wiped
+        # the comment on every grade it touched.
+        if comments or created:
+            grade.comments = comments
         # update_or_create skips validators, which is how out-of-range grades
         # and invalid grade types were getting in.
         grade.full_clean()
