@@ -1,0 +1,212 @@
+{% extends "base_shell_v2.html" %}
+
+{% comment %}
+  Direction C · Registro. Stage 3, and the last page in the app off the v2
+  cascade. It also moved: it was `mainapp/templates/reassign_students.html`,
+  outside the `adminage/` directory that holds every other administrator flow.
+
+  Unlike every other migration in this overhaul, **this page worked**. Its
+  inline <script> carried a CSP nonce, so nothing about it was inert and there
+  was a live feature to regress. What went is 180 lines of inline <style> for
+  shadowed cards on an orange accent, and 370 lines of hand-written fetch()
+  against four private JSON endpoints addressed by hardcoded URL strings — the
+  only template in the app that reversed no route at all.
+
+  Two cascades became none:
+
+  * **Origin** is the shared cascade now: the same `load_course_sections`
+    endpoint and the same `adminage/_course_dependents.html` partial that
+    assign_subjects uses, inside a real GET form with a submit button. The old
+    page had its own — year -> type -> *number* -> *letter*, reassembled
+    server-side into a Section string by walking characters. It is one less
+    dialect and one less way for the two to disagree about what a course is.
+
+  * **Destination was a cascade repeated per student**, built by JS into each
+    card with ids like `dest-course-type-{id}`, plus a hidden input a fourth
+    endpoint filled in with the resolved course_id. All of it collapses into
+    one grouped <select> per row whose option value is already the
+    `student:course` pair the POST branch reads. Nothing to keep in sync,
+    nothing to resolve over the network, and the same reason
+    create_and_assign_student has no cascade either: this is a single POST
+    form, so a GET round trip per row would discard every other row's choice.
+
+  The POST contract is deliberately unchanged — `name="assignments"`, one
+  `student_id:course_id` per entry — so ReassignStudentsTests still describes
+  this page. The empty option is `value=""`, which the view already skips, so
+  a row left alone submits nothing rather than a no-op reassignment.
+{% endcomment %}
+
+{% block page_title %}Reasignar alumn@s{% endblock page_title %}
+
+{% block breadcrumb %}Administración / <b class="text-ink-2 font-medium">Reasignar alumn@s</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Reasignar alumn@s</h1>
+    {% if origin_course %}
+    <span class="fig text-[11.5px] px-2 py-[3px] rounded border border-accent bg-accent-dim text-accent-lift">
+      {{ origin_course.school_year.year }}</span>
+    {% endif %}
+  </div>
+
+  {% comment %}
+    Step 1. A GET form, so the class being looked at is a real URL — which is
+    also what the POST redirects back to. The year is a full select here rather
+    than the hidden field assign_subjects carries: moving a student between
+    years is the whole point of the page, so the origin year is a choice.
+
+    It keeps the id `scope-school-year` because that is the id
+    _course_dependents.html names in its hx-include. Scoping the include by id
+    rather than `closest form` is deliberate over there — including the form
+    sends a stale `level` and flips the endpoint into the wrong mode.
+  {% endcomment %}
+  <form method="get" class="flex flex-wrap items-end gap-3.5 shrink-0 px-pad py-3.5 border-y border-line">
+    <div class="flex flex-col gap-[7px] w-full sm:w-[190px]">
+      <label class="lbl" for="scope-school-year">Año escolar</label>
+      <select name="school_year_id" id="scope-school-year" class="ctl"
+              hx-get="{% url 'load_course_sections' %}"
+              hx-target="#course-dependents" hx-swap="innerHTML"
+              hx-trigger="change"
+              hx-include="#id_course_type">
+        <option value="">Seleccione un año</option>
+        {% for sy in school_years %}
+        <option value="{{ sy.pk }}"{% if sy.pk|stringformat:"s" == school_year_id %} selected{% endif %}>{{ sy.year }}</option>
+        {% empty %}
+        <option value="" disabled>No hay años escolares creados</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="flex flex-col gap-[7px] w-full sm:w-[190px]">
+      <label class="lbl" for="id_course_type">Tipo de curso</label>
+      <select name="course_type" id="id_course_type" class="ctl"
+              hx-get="{% url 'load_course_sections' %}"
+              hx-target="#course-dependents" hx-swap="innerHTML"
+              hx-trigger="change"
+              hx-include="#scope-school-year">
+        <option value="">Seleccione un tipo</option>
+        {% for key, name in course_types %}
+        <option value="{{ key }}"{% if key == selected_course_type %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    {% comment %}
+      display:contents so the two swapped field groups still lay out as
+      siblings in this bar. The wrapper exists only to be an htmx target.
+    {% endcomment %}
+    <div id="course-dependents" class="contents">
+      {% include "adminage/_course_dependents.html" %}
+    </div>
+
+    <button type="submit"
+            class="py-2.5 px-5 rounded-[5px] border border-line-2 text-[12.5px] font-[650]
+                   text-ink-2 hover:text-ink hover:border-accent">
+      Cargar alumnado</button>
+  </form>
+
+  <form method="post" class="flex flex-col flex-1 min-h-0">
+    {% csrf_token %}
+    {% comment %}
+      The scope the POST returns to. `course_id` here is the *origin* class and
+      never a destination — the destinations ride on the row selects, under
+      `assignments`, which is the name the view reads.
+    {% endcomment %}
+    <input type="hidden" name="school_year_id" value="{{ school_year_id }}">
+    <input type="hidden" name="course_id" value="{{ selected_course_id }}">
+
+    <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[22px] pb-3">
+      <span class="lbl">Clase origen</span>
+      <b class="text-[15px] font-semibold tracking-[-.01em]">
+        {% if origin_course %}{{ origin_course.Tipo }} {{ origin_course.Section }}{% else %}Ninguna{% endif %}</b>
+    </div>
+
+    <div class="flex items-center gap-2.5 shrink-0 px-pad py-3 border-y border-line">
+      <span class="lbl" id="roster-h">Alumnado matriculado</span>
+      {% if roster %}
+      <span class="ml-auto fig text-[11px] text-ink-3">{{ roster|length }}</span>
+      {% endif %}
+    </div>
+
+    {% if roster %}
+    <div role="group" aria-labelledby="roster-h">
+      {% for row in roster %}
+      <div class="group flex flex-wrap items-center gap-x-[13px] gap-y-2.5 min-h-row shrink-0
+                  px-pad py-2.5 border-b border-line hover:bg-white/[.03]">
+        <span class="shrink-0 fig text-[11.5px] text-ink-3">{{ forloop.counter|stringformat:"02d" }}</span>
+        <span aria-hidden="true"
+              class="shrink-0 pl-[11px] border-l-2 border-line-2 text-[11px] font-[650] tracking-[.04em]
+                     text-ink-3 group-hover:border-accent group-hover:text-accent-lift">{{ row.initials }}</span>
+        <span class="min-w-0 flex-1 basis-[180px]">
+          <b class="block text-[13.5px] font-semibold tracking-[-.01em] truncate">{{ row.student.Name }}</b>
+          <span class="block fig text-[11px] text-ink-3 truncate">{{ row.student.Email }}</span>
+        </span>
+        {% comment %}
+          Every row's select is named `assignments` and carries the whole pair
+          in its value, so the POST arrives as the list of pairs the view has
+          always read. An aria-label rather than a <label>: the visible text
+          naming this control is the student's own name, one span to the left.
+        {% endcomment %}
+        <select name="assignments" class="ctl shrink-0 w-full sm:w-[270px]"
+                aria-label="Nueva clase de {{ row.student.Name }}">
+          <option value="">Sin cambios</option>
+          {% for group in destination_groups %}
+          <optgroup label="{{ group.label }}">
+            {% for course in group.courses %}
+            <option value="{{ row.student.pk }}:{{ course.pk }}">{{ course.Section }}{% if course.pk == origin_course.pk %} · actual{% endif %}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if no_other_destination %}
+    {% comment %}
+      Every select above offers one option and it is the class the student is
+      already in. Nothing is broken and nothing will happen either, which is
+      the pair a reader cannot tell apart from the controls alone.
+    {% endcomment %}
+    <div class="shrink-0 px-pad py-[11px] border-b border-line text-[12.5px] text-ink-2">
+      No hay ninguna otra clase a la que mover a nadie.
+      <a class="text-accent-lift hover:text-ink"
+         href="{% url 'create_courses_sections' %}?school_year_id={{ school_year_id }}">Cree otra sección</a>
+      antes de reasignar.
+    </div>
+    {% endif %}
+
+    <div class="shrink-0 px-pad py-[11px] border-b border-line text-[11.5px] text-ink-3">
+      {% comment %}
+        Both halves of this are schema facts rather than reassurance.
+        Students_Courses carries no year of its own — the year is on
+        Course.school_year — so "the enrolment being moved" only means anything
+        once a destination year is named. See the POST branch of the view.
+      {% endcomment %}
+      Se mueve la matrícula del año escolar de la clase de destino. Si el alumn@ no
+      tiene matrícula en ese año, se le crea una y no se toca ningún año anterior.
+    </div>
+
+    <div class="shrink-0 px-pad pt-[22px] pb-8">
+      <button type="submit"
+              class="py-2.5 px-5 rounded-[5px] bg-accent hover:bg-accent-lift
+                     text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+        Guardar reasignaciones</button>
+    </div>
+    {% else %}
+    <div class="shrink-0 px-pad py-[15px] border-b border-line text-[12.5px] text-ink-3">
+      {% comment %}
+        Two different reasons for an empty roster, and an administrator needs
+        to be able to tell them apart before deciding what to fix.
+      {% endcomment %}
+      {% if origin_course %}Esta clase no tiene alumn@s matriculad@s.
+      {% else %}Elija una clase arriba y pulse «Cargar alumnado».{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+  </form>
+</div>
+{% endblock main %}

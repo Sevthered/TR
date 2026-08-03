@@ -13,7 +13,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.forms import formset_factory
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import urlencode
@@ -2211,6 +2211,44 @@ def create_and_assign_student_view(request):
     return render(request, "adminage/create_and_assign_student.html", context)
 
 
+def _destination_groups():
+    """Every course in the app, grouped by year and type, for the row selects.
+
+    All years, not just the current one. Promoting a student into next year's
+    class is the case that made the year bug matter — see the POST branch — and
+    restricting the destinations to one year would remove the only reason this
+    view has to care which enrolment it writes to.
+
+    Ordered in the database rather than through `sort_key_section`, which
+    raises on any `Section` not shaped <digit><letter>. A page that lists every
+    course in the installation is the wrong place to be strict about that.
+    """
+    groups = []
+    current = None
+    for course in Course.objects.select_related('school_year').order_by(
+            '-school_year__year', 'Tipo', 'Section'):
+        label = f'{course.school_year.year} · {course.Tipo}'
+        if current is None or current['label'] != label:
+            current = {'label': label, 'courses': []}
+            groups.append(current)
+        current['courses'].append(course)
+    return groups
+
+
+def _reassign_url(school_year_id, course_id):
+    """The reassign page, back in the scope it was posted from.
+
+    The redirect used to drop the scope entirely, which put the administrator
+    back at an empty picker after every save. Landing on the origin class again
+    is also the only way to see that the move happened: the students that moved
+    are gone from the roster.
+    """
+    params = {key: value for key, value in (
+        ('school_year_id', school_year_id), ('course_id', course_id)) if value}
+    url = reverse('reassign_students')
+    return f'{url}?{urlencode(params)}' if params else url
+
+
 @role_required('administrator')
 def reassign_students(request):
     """
@@ -2287,179 +2325,78 @@ def reassign_students(request):
                 request,
                 f"{error_count} reasignación(es) no se pudieron aplicar.")
 
-        return redirect('reassign_students')
+        return redirect(_reassign_url(request.POST.get('school_year_id'),
+                                      request.POST.get('course_id')))
 
-    # GET: Show form.
+    # GET: pick an origin class, then a destination for each of its students.
+    #
+    # The origin cascade is the shared one — `load_course_sections` feeding
+    # `adminage/_course_dependents.html` — rather than the four bespoke
+    # `ajax_get_*` endpoints this page used to own. Those spoke a different
+    # dialect (a course as type + number + letter, reassembled into a Section
+    # string) and had no other consumer, so they are gone with the template
+    # that called them.
     school_years = School_year.objects.all().order_by('-year')
     course_types = Course.COURSE_TYPE_CHOICES
+
+    school_year_id = request.GET.get('school_year_id') or ''
+    course_type = request.GET.get('course_type') or ''
+    level = request.GET.get('level') or ''
+    selected_course_id = request.GET.get('course_id') or ''
+
+    origin_course = None
+    if selected_course_id:
+        try:
+            origin_course = Course.objects.select_related('school_year').get(
+                pk=selected_course_id)
+        except (Course.DoesNotExist, ValueError):
+            # A hand-edited URL or a stale bookmark, not a server fault.
+            messages.warning(
+                request, "El identificador de curso no es válido.")
+            selected_course_id = ''
+
+    if origin_course is not None:
+        # Arriving with only ?course_id= is the normal case — a bookmark, or
+        # this view's own post-POST redirect — and every select above it is
+        # recoverable from the row, so all four come back filled before htmx
+        # runs once. The row *overrides* the query string rather than filling
+        # gaps in it: a `?school_year_id=` disagreeing with the course would
+        # describe a class that does not exist, which is the same rule
+        # `resolve_class_scope` applies on the teacher's side.
+        school_year_id = str(origin_course.school_year_id)
+        course_type = origin_course.Tipo
+        if not level and origin_course.Section[:1].isdigit():
+            level = origin_course.Section[:1]
+
+    roster = []
+    if origin_course is not None:
+        roster = [
+            {'student': link.student,
+             'initials': student_initials(link.student.Name)}
+            for link in Students_Courses.objects.filter(
+                course_section=origin_course
+            ).select_related('student').order_by('student__Name')
+        ]
+
+    # Only paid for when there is a roster to attach them to.
+    destination_groups = _destination_groups() if roster else []
+    destinations = sum(len(group['courses']) for group in destination_groups)
 
     context = {
         'school_years': school_years,
         'course_types': course_types,
+        'selected_course_type': course_type,
+        'origin_course': origin_course,
+        'roster': roster,
+        'destination_groups': destination_groups,
+        # The only course in the installation is the one they are already in,
+        # so every row's select offers exactly one option and it is a no-op.
+        # Found by rendering the page against the live database, where that is
+        # the actual state: a page that offers a control which cannot do
+        # anything should say which of the two it is.
+        'no_other_destination': bool(roster) and destinations <= 1,
     }
+    context.update(course_cascade_context(
+        school_year_id, course_type, level, selected_course_id))
 
-    return render(request, 'reassign_students.html', context)
-
-
-@role_required('administrator')
-def ajax_get_course_numbers(request):
-    """
-    AJAX endpoint to get available course numbers
-    based on selected school year and type.
-    """
-    school_year_id = request.GET.get('school_year_id')
-    course_type = request.GET.get('course_type')
-
-    if not school_year_id or not course_type:
-        return JsonResponse({'numbers': [], 'error': 'Missing parameters'})
-
-    try:
-        # Get matching courses.
-        courses = Course.objects.filter(
-            school_year__SchoolYearID=school_year_id,
-            Tipo=course_type
-        )
-
-        # Extract unique numbers from Section field.
-        sections = courses.values_list('Section', flat=True)
-
-        # Try extracting first numeric character.
-        numbers = set()
-        for section in sections:
-            if section:
-                # Extract digits from start of string.
-                num = ''
-                for char in section:
-                    if char.isdigit():
-                        num += char
-                    else:
-                        break
-                if num:
-                    numbers.add(num)
-
-        numbers_list = sorted(list(numbers))
-
-        return JsonResponse({'numbers': numbers_list})
-
-    except Exception:
-        return JsonResponse({'numbers': [], 'error': 'An error occurred retrieving course numbers.'})
-
-
-@role_required('administrator')
-def ajax_get_course_sections(request):
-    """
-    AJAX endpoint to get available sections (letters)
-    based on year, type, and course number.
-    """
-    school_year_id = request.GET.get('school_year_id')
-    course_type = request.GET.get('course_type')
-    course_number = request.GET.get('course_number')
-
-    if not all([school_year_id, course_type, course_number]):
-        return JsonResponse({'sections': [], 'error': 'Missing parameters'})
-
-    try:
-        # Find sections starting with selected number.
-        courses = Course.objects.filter(
-            school_year__SchoolYearID=school_year_id,
-            Tipo=course_type,
-            Section__startswith=course_number
-        )
-
-        # Extract letters (everything after number).
-        sections = set()
-        for course in courses:
-            section = course.Section
-            if section:
-                # Skip initial digits and take the rest.
-                letter_part = ''
-                skip_digits = True
-                for char in section:
-                    if skip_digits and char.isdigit():
-                        continue
-                    skip_digits = False
-                    letter_part += char
-
-                if letter_part:
-                    sections.add(letter_part)
-
-        sections_list = sorted(list(sections))
-
-        return JsonResponse({'sections': sections_list})
-
-    except Exception:
-        return JsonResponse({'sections': [], 'error': 'An error occurred retrieving sections.'})
-
-
-@role_required('administrator')
-def ajax_get_students(request):
-    """
-    AJAX endpoint to get students of a specific class.
-    """
-    school_year_id = request.GET.get('school_year_id')
-    course_type = request.GET.get('course_type')
-    course_number = request.GET.get('course_number')
-    section_letter = request.GET.get('section_letter')
-
-    if not all([school_year_id, course_type, course_number, section_letter]):
-        return JsonResponse({'students': [], 'error': 'Missing parameters'})
-
-    # Build full Section (e.g., '1A').
-    section_full = f"{course_number}{section_letter}"
-
-    # Find specific course.
-    try:
-        course = Course.objects.get(
-            school_year__SchoolYearID=school_year_id,
-            Tipo=course_type,
-            Section=section_full
-        )
-
-        # Get students assigned to this course.
-        student_courses = Students_Courses.objects.filter(
-            course_section=course
-        ).select_related('student')
-
-        students = [
-            {
-                'id': sc.student.StudentID,
-                'name': sc.student.Name,
-                'email': sc.student.Email
-            }
-            for sc in student_courses
-        ]
-
-        return JsonResponse({'students': students, 'course_id': course.CourseID})
-
-    except Course.DoesNotExist:
-        return JsonResponse({'students': [], 'error': 'Course not found'})
-    except Exception:
-        return JsonResponse({'students': [], 'error': 'An error occurred retrieving students.'})
-
-
-@role_required('administrator')
-def ajax_get_destination_courses(request):
-    """
-    AJAX endpoint to get destination course ID.
-    """
-    school_year_id = request.GET.get('school_year_id')
-    course_type = request.GET.get('course_type')
-    course_number = request.GET.get('course_number')
-    section_letter = request.GET.get('section_letter')
-
-    if not all([school_year_id, course_type, course_number, section_letter]):
-        return JsonResponse({'course_id': None, 'error': 'Missing parameters'})
-
-    section_full = f"{course_number}{section_letter}"
-
-    try:
-        course = Course.objects.get(
-            school_year__SchoolYearID=school_year_id,
-            Tipo=course_type,
-            Section=section_full
-        )
-        return JsonResponse({'course_id': course.CourseID})
-    except Course.DoesNotExist:
-        return JsonResponse({'course_id': None, 'error': 'Course not found'})
-    except Exception:
-        return JsonResponse({'course_id': None, 'error': 'An error occurred retrieving destination course.'})
+    return render(request, 'adminage/reassign_students.html', context)

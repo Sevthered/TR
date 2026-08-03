@@ -7,14 +7,11 @@ from .views import create_school_year_view, create_courses_sections_view, admina
 urlpatterns = [
     path('reassign-students/', views.reassign_students, name='reassign_students'),
 
-    # Endpoints AJAX
-    path('ajax/get-course-numbers/', views.ajax_get_course_numbers,
-         name='ajax_get_course_numbers'),
-    path('ajax/get-course-sections/', views.ajax_get_course_sections,
-         name='ajax_get_course_sections'),
-    path('ajax/get-students/', views.ajax_get_students, name='ajax_get_students'),
-    path('ajax/get-destination-courses/', views.ajax_get_destination_courses,
-         name='ajax_get_destination_courses'),
+    # The four `ajax/get-*` endpoints that used to live here were
+    # reassign_students.html's private JSON API and had no other consumer. The
+    # rebuilt page uses the shared `ajax/load-sections/` cascade below and
+    # server-renders its roster, so all four are gone rather than ported —
+    # `ajax/get-students/` in particular answered names and e-mail addresses.
     path('adminage/create-student-class/', create_and_assign_student_view,
          name='create_and_assign_student'),
 

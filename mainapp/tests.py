@@ -33,10 +33,6 @@ PW = 'test-password'
 
 ADMIN_ONLY = [
     '/reassign-students/',
-    '/ajax/get-course-numbers/?school_year_id=1&course_type=Eso',
-    '/ajax/get-course-sections/?school_year_id=1&course_type=Eso&course_number=1',
-    '/ajax/get-students/?school_year_id=1&course_type=Eso&course_number=1&section_letter=A',
-    '/ajax/get-destination-courses/?school_year_id=1&course_type=Eso&course_number=1&section_letter=A',
     '/adminage/',
     '/adminage/assign-subjects/',
     '/adminage/create-student-class/',
@@ -132,9 +128,12 @@ class AnonymousAccessTests(AccessControlTestCase):
         self.assertEqual(self.enrolment.course_section_id, before)
 
     def test_anonymous_cannot_read_student_pii(self):
+        """`/ajax/get-students/` answered a roster as JSON and is deleted with
+        the template that was its only caller. The claim is unchanged; it now
+        points at the surface that actually carries the names and e-mail
+        addresses, which is the reassign page itself."""
         response = self.client.get(
-            '/ajax/get-students/'
-            '?school_year_id=1&course_type=Eso&course_number=1&section_letter=A')
+            f'/reassign-students/?course_id={self.course.pk}')
 
         self.assertEqual(response.status_code, 302)
         self.assertNotIn(b'ana@example.com', response.content)
@@ -3068,6 +3067,11 @@ class LegacyCascadeTeardownTests(TestCase):
         # Also dead from birth: added by `bace44a` and never linked by
         # anything, in any commit.
         'static/css/simple-layout.css',
+        # The last legacy page. Unlike the others it *worked* — its inline
+        # <script> carried a CSP nonce — so this one is a rebuild rather than a
+        # repair. It also moved into `adminage/`, where every other
+        # administrator flow already lived.
+        'mainapp/templates/reassign_students.html',
     )
 
     def test_the_legacy_cascade_is_gone(self):
@@ -3114,6 +3118,38 @@ class LegacyCascadeTeardownTests(TestCase):
             if p.suffix == '.css')
 
         self.assertEqual(present, ['tailwind.css'])
+
+    # `base_v2.html` is the root of the cascade and so extends nothing by
+    # definition. The four `_`-prefixed files are partials, and carry no
+    # `{% extends %}` on purpose: including a template that extends another
+    # renders the *entire* extended document inline, which is how
+    # `student_file.html` once emitted a second complete <html> inside a div.
+    CASCADE_EXEMPT = ('base_v2.html', '_class_scope.html', '_course_dependents.html',
+                      '_student_record.html', '_trimester_options.html')
+
+    def test_every_template_is_on_the_v2_cascade(self):
+        """The overhaul's closing assertion: no page is its own document.
+
+        A standalone document is exactly what kept the eight `adminage/` pages
+        out of the page count for the whole of stage 2 — no `{% extends %}`
+        sweep listed them, because they extended nothing. This states the
+        invariant directly instead, so the next one cannot hide the same way.
+
+        It asserts on `{% extends %}` alone and deliberately does not also
+        search for the string `<!DOCTYPE`. The first draft did, and failed on
+        two already-migrated pages whose `{% comment %}` blocks *describe* the
+        doctype they dropped — the same way the old `global-styles.css` guard
+        went on passing against a comment. Django requires `{% extends %}` to
+        be the first tag in the file, so it is the assertion with the effect.
+        """
+        for root in ('templates', 'mainapp/templates'):
+            for path in (self.TEMPLATES / root).rglob('*.html'):
+                if path.name in self.CASCADE_EXEMPT:
+                    continue
+                with self.subTest(template=path.name):
+                    self.assertRegex(
+                        path.read_text(),
+                        r'{%\s*extends\s+["\']base_(shell_)?v2\.html["\']')
 
     def test_no_migrated_page_reaches_for_behaviors_js(self):
         """It is deleted, so a reference is now a 404 rather than a hook that
@@ -3648,3 +3684,208 @@ class AdminCascadePagesV2Tests(V2CascadeAssertions, AccessControlTestCase):
         self.assertNotIn('select-all-students', body)
         self.assertEqual(body.count('name="student_links_selected"'),
                          body.count('checked'))
+
+
+class ReassignStudentsV2Tests(V2CascadeAssertions, AccessControlTestCase):
+    """The last page in the app off the v2 cascade, and the only rebuild.
+
+    Every other migration repaired something already broken — a `data-action`
+    that behaviors.js was no longer there to bind, a page emitting its own
+    markup ahead of any doctype. This one *worked*: its inline <script> carried
+    a CSP nonce, so its two cascades and its four private JSON endpoints all
+    ran. There was a live feature to regress, which is why the POST contract is
+    the thing pinned hardest here — `name="assignments"`, one
+    `student_id:course_id` per entry, unchanged, so `ReassignStudentsTests`
+    still describes this page.
+    """
+
+    URL = '/reassign-students/'
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # A second year with a class in it: the destination list spans years on
+        # purpose, because promoting a student is the case that made the
+        # wrong-year enrolment bug matter in the first place.
+        cls.next_year = School_year.objects.create(year='2026-2027')
+        cls.next_class = Course.objects.create(
+            Tipo='Eso', Section='2A', school_year=cls.next_year)
+
+    def page(self, query=''):
+        return self.as_(self.admin).get(self.URL + query)
+
+    def loaded(self):
+        """The page with a class chosen, which is the only state with rows."""
+        return self.page(f'?course_id={self.course.pk}')
+
+    def test_the_page_is_built_on_the_v2_cascade_only(self):
+        response = self.loaded()
+
+        self.assertTemplateUsed(response, 'adminage/reassign_students.html')
+        self.assert_v2_only(response)
+        self.assert_scripts_are_self_hosted(response)
+        self.assert_no_inert_js_hooks(response)
+        self.assert_no_leaked_template_comments(response)
+
+    def test_the_four_private_json_endpoints_are_gone(self):
+        """They were this template's alone — no other consumer, in any file.
+        `get-students` in particular answered names and e-mail addresses."""
+        for path in ('/ajax/get-course-numbers/', '/ajax/get-course-sections/',
+                     '/ajax/get-students/', '/ajax/get-destination-courses/'):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.as_(self.admin).get(path).status_code, 404)
+
+    def test_no_url_is_hardcoded_any_more(self):
+        """This was the only template in the app that reversed no route: its
+        fetch() calls carried the paths as string literals, so moving a route
+        would have broken it silently rather than at reverse time."""
+        body = self.loaded().content.decode()
+
+        self.assertNotIn('/ajax/get-', body)
+        self.assertIn('/ajax/load-sections/', body)
+
+    def test_the_origin_cascade_is_the_shared_one(self):
+        """Not a second dialect. The old page described a course as type +
+        number + letter and reassembled the Section string server-side by
+        walking characters; this uses the same partial and the same endpoint as
+        assign_subjects."""
+        response = self.loaded()
+
+        self.assertTemplateUsed(response, 'adminage/_course_dependents.html')
+        self.assertContains(response, 'id="scope-school-year"')
+        self.assertContains(response, 'id="course-dependents"')
+
+    def test_arriving_with_only_a_course_id_refills_every_select(self):
+        """The job the old template's LEVEL_LOOKUP mode was written for and
+        never once did — the view never implemented that branch. Year, type,
+        level and section all come off the course row, before htmx runs."""
+        response = self.loaded()
+        body = response.content.decode()
+
+        self.assertIn(f'<option value="{self.year.pk}" selected>', body)
+        self.assertIn('<option value="Eso" selected>', body)
+        self.assertIn('<option value="1" selected>', body)
+        self.assertIn(f'<option value="{self.course.pk}" selected>', body)
+
+    def test_the_roster_is_rendered_by_the_server(self):
+        """It used to arrive as JSON and be written into innerHTML by a
+        template literal. With JavaScript off the page showed nothing at all."""
+        response = self.loaded()
+
+        self.assertContains(response, 'Ana Lopez')
+        self.assertContains(response, 'ana@example.com')
+        self.assertNotContains(response, 'Beto Ruiz')
+
+    def test_each_row_offers_the_pair_the_view_actually_reads(self):
+        """The POST contract, unchanged: `assignments` carrying
+        `student_id:course_id`. The old page reached a fourth endpoint just to
+        resolve the course_id and wrote it into a hidden input."""
+        body = self.loaded().content.decode()
+
+        self.assertIn('name="assignments"', body)
+        self.assertIn(f'value="{self.student.pk}:{self.other_course.pk}"', body)
+
+    def test_an_untouched_row_submits_nothing(self):
+        """The default option is empty, and the view skips empty entries — so
+        leaving a student alone is not a no-op reassignment counted as a
+        success."""
+        self.assertContains(self.loaded(), '<option value="">Sin cambios</option>')
+
+    def test_the_destinations_span_school_years(self):
+        """Moving a student into next year's class is the case the fixed
+        enrolment lookup exists for. A destination list limited to the origin's
+        own year would make that unreachable from the UI."""
+        body = self.loaded().content.decode()
+
+        self.assertIn(f'value="{self.student.pk}:{self.next_class.pk}"', body)
+        self.assertIn('2026-2027 · Eso', body)
+        self.assertIn('2025-2026 · Eso', body)
+
+    def test_the_class_they_are_already_in_says_so(self):
+        """It stays on the list — the view treats it as a no-op rather than an
+        error — but picking it by accident should not look like a move."""
+        self.assertContains(self.loaded(), '· actual')
+
+    def test_a_lone_class_admits_there_is_nowhere_to_move_anyone(self):
+        """Found by rendering against the live database, which holds exactly
+        one course: every select offered `1A · actual` and nothing else. The
+        controls look operable and cannot do anything, and nothing on the page
+        said which of the two it was."""
+        Course.objects.exclude(pk=self.course.pk).delete()
+
+        self.assertContains(self.loaded(), 'No hay ninguna otra clase')
+
+    def test_it_says_no_such_thing_when_a_destination_exists(self):
+        """Guard against over-tightening: the ordinary page must not carry a
+        warning about a state it is not in."""
+        self.assertNotContains(self.loaded(), 'No hay ninguna otra clase')
+
+    def test_every_row_select_has_an_accessible_name(self):
+        """One select per student, all with the same `name`, so nothing but an
+        accessible name distinguishes them to a screen reader."""
+        self.assertContains(
+            self.loaded(), 'aria-label="Nueva clase de Ana Lopez"')
+
+    def test_the_two_empty_states_do_not_read_alike(self):
+        """An administrator has to tell "no class chosen yet" apart from "this
+        class has nobody in it" before deciding what to fix."""
+        self.assertContains(self.page(), 'Elija una clase arriba')
+
+        Students_Courses.objects.filter(
+            course_section=self.other_course).delete()
+
+        self.assertContains(self.page(f'?course_id={self.other_course.pk}'),
+                            'no tiene alumn@s matriculad@s')
+
+    def test_no_roster_means_no_destination_list_is_built(self):
+        """Nothing to attach them to, so the query that builds them is skipped
+        rather than rendered into a form with no rows."""
+        self.assertNotContains(self.page(), 'name="assignments"')
+
+    def test_a_bad_course_id_is_a_warning_rather_than_a_500(self):
+        """Both shapes reach the view from a hand-edited URL or a stale
+        bookmark: an id naming nothing, and an id that is not a number at all —
+        the second raises ValueError out of the ORM if it is not caught."""
+        for bad in ('999999', 'no-soy-un-numero'):
+            with self.subTest(course_id=bad):
+                response = self.page(f'?course_id={bad}')
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, 'no es válido')
+
+    def test_saving_returns_to_the_class_it_was_posted_from(self):
+        """The redirect used to drop the scope, which put the administrator
+        back at an empty picker every time. Landing on the origin class again
+        is also the only way to see the move: the students that moved are gone
+        from the roster."""
+        response = self.as_(self.admin).post(self.URL, {
+            'school_year_id': str(self.year.pk),
+            'course_id': str(self.course.pk),
+            'assignments': [f'{self.student.pk}:{self.other_course.pk}'],
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(f'school_year_id={self.year.pk}', response['Location'])
+        self.assertIn(f'course_id={self.course.pk}', response['Location'])
+
+    def test_the_rendered_form_actually_moves_a_student(self):
+        """End to end over the shape the page emits, rather than over a payload
+        hand-written in a test: the option value is submitted verbatim."""
+        option = f'{self.student.pk}:{self.other_course.pk}'
+        self.assertContains(self.loaded(), f'value="{option}"')
+
+        self.as_(self.admin).post(self.URL, {
+            'school_year_id': str(self.year.pk),
+            'course_id': str(self.course.pk),
+            'assignments': [option],
+        })
+
+        self.enrolment.refresh_from_db()
+        self.assertEqual(self.enrolment.course_section_id, self.other_course.pk)
+
+    def test_it_is_still_administrator_only(self):
+        for user in (self.professor, self.pupil, self.tutor):
+            with self.subTest(user=user.username):
+                self.assertEqual(
+                    self.as_(user).get(self.URL).status_code, 403)

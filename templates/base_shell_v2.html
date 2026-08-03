@@ -25,10 +25,11 @@
   the point, since the 403 page is where someone most needs a way back to
   where they are actually allowed to be.
 
-  The administrator branch is written but not yet reachable from an
-  administrator page: all eight of those templates are still standalone
-  documents that extend nothing (stage 3). Today it renders only on
-  forbidden.html, which is where its test exercises it.
+  The administrator branch was written before any administrator page could
+  reach it — all of those templates were standalone documents that extended
+  nothing — so for the length of stage 3 it rendered only on forbidden.html,
+  which is still where its own test exercises it. Every one of them extends
+  this shell now.
 {% endcomment %}
 
 {% block shell %}
