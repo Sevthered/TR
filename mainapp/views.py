@@ -1648,6 +1648,56 @@ def teacher_subjects(teacher, course=None):
     return Subjects.objects.filter(**criteria).distinct()
 
 
+def teaches_subject_to(teacher, subject, student, school_year=None):
+    """Whether `teacher` teaches `subject` to a class `student` is enrolled in.
+
+    With `school_year`, whether they teach it to a class of *that year* the
+    student is enrolled in. That is the same statement with one more conjunct,
+    not a second rule: `Course` already carries the year, so the witness this
+    looks for either has the year or does not. It is the class-scoped route's
+    `school_year != course.school_year` check generalised from the one course
+    the URL names to any course that witnesses the pair — and so it cannot
+    refuse a row that route accepts, since there the named course is itself a
+    witness whose year matches by construction.
+
+    It rests on one property of the schema worth stating, because it is not
+    obvious and it is what makes a *past* year checkable at all: enrolment
+    history survives. `Students_Courses` is unique on (student, course_section)
+    and carries no year of its own, but promotion adds a row rather than
+    moving one — `reassign_students` only repoints an enrolment within a
+    single year — so a pupil who has progressed still holds last year's row.
+    A correction to a past year therefore still finds its witness. What would
+    remove one is deleting the `Subjects_Courses` assignment for that year,
+    which is the same exposure the yearless check already carries.
+
+    `teacher_students` and `teacher_subjects` are each correctly scoped and
+    still admit, between them, a pair neither class licenses: on the unscoped
+    import route the student could come from one of the teacher's classes and
+    the subject from another, satisfying both and being taught by neither.
+    The class-scoped route did not have that hole only because the course
+    narrows both operands at once, which made the check there advisory — a
+    teacher refused on `/import/grades/<course>/` could resubmit the same file
+    to `/import/grades/` and succeed.
+
+    `Subjects_Courses` is the teaching assignment and already carries the
+    course, so the pair is checkable without one being passed in. One
+    `filter()` call for the same reason as `teacher_subjects`: chained across
+    a multi-valued relation the conditions may be met by different rows.
+
+    This can never refuse a row the class-scoped route accepts. There both
+    operands are already narrowed to one course, and that course is itself the
+    witness this looks for.
+    """
+    criteria = {
+        'teacher': teacher,
+        'subject': subject,
+        'course__students_courses__student': student,
+    }
+    if school_year is not None:
+        criteria['course__school_year'] = school_year
+    return Subjects_Courses.objects.filter(**criteria).exists()
+
+
 @ratelimit(key='user', rate='10/h', block=True)
 @teacher_required
 def import_grades(request, course_id=None):
@@ -1719,6 +1769,10 @@ def import_grades(request, course_id=None):
         error_count = 0
         errors = []
         updates = []
+        # (student, subject) pairs already resolved by `teaches_subject_to`.
+        # A trimester's file carries several grade types per pupil per
+        # subject, so the same pair recurs and the query need not.
+        pair_allowed = {}
 
         # Errors used to be pushed into `messages` one banner per row, capped
         # at ten, which is the page's actual job rendered as a wall of text.
@@ -1834,7 +1888,13 @@ def import_grades(request, course_id=None):
                         error_count += 1
                         continue
                     if any(value is None for value in row.values()):
+                        # Names the remedy, not just the fault: dropping the
+                        # trailing empty cells is a real way to write this
+                        # file by hand, and the two ways out are not obvious
+                        # from "la fila tiene menos columnas".
                         add_error('La fila tiene menos columnas que la '
+                                  'cabecera. Deja las celdas vacías en lugar '
+                                  'de omitirlas, o quita esas columnas de la '
                                   'cabecera.', row_num)
                         error_count += 1
                         continue
@@ -1892,6 +1952,41 @@ def import_grades(request, course_id=None):
                             f'El año escolar «{school_year_str}» no es el de '
                             f'esta clase («{course.school_year.year}»).',
                             row_num)
+                        error_count += 1
+                        continue
+
+                    # The student and the subject are each scoped, but
+                    # independently — and on the unscoped route they are
+                    # satisfiable from *different* classes, so a pupil from
+                    # one of this teacher's classes could be graded in a
+                    # subject from another, in a year they were never taught
+                    # it. Both narrowings held; no class licensed the row.
+                    # That is what made the two checks above advisory: a
+                    # teacher refused on `/import/grades/<course>/` could
+                    # resubmit the same file to `/import/grades/` and succeed.
+                    #
+                    # The pair, in a year, is the invariant `Subjects_Courses`
+                    # already states. On the class-scoped route the course
+                    # implies it, so this never fires there first.
+                    pair = (student.pk, subject.pk, school_year.pk)
+                    if pair not in pair_allowed:
+                        pair_allowed[pair] = teaches_subject_to(
+                            profile.teacher, subject, student,
+                            school_year=school_year)
+                    if not pair_allowed[pair]:
+                        # Which of the two it is. The second query runs only
+                        # on the error path, so the happy path still costs one
+                        # lookup per distinct pair.
+                        if teaches_subject_to(
+                                profile.teacher, subject, student):
+                            add_error(
+                                f'No impartes «{subject_name}» a este alumn@ '
+                                f'en el año escolar «{school_year_str}».',
+                                row_num)
+                        else:
+                            add_error(
+                                f'No impartes «{subject_name}» a ninguna '
+                                f'clase de este alumn@.', row_num)
                         error_count += 1
                         continue
 
@@ -1996,10 +2091,25 @@ def import_grades(request, course_id=None):
             result = summary()
 
         except Exception:
-            # The rows already committed are reported, not discarded. See
-            # `summary()`: a decode error half-way down a file left the page
-            # showing this banner and nothing else, so an import that had
-            # written two grades looked like an import that had written none.
+            # Two different events, and they had one banner between them.
+            #
+            # Rows already committed are reported, not discarded: a decode
+            # error half-way down a file used to leave the page showing this
+            # banner and nothing else, so an import that had written two
+            # grades looked like an import that had written none.
+            #
+            # But a file that fails on its own header has no prefix behind it,
+            # and the same branch then rendered a 0/0/0/0 strip under a
+            # sentence promising the detail below — the mirror image of the
+            # fault it was added to fix. Counters are worth rendering once
+            # they count something.
+            if not rows_read:
+                messages.error(
+                    request,
+                    'No se ha podido leer el archivo. Comprueba que es un '
+                    'CSV válido codificado en UTF-8.')
+                return page()
+
             result = summary()
             messages.error(
                 request,
@@ -2298,6 +2408,30 @@ def assign_subjects_view(request):
             target_course = Course.objects.get(pk=selected_course_id)
         except (Course.DoesNotExist, ValueError):
             messages.error(request, "El curso no es válido.")
+            return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
+
+        # A course fixes its year, so a `school_year_id` disagreeing with the
+        # course describes a class that does not exist. The same rule
+        # `resolve_class_scope` applies on the teacher's side and `import_grades`
+        # applies to a class-scoped upload; this is the administrator's write.
+        #
+        # It is worth stating what was reachable without it. `selected_trimesters`
+        # below is filtered by `school_year__pk=final_school_year_id` while
+        # `target_course` comes from `course_id`, and nothing compared the two —
+        # so the pair wrote a `Subjects_Courses` joining a course in one year to
+        # a trimester in another, which `resolve_class_scope` then reads back.
+        #
+        # Refused rather than reconciled, unlike `reassign_students` below. That
+        # page has to reconcile because its year select is a real control and the
+        # stale `course_id` arrives from an ordinary no-JS submit. Here
+        # `school_year_id` is a hidden input, the cascade's `hx-include` is scoped
+        # to it, and this view's own post-POST redirect emits a consistent pair —
+        # so no honest request can produce the disagreement, and the only caller
+        # that can is one that built the POST by hand.
+        if str(target_course.school_year_id) != str(final_school_year_id):
+            messages.error(
+                request,
+                "El curso no pertenece al año escolar seleccionado.")
             return redirect(reverse('assign_subjects') + f'?school_year_id={final_school_year_id}')
 
         form = SubjectAssignmentForm(request.POST)
@@ -2650,6 +2784,30 @@ def _destination_groups():
     return groups
 
 
+def _year_exists(school_year_id):
+    """True when `school_year_id` names a `School_year` that is actually there.
+
+    The disagreement rule in `reassign_students` reads an explicit
+    `?school_year_id=` as a deliberate act and drops the course for it. A
+    deliberate act has to name something real: testing inequality alone made
+    `?school_year_id=abc` — unequal to every id in the table, because it is not
+    an id — discard a valid course and blame «otro año escolar» for a year that
+    has never existed. `?course_id=abc` was already treated as junk; this is the
+    same rule for the other id.
+
+    An `exists()` rather than an `isdigit()` check, deliberately: `999999` is
+    numeric and still names nothing, so a digit test would fix the reported
+    input and leave the bug standing behind it. `ValueError` for the
+    non-numeric case, same as everywhere else on these flows.
+    """
+    if not school_year_id:
+        return False
+    try:
+        return School_year.objects.filter(pk=school_year_id).exists()
+    except (ValueError, TypeError):
+        return False
+
+
 def _reassign_url(school_year_id, course_id):
     """The reassign page, back in the scope it was posted from.
 
@@ -2786,9 +2944,16 @@ def reassign_students(request):
                 request, "El identificador de curso no es válido.")
             selected_course_id = ''
 
-    if origin_course is not None and school_year_id and (
+    if origin_course is not None and _year_exists(school_year_id) and (
             school_year_id != str(origin_course.school_year_id)):
         # The year and the course disagree, and the year wins.
+        #
+        # `_year_exists` rather than a bare truth test on `school_year_id`:
+        # this branch reads an explicit year as a deliberate choice, and a
+        # string that names no row states no choice at all. Without it «abc»
+        # and «999999» were both unequal to the course's year and so both
+        # dropped a perfectly good course, blaming a year that does not exist.
+        # Explicit has to mean explicit *and* real.
         #
         # With JavaScript off, the scope bar is an ordinary GET form: choosing
         # a different year and pressing «Cargar alumnado» resubmits the section

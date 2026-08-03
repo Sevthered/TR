@@ -37,10 +37,38 @@
 
   <nav class="flex flex-col border-b md:border-b-0 md:border-r border-line md:sticky md:top-0 md:h-screen"
        aria-label="Principal">
+    {% comment %}
+      The brand bar is the whole of this nav below `md`: every role's link
+      block is `hidden md:block` and the identity footer is `hidden md:flex`,
+      so a phone renders this row and nothing else of the shell.
+
+      That is why the second sign-out control lives here. `logoutUser` is
+      @require_POST, which was the right fix for a route an `<img src>` could
+      trigger — but it also removed the escape hatch, because typing /logout/
+      now answers a bare 405 with an empty body. With the only control inside
+      `hidden md:flex`, a narrow viewport had no way to sign out at all.
+
+      `md:hidden` is the exact complement of the footer's `hidden md:flex`, so
+      the two never render together and the desktop layout is untouched. It
+      repeats the footer's markup rather than sharing it: hoisting one control
+      into a place both widths can see would mean either moving the footer off
+      `mt-auto` — which is what pins it to the bottom of a full-height nav —
+      or an absolutely-positioned control this dialect has no precedent for.
+
+      `LogoutReachabilityTests` walks the rendered ancestor chain rather than
+      searching for the string `/logout/`: the older assertion was satisfied
+      the entire time the control could not be reached.
+    {% endcomment %}
     <div class="flex items-center gap-2.5 h-[52px] px-pad border-b border-line shrink-0">
       <span class="grid place-items-center w-6 h-6 rounded shrink-0 bg-accent-dim border border-accent
                    text-accent-lift text-[10px] font-bold">TR</span>
       <b class="text-[13.5px] font-semibold tracking-tight">Instituto</b>
+      <span class="md:hidden ml-auto min-w-0 truncate text-[11.5px] text-ink-3">@{{ user.username }}</span>
+      <form action="{% url 'logout' %}" method="post" class="md:hidden shrink-0">{% csrf_token %}
+        <button type="submit" title="Cerrar sesión"
+                class="block px-2.5 py-[5px] rounded-[5px] border border-line-2 text-[12px]
+                       text-ink-2 hover:text-ink hover:border-accent">Salir</button>
+      </form>
     </div>
 
     {% comment %}

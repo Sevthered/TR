@@ -6,11 +6,24 @@
   `RatelimitTo429Middleware` used to answer a bare `Too many requests.` as
   text/html — English, in a Spanish app, with no layout and no way back.
 
-  It extends base_v2 rather than base_shell_v2 on purpose. The rate limits are
-  keyed by user *and* by IP (`grades_csv` by user, `loginPage` by IP), so an
-  anonymous caller reaches this page, and base_shell_v2's nav branches on
-  `user.profile.role` — a nav that would render empty for half the callers.
-  Same reasoning `login.html` uses.
+  It extends base_v2 rather than base_shell_v2 on purpose: an unauthenticated
+  caller reaches this page.
+
+  Every @ratelimit in views.py is `key='user'`, which django_ratelimit
+  resolves to `str(request.user.pk)`. An AnonymousUser has no pk, so that key
+  is the literal string "None" — one bucket shared by every anonymous caller
+  there is. The decorators also sit outside `@role_required`, so a request
+  that is only ever going to be redirected to the login form still counts
+  against it. Such a visitor can therefore be handed a 429, and
+  base_shell_v2's nav branches on `user.profile.role`, which they do not have:
+  it would render empty. Same reasoning `login.html` uses.
+
+  An earlier version of this comment described the limits as keyed by user and
+  by address, and named a view that carries no decorator at all. Neither was
+  true; the conclusion above happened to be right anyway, which is exactly how
+  a wrong explanation survives next to a page that behaves correctly.
+  `RateLimitPageTests` now checks this comment against the decorators
+  themselves, so it cannot drift back.
 {% endcomment %}
 
 {% block page_title %}Demasiadas peticiones · Instituto{% endblock page_title %}

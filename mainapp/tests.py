@@ -14,9 +14,11 @@ import pathlib
 import re
 from datetime import timedelta
 from decimal import Decimal
+from html.parser import HTMLParser
 
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection, transaction
 from django.db.utils import IntegrityError
@@ -24,7 +26,10 @@ from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from .views import MAX_IMPORT_BYTES, class_metrics, resolve_class_scope
+from .views import (
+    MAX_IMPORT_BYTES, class_metrics, resolve_class_scope, teacher_subjects,
+    teaches_subject_to,
+)
 from .models import (
     Ausencias, Course, Grade, Profile, School_year, Students,
     Students_Courses, Subjects, Subjects_Courses, Teachers, Trimester,
@@ -756,14 +761,25 @@ class CsvImportCorrectnessTests(AccessControlTestCase):
         self.assertContains(response, '2024-2025')
         self.assertContains(response, '2025-2026')
 
-    def test_the_unscoped_route_still_accepts_any_year_it_knows(self):
-        """There is no course to disagree with, so the check must not fire."""
-        other = School_year.objects.create(year='2024-2025')
-        Trimester.objects.create(Name=1, school_year=other)
+    def test_the_unscoped_route_does_not_apply_the_courses_year(self):
+        """There is no course to disagree with, so *that* check must not fire.
 
-        self.upload(self.row(grade='7.5', year='2024-2025'))
+        Rewritten 2026-08-03, and the rewrite is the point. It used to say
+        "still accepts any year it knows", uploading a year the pupil was
+        never taught in and asserting the grade landed — which pinned the gap
+        `teaches_subject_to` now closes, under a docstring making the much
+        narrower claim that the `school_year != course.school_year` comparison
+        needs a course. The narrow claim is the true one and is still worth a
+        test, so it is tested here with a year that *is* licensed: 2026-2027,
+        where this teacher teaches this pupil this subject. The class-scoped
+        route to a 2025-2026 course would refuse that row; the unscoped route
+        must not, because no course is naming the year.
+        """
+        later, _ = self.a_later_year()
 
-        self.assertTrue(Grade.objects.filter(school_year=other).exists())
+        self.upload(self.row(grade='7.5', year=later.year))
+
+        self.assertTrue(Grade.objects.filter(school_year=later).exists())
 
     # --- 8 and 10. what the counters count, and what the cap hides ----------
 
@@ -858,6 +874,249 @@ class CsvImportCorrectnessTests(AccessControlTestCase):
 
         self.assertContains(response, 'Notas creadas')
         self.assertNotContains(response, 'Notas sustituidas')
+
+    # --- 6. a read failure with nothing read behind it ----------------------
+
+    def test_a_read_failure_before_any_row_shows_no_summary(self):
+        """Reporting the committed prefix was the fix; reporting a prefix that
+        does not exist is the same fault mirrored.
+
+        A file that fails to decode on its *header* has no rows behind it, so
+        a 0/0/0/0 strip under a banner ending "lo importado ... se detalla
+        abajo" points the teacher at a table that is not on the page. The
+        counters are only worth rendering once they count something.
+        """
+        cases = {
+            'header line': (
+                'Nombre_Estudiante,Asignatura,Trimestre,A\xf1o_Escolar'
+                .encode('latin-1')
+                + b',Nota,Tipo_Nota,Numero_Tipo_Nota,Comentarios\n'),
+            'utf-16': (self.HEADER + '\n' + self.row()).encode('utf-16'),
+            'binary': b'\x89PNG\r\n\x1a\n\xff\xfe\x00\x01',
+            'field over the csv limit': (
+                self.HEADER + '\n'
+                + self.row(comments='"' + 'x' * 200000 + '"')
+                + '\n').encode('utf-8'),
+        }
+        for label, body in cases.items():
+            with self.subTest(case=label):
+                response = self.upload(body=body)
+
+                self.assertIsNone(response.context['result'])
+                self.assertNotContains(response, 'Filas leídas')
+                self.assertTrue([
+                    m for m in response.context['messages']
+                    if 'no se ha podido leer' in str(m).lower()])
+
+    def test_a_read_failure_after_rows_still_reports_them(self):
+        """The other half: the fix above must not re-hide a committed prefix."""
+        body = (self.HEADER + '\n' + self.row(grade='5', number='1') + '\n'
+                ).encode('utf-8')
+        body += 'Jos\xe9,Matematicas,1,2025-2026,7,examen,3,'.encode('latin-1')
+        response = self.upload(body=body)
+
+        self.assertEqual(Grade.objects.count(), 1)
+        self.assertEqual(response.context['result']['created'], 1)
+        self.assertEqual(response.context['result']['rows'], 1)
+        self.assertContains(response, 'Notas creadas')
+
+    # --- 7. the pair, not the two operands separately -----------------------
+
+    def a_second_class(self):
+        """Another of this teacher's classes, with its own subject and pupil.
+
+        Gives two licensed pairs — (Ana, Matematicas) in 1A and (Carla,
+        Musica) in 4D — and therefore two *unlicensed* crossings of them.
+        """
+        fourth = Course.objects.create(
+            Tipo='Eso', Section='4D', school_year=self.year)
+        musica = Subjects.objects.create(Name='Musica')
+        Subjects_Courses.objects.create(
+            subject=musica, teacher=self.teacher_a, course=fourth,
+            trimester=self.trimester)
+        carla = Students.objects.create(
+            Name='Carla Vega', Email='carla@example.com')
+        Students_Courses.objects.create(student=carla, course_section=fourth)
+        return fourth, musica, carla
+
+    def test_a_subject_from_one_class_cannot_grade_a_pupil_from_another(self):
+        """The scoped route narrows students *and* subjects to one course, so
+        the pair is licensed by that course. The unscoped route narrows each
+        to "anything I teach" independently, and a row pairing a pupil from
+        one class with a subject from another satisfied both while being
+        licensed by neither.
+        """
+        _, musica, carla = self.a_second_class()
+
+        for pupil, subject in ((self.student, musica),
+                               (carla, self.subject)):
+            with self.subTest(student=pupil.Name, subject=subject.Name):
+                Grade.objects.all().delete()
+                response = self.upload(
+                    self.row(student=pupil, subject=subject.Name))
+
+                self.assertEqual(Grade.objects.count(), 0)
+                self.assertEqual(
+                    response.context['result']['error_count'], 1)
+
+    def test_the_pair_check_never_refuses_what_the_scoped_route_allows(self):
+        """The constraint on the fix: stricter than the class-scoped route
+        would mean the invariant is wrong, not that the check is."""
+        fourth, musica, carla = self.a_second_class()
+
+        for pupil, subject, course in ((self.student, self.subject,
+                                        self.course),
+                                       (carla, musica, fourth)):
+            with self.subTest(student=pupil.Name, subject=subject.Name):
+                Grade.objects.all().delete()
+                row = self.row(student=pupil, subject=subject.Name)
+                scoped = self.as_(self.professor).post(
+                    f'/import/grades/{course.CourseID}/',
+                    {'csv_file': SimpleUploadedFile(
+                        'grades.csv',
+                        '\n'.join([self.HEADER, row]).encode('utf-8'),
+                        content_type='text/csv')})
+                self.assertEqual(Grade.objects.count(), 1, 'scoped route')
+
+                Grade.objects.all().delete()
+                self.upload(row)
+                self.assertEqual(Grade.objects.count(), 1, 'unscoped route')
+
+    def test_the_pair_error_does_not_name_the_pupil(self):
+        """A refused row still echoes only what is not the name column."""
+        _, musica, _ = self.a_second_class()
+        response = self.upload(
+            self.row(student=self.student, subject=musica.Name))
+
+        self.assertNotContains(response, self.student.Name)
+        self.assertContains(response, 'Musica')
+
+    def a_later_year(self):
+        """The same pupil and the same teacher, a year on.
+
+        Promotion *adds* a `Students_Courses` row rather than moving one —
+        `reassign_students` only repoints an enrolment within a single year —
+        so a pupil who has progressed holds a row for each year. That is what
+        makes a past year checkable at all.
+        """
+        later = School_year.objects.create(year='2026-2027')
+        later_t = Trimester.objects.create(Name=1, school_year=later)
+        later_course = Course.objects.create(
+            Tipo='Eso', Section='2A', school_year=later)
+        Students_Courses.objects.create(
+            student=self.student, course_section=later_course)
+        Subjects_Courses.objects.create(
+            subject=self.subject, teacher=self.teacher_a,
+            course=later_course, trimester=later_t)
+        return later, later_t
+
+    def test_a_year_the_pupil_was_never_taught_the_subject_in_is_refused(self):
+        """`Grade` has no FK to `Course`, so the year is a free field and the
+        unscoped route took it from the file. The pair is licensed by a
+        *course*, and a course carries a year — so the year is the same
+        statement with one more conjunct, not a second rule."""
+        other_year = School_year.objects.create(year='2019-2020')
+        Trimester.objects.create(Name=1, school_year=other_year)
+
+        response = self.upload(self.row(year='2019-2020'))
+
+        self.assertEqual(Grade.objects.count(), 0)
+        self.assertIn('2019-2020',
+                      response.context['result']['errors'][0]['message'])
+
+    def test_a_year_the_pupil_was_taught_the_subject_in_still_imports(self):
+        """The constraint again: a past year with a witness must survive."""
+        later, _ = self.a_later_year()
+
+        for year, number in ((self.year.year, '1'), (later.year, '2')):
+            with self.subTest(year=year):
+                Grade.objects.all().delete()
+                self.upload(self.row(year=year, number=number))
+
+                self.assertEqual(Grade.objects.count(), 1)
+                self.assertEqual(
+                    Grade.objects.get().school_year.year, year)
+
+    def test_the_year_and_the_pair_are_distinguishable_failures(self):
+        """Two causes, two messages — the lesson of the four-in-one string."""
+        _, musica, _ = self.a_second_class()
+        School_year.objects.create(year='2019-2020')
+        Trimester.objects.create(
+            Name=1, school_year=School_year.objects.get(year='2019-2020'))
+
+        wrong_year = self.upload(self.row(year='2019-2020'))
+        Grade.objects.all().delete()
+        wrong_pair = self.upload(self.row(subject=musica.Name))
+
+        self.assertNotEqual(
+            wrong_year.context['result']['errors'][0]['message'],
+            wrong_pair.context['result']['errors'][0]['message'])
+
+    def test_teaches_subject_to_is_blind_to_who_else_teaches_the_class(self):
+        """Directly, because the view path cannot distinguish this from the
+        subject narrowing that also refuses it."""
+        _, musica, carla = self.a_second_class()
+        Subjects_Courses.objects.create(
+            subject=musica, teacher=self.teacher_b, course=self.course,
+            trimester=self.trimester)
+
+        self.assertFalse(
+            teaches_subject_to(self.teacher_a, musica, self.student))
+        self.assertTrue(
+            teaches_subject_to(self.teacher_a, musica, carla))
+
+    # --- 8. the single filter() call in teacher_subjects --------------------
+
+    def test_teacher_subjects_does_not_join_the_relation_twice(self):
+        """`teacher_subjects(teacher, course)` must be one `filter()` call.
+
+        Split into `.filter(teacher=...).filter(course=...)` across this
+        multi-valued relation, Django joins `Subjects_Courses` twice and the
+        two conditions may then be satisfied by *different* rows — admitting a
+        subject this teacher teaches somewhere else that somebody else happens
+        to teach here. That is precisely the hole the subject narrowing was
+        added to close, and nothing else in the suite would notice it
+        reopening: the pair check catches the import, but `teacher_subjects`
+        is the function whose contract this is.
+
+        Musica below is taught by this teacher (in 4D) and taught in 1A (by
+        another teacher), so it satisfies each condition separately and
+        neither together.
+        """
+        _, musica, _ = self.a_second_class()
+        Subjects_Courses.objects.create(
+            subject=musica, teacher=self.teacher_b, course=self.course,
+            trimester=self.trimester)
+
+        names = set(teacher_subjects(self.teacher_a, self.course)
+                    .values_list('Name', flat=True))
+
+        self.assertEqual(names, {self.subject.Name})
+
+    def test_teacher_subjects_without_a_course_spans_every_class(self):
+        """The unscoped route's operand, unchanged: the pair check above is
+        what narrows it, not this."""
+        _, musica, _ = self.a_second_class()
+
+        names = set(teacher_subjects(self.teacher_a)
+                    .values_list('Name', flat=True))
+
+        self.assertEqual(names, {self.subject.Name, musica.Name})
+
+    # --- 9. a message that says what to do ----------------------------------
+
+    def test_the_short_row_error_says_how_to_fix_the_row(self):
+        """Dropping a trailing empty cell is a real way to write this file by
+        hand, and "la fila tiene menos columnas" names the fault without
+        naming the remedy."""
+        body = (self.HEADER + '\n'
+                + f'{self.student.Name},{self.subject.Name},1,2025-2026,5\n'
+                ).encode('utf-8')
+        response = self.upload(body=body)
+
+        message = response.context['result']['errors'][0]['message']
+        self.assertIn('menos columnas', message)
+        self.assertIn('vacías', message)
 
 
 class ClassDashboardLinkTests(AccessControlTestCase):
@@ -3772,6 +4031,158 @@ class AdminFlowCorrectnessTests(AccessControlTestCase):
              Students_Courses.objects.filter(student=self.mover)],
             [self.other_course.pk])
 
+    # --- 10. the bug-4 fix read a junk year as a deliberate choice ---------
+    #
+    # Introduced by the fix above, not pre-existing: at 20329df the course row
+    # overrode the query string and the roster loaded. The new branch tests
+    # *inequality* and treats unequal as "a different year" — but a string that
+    # names nothing is unequal to every id in the table. `?course_id=abc` was
+    # already treated as junk; this is the same rule for the other id, and the
+    # rule it encodes is that an explicit choice must be explicit *and real*.
+
+    def test_a_non_numeric_year_does_not_discard_a_valid_course(self):
+        """«abc» is not another school year, it is not a year at all."""
+        response = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id=abc'
+            f'&course_id={self.course.pk}')
+
+        self.assertContains(response, 'Ana Lopez')
+        self.assertNotContains(response, 'otro año escolar')
+
+    def test_a_year_that_names_nothing_is_not_treated_as_a_choice(self):
+        """The case `isdigit()` would have missed. A numeric id naming no row
+        is exactly as empty a statement of intent as «abc», and dropping the
+        course for it blames a year that has never existed."""
+        response = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id=999999'
+            f'&course_id={self.course.pk}')
+
+        self.assertContains(response, 'Ana Lopez')
+        self.assertNotContains(response, 'otro año escolar')
+
+    def test_a_real_disagreeing_year_still_drops_the_course(self):
+        """Guard against over-loosening: requiring the year to exist must not
+        disarm the bug-4 behaviour it is narrowing. Pinned beside its own case
+        so a future edit to either sees both at once — see also
+        `test_choosing_a_new_year_keeps_the_year_and_drops_the_course`."""
+        response = self.as_(self.admin).get(
+            f'{self.REASSIGN_URL}?school_year_id={self.next_year.pk}'
+            f'&course_id={self.course.pk}')
+
+        self.assertNotContains(response, 'Ana Lopez')
+        self.assertContains(response, 'otro año escolar')
+
+    # --- 11. assign_subjects wrote a course and a trimester from two years --
+    #
+    # Worse than the reassign disagreement it mirrors: that one rendered a
+    # contradictory scope bar, this one writes a `Subjects_Courses` pairing a
+    # course in one year with a trimester in another — a row
+    # `resolve_class_scope` will later read. `selected_trimesters` is filtered
+    # by `school_year__pk=final_school_year_id` and `target_course` by
+    # `course_id`, and nothing compared the two.
+    #
+    # Refused rather than reconciled, deliberately. Unlike reassign, this page
+    # has no no-JS path and no stale-bookmark path into the disagreement:
+    # `school_year_id` is a hidden input, the cascade's `hx-include` is scoped
+    # to it, and the post-POST redirect emits a consistent pair. The only way
+    # in is a crafted POST, and a crafted POST should be told no.
+    #
+    # Third site of one invariant: a course fixes its year. `resolve_class_
+    # scope` states it for the teacher's side, `import_grades` for the
+    # class-scoped upload, this for the administrator's write.
+
+    def assign_post(self, course, year, subject=None, trimesters=None):
+        return self.as_(self.admin).post(
+            self.ASSIGN_URL,
+            {'course_id': str(course.pk),
+             'school_year_id': str(year.pk),
+             'subject': str((subject or self.subject).pk),
+             'teacher': str(self.teacher_a.pk),
+             'trimesters_selected': [str(t.pk) for t in
+                                     (trimesters or [self.trimester])]},
+            follow=True)
+
+    def test_a_course_from_another_year_cannot_be_assigned_subjects(self):
+        """`self.next_class` is Eso 1A of 2026-2027; `self.trimester` belongs
+        to 2025-2026. The pair describes a class that does not exist."""
+        before = Subjects_Courses.objects.count()
+
+        self.assign_post(self.next_class, self.year)
+
+        self.assertEqual(Subjects_Courses.objects.count(), before)
+        self.assertFalse(
+            Subjects_Courses.objects.filter(course=self.next_class).exists())
+
+    def test_no_assignment_ever_spans_two_school_years(self):
+        """Stated as the invariant rather than as the repro, so it still means
+        something if the refusal is later moved or reworded."""
+        self.assign_post(self.next_class, self.year)
+
+        for row in Subjects_Courses.objects.select_related(
+                'course', 'trimester'):
+            with self.subTest(assignment=row.pk):
+                self.assertEqual(row.course.school_year_id,
+                                 row.trimester.school_year_id)
+
+    def test_the_year_mismatch_refusal_is_in_spanish(self):
+        response = self.assign_post(self.next_class, self.year)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'no pertenece al año escolar seleccionado')
+
+    def test_an_agreeing_year_and_course_still_save(self):
+        """Guard against over-tightening. A fresh subject, so the assertion is
+        about this POST rather than about the fixture's own row."""
+        subject = Subjects.objects.create(Name='Historia')
+        second = Trimester.objects.create(Name=2, school_year=self.year)
+
+        response = self.assign_post(
+            self.course, self.year, subject=subject,
+            trimesters=[self.trimester, second])
+
+        self.assertNotContains(
+            response, 'no pertenece al año escolar seleccionado')
+        self.assertEqual(
+            Subjects_Courses.objects.filter(
+                subject=subject, course=self.course).count(), 2)
+
+    def test_the_post_redirect_pair_never_trips_the_guard(self):
+        """The failure a guard's own author does not think to write, because
+        they are testing that it fires: a false positive here breaks *every*
+        save on the page. Saves once, follows the redirect, re-posts the pair
+        the rendered form actually carries, and requires the second save to
+        work too."""
+        subject = Subjects.objects.create(Name='Filosofia')
+        first = self.assign_post(self.course, self.year, subject=subject)
+
+        self.assertNotContains(
+            first, 'no pertenece al año escolar seleccionado')
+
+        body = first.content.decode()
+        posted = {
+            name: re.search(
+                r'<input type="hidden" name="%s" value="([^"]*)"' % name, body
+            ).group(1)
+            for name in ('course_id', 'school_year_id')
+        }
+        # The redirect must hand back a usable pair, not empty strings.
+        self.assertEqual(posted['course_id'], str(self.course.pk))
+        self.assertEqual(posted['school_year_id'], str(self.year.pk))
+
+        second = self.as_(self.admin).post(
+            self.ASSIGN_URL,
+            {**posted, 'subject': str(subject.pk),
+             'teacher': str(self.teacher_b.pk),
+             'trimesters_selected': [str(self.trimester.pk)]}, follow=True)
+
+        self.assertNotContains(
+            second, 'no pertenece al año escolar seleccionado')
+        self.assertEqual(
+            Subjects_Courses.objects.get(
+                subject=subject, course=self.course,
+                trimester=self.trimester).teacher_id, self.teacher_b.pk)
+
 
 class LegacyCascadeTeardownTests(TestCase):
     """Every hand-written stylesheet is gone, and they did not go together.
@@ -4912,3 +5323,245 @@ class ReassignStudentsV2Tests(V2CascadeAssertions, AccessControlTestCase):
             with self.subTest(user=user.username):
                 self.assertEqual(
                     self.as_(user).get(self.URL).status_code, 403)
+
+
+# A logout control that renders is not a logout control that can be reached.
+# `RoleAwareShellTests.test_every_role_can_sign_out` asserts `/logout/` and
+# "Salir" appear in the body, and it passed for the whole time the only control
+# in the app sat inside `hidden md:flex` — invisible below 768px. Presence and
+# reachability are different claims, and only the second one is the feature.
+VOID_ELEMENTS = frozenset((
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+    'meta', 'param', 'source', 'track', 'wbr',
+))
+
+
+class _LogoutControlFinder(HTMLParser):
+    """Every control pointing at `/logout/`, with the classes that hide it.
+
+    Tailwind's `hidden` sets `display:none` at every width and a `md:` variant
+    overrides it from 768px up, so visibility is decided by the whole ancestor
+    chain and not by the element's own class attribute. Reading the chain is
+    the only way to answer "can a phone reach this".
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.controls = []
+
+    def _record(self, kind, attrs, classes):
+        chain = set(classes)
+        for _, ancestor in self.stack:
+            chain |= ancestor
+        self.controls.append({
+            'kind': kind,
+            'method': (attrs.get('method') or '').lower(),
+            'classes': classes,
+            'chain': chain,
+            'hidden_below_md': 'hidden' in chain,
+            'hidden_from_md': 'md:hidden' in chain,
+        })
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = frozenset((attrs.get('class') or '').split())
+        if tag == 'form' and '/logout/' in (attrs.get('action') or ''):
+            self._record('form', attrs, classes)
+        elif tag == 'a' and '/logout/' in (attrs.get('href') or ''):
+            self._record('link', attrs, classes)
+        if tag not in VOID_ELEMENTS:
+            self.stack.append((tag, classes))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID_ELEMENTS and self.stack:
+            self.stack.pop()
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                return
+
+
+class LogoutReachabilityTests(AccessControlTestCase):
+    """Signing out has to be possible at every width, on every role's page.
+
+    `logoutUser` became `@require_POST` because on GET it was a cross-site
+    logout — an `<img src="/logout/">` anywhere cleared the session. That fix
+    is right and stays. What it removed was the *escape hatch*: before it, a
+    phone user with no visible control could still type `/logout/` in the URL
+    bar. Afterwards that answers a bare 405 with an empty body, so the only
+    remaining route to signing out is a control that must actually be visible.
+
+    The nav collapses to its brand bar below `md` — every role's link block is
+    `hidden md:block` and the identity footer is `hidden md:flex` — so the
+    brand bar is the only part of the shell a phone renders, and the mobile
+    control belongs there rather than in the footer.
+    """
+
+    PAGES = (('professor', '/teacher/'), ('student', '/student/'),
+             ('tutor', '/student/'), ('administrator', '/adminage/'))
+
+    def _controls(self, response):
+        finder = _LogoutControlFinder()
+        finder.feed(response.content.decode('utf-8'))
+        return finder.controls
+
+    def _user_for(self, role):
+        return {'professor': self.professor, 'student': self.pupil,
+                'tutor': self.tutor, 'administrator': self.admin}[role]
+
+    def test_every_role_can_sign_out_on_a_narrow_viewport(self):
+        """The regression this class exists for."""
+        for role, url in self.PAGES:
+            with self.subTest(role=role):
+                response = self.as_(self._user_for(role)).get(url)
+                controls = self._controls(response)
+
+                self.assertTrue(controls, 'no logout control at all')
+                reachable = [c for c in controls if not c['hidden_below_md']]
+                self.assertTrue(
+                    reachable,
+                    'every logout control is inside a `hidden` container, so a '
+                    'viewport below md cannot sign out: '
+                    f'{[sorted(c["chain"]) for c in controls]}')
+
+    def test_every_role_can_still_sign_out_on_a_wide_viewport(self):
+        """The other half of the same claim: a mobile-only control would move
+        the hole rather than close it."""
+        for role, url in self.PAGES:
+            with self.subTest(role=role):
+                controls = self._controls(
+                    self.as_(self._user_for(role)).get(url))
+
+                reachable = [c for c in controls if not c['hidden_from_md']]
+                self.assertTrue(
+                    reachable,
+                    'every logout control is `md:hidden`, so a desktop '
+                    'viewport cannot sign out')
+
+    def test_the_403_page_can_be_signed_out_of_at_any_width(self):
+        """`forbidden.html` extends the shell, and a denied account is exactly
+        who needs to sign out and back in as somebody else."""
+        response = self.as_(self.pupil).get('/teacher/')
+        self.assertEqual(response.status_code, 403)
+        controls = self._controls(response)
+
+        self.assertTrue([c for c in controls if not c['hidden_below_md']])
+        self.assertTrue([c for c in controls if not c['hidden_from_md']])
+
+    def test_no_logout_control_is_a_plain_link(self):
+        """A GET control would answer 405 with an empty body, and worse, it is
+        the shape that made the route forgeable in the first place."""
+        for role, url in self.PAGES:
+            with self.subTest(role=role):
+                controls = self._controls(
+                    self.as_(self._user_for(role)).get(url))
+
+                self.assertEqual(
+                    [c for c in controls if c['kind'] == 'link'], [],
+                    'a plain <a href="/logout/"> is back')
+                for control in controls:
+                    self.assertEqual(control['method'], 'post')
+
+    def test_every_logout_form_carries_a_csrf_token(self):
+        """An unprotected POST form would be the cross-site logout again, just
+        with one more step."""
+        for role, url in self.PAGES:
+            with self.subTest(role=role):
+                body = self.as_(self._user_for(role)).get(
+                    url).content.decode('utf-8')
+                forms = re.findall(
+                    r'<form[^>]*action="[^"]*/logout/"[^>]*>(.*?)</form>',
+                    body, re.S)
+
+                self.assertTrue(forms)
+                for form in forms:
+                    self.assertIn('csrfmiddlewaretoken', form)
+
+    def test_the_desktop_identity_footer_is_undisturbed(self):
+        """The mobile control must not have been bought by moving the footer:
+        `mt-auto` is what pins it to the bottom of a full-height nav."""
+        source = pathlib.Path(
+            settings.BASE_DIR, 'templates/base_shell_v2.html'
+        ).read_text(encoding='utf-8')
+
+        self.assertIn('hidden md:flex items-center gap-2.5 mt-auto', source)
+
+
+class RateLimitPageTests(AccessControlTestCase):
+    """The 429 body, and the accuracy of the comment explaining it.
+
+    The page used to be the bare string `Too many requests.` served as
+    text/html: English, in a Spanish app, with no layout and no way back.
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    def _exhaust(self, user, url, n):
+        client = self.as_(user)
+        for _ in range(n):
+            response = client.get(url)
+        return response
+
+    def test_the_429_is_a_real_page(self):
+        response = self._exhaust(self.pupil, '/grades/csv/', 31)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertTemplateUsed(response, 'too_many_requests.html')
+        self.assertContains(response, 'Demasiadas peticiones', status_code=429)
+        self.assertContains(response, 'Volver al inicio', status_code=429)
+
+    def test_an_anonymous_caller_reaches_it_without_a_nav(self):
+        """It extends base_v2, not base_shell_v2. Anonymous callers reach this
+        page, and the shell's nav branches on `user.profile.role`."""
+        for _ in range(12):
+            response = self.client.get('/import/grades/')
+
+        self.assertEqual(response.status_code, 429)
+        self.assertTemplateNotUsed(response, 'base_shell_v2.html')
+        self.assertContains(response, 'Demasiadas peticiones', status_code=429)
+        self.assertNotContains(response, 'Mis clases', status_code=429)
+
+    def test_the_comment_does_not_describe_a_mechanism_views_does_not_have(self):
+        """The comment said the limits are keyed "by user *and* by IP
+        (`grades_csv` by user, `loginPage` by IP)". Neither half was true:
+        every `@ratelimit` in views.py is `key='user'` and `loginPage` carries
+        no decorator at all. The conclusion — that anonymous callers arrive
+        here — was right for the wrong reason, which is the kind of comment
+        that survives precisely because the page it explains behaves correctly.
+
+        Asserted against views.py rather than against a fixed string, so the
+        comment has to keep matching the decorators as they change.
+        """
+        views_source = pathlib.Path(
+            settings.BASE_DIR, 'mainapp/views.py').read_text(encoding='utf-8')
+        template = pathlib.Path(
+            settings.BASE_DIR, 'templates/too_many_requests.html'
+        ).read_text(encoding='utf-8')
+
+        keys = set(re.findall(r"@ratelimit\(\s*key='(\w+)'", views_source))
+        self.assertTrue(keys, 'no @ratelimit found — has views.py moved?')
+
+        if 'ip' not in keys:
+            self.assertNotIn('by IP', template)
+            self.assertNotIn('por IP', template)
+        decorated = re.search(
+            r'@ratelimit[^\n]*\n(?:@[^\n]*\n)*def loginPage', views_source)
+        if decorated is None:
+            self.assertNotIn('loginPage', template)
+
+    def test_the_comment_names_the_reason_anonymous_arrives_here(self):
+        """django_ratelimit resolves `key='user'` to `str(request.user.pk)`,
+        which for AnonymousUser is the literal string "None" — so every
+        anonymous caller shares one bucket and any of them can reach this
+        page. That is the fact the base_v2 choice rests on."""
+        template = pathlib.Path(
+            settings.BASE_DIR, 'templates/too_many_requests.html'
+        ).read_text(encoding='utf-8')
+
+        self.assertIn('AnonymousUser', template)
+        self.assertIn('base_v2', template)

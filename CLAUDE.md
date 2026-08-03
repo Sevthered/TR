@@ -48,11 +48,11 @@ Single Django app `mainapp` + project config `tr_webpage`. All URLs live in `mai
 **Authorization IS decorator-based** (changed during the 2026-08-02 security remediation). Use the decorators, not inline role checks:
 
 ```python
-@role_required('professor')          # views.py:74-93 — 403 + forbidden.html on mismatch
-@teacher_required                    # views.py:96-112 — the above PLUS profile.teacher is not None
+@role_required('professor')          # views.py:75-94 — 403 + forbidden.html on mismatch
+@teacher_required                    # views.py:97-113 — the above PLUS profile.teacher is not None
 ```
 
-Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:115-117`) and `teacher_students(profile.teacher)` (`views.py:120-130`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`.
+Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:116-118`) and `teacher_students(profile.teacher)` (`views.py:121-131`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`.
 
 ### Data model chain
 
@@ -68,7 +68,7 @@ Grade / Ausencias = Student + Subject + Trimester + School_year (+ grade_type/da
 
 `Grade` is unique on `(student, subject, trimester, school_year, grade_type, grade_type_number)`. **A student can hold unbounded grades per subject per trimester** — 5 `grade_type` values x unbounded `grade_type_number`. Any UI showing a grade count therefore has **no denominator**. `grade_type_number` defaults to `0`, and 0 means *unnumbered*, not "the first one" (`student_dashboard_content.html:152` renders it as "unico"). `Ausencias` is unique on `(student, subject, trimester, date_time)`; note `Tipo` is NOT in that key.
 
-`Subjects_Courses.assigned_course_sections` is an M2M to `Students_Courses` (enrolments, not students) and is **the per-subject roster** — students in one course legitimately take different subjects. Caveat: only one administrator form writes it, and that form `.clear()`s it on an empty submit (`views.py:1974-1976`), so it is often empty. It is unsafe for *authorization*; that is not the same as being meaningless. **Its one reader is `resolve_class_scope()`**, which uses it only to *narrow* a roster, only when non-empty, and only after re-filtering it by `course_section=course` — nothing constrains an enrolment in that M2M to belong to the course that owns the row. Everything downstream consumes the *resolved* roster (`scope.students`) rather than the M2M: the register, `class_metrics()`, and `AusenciaForm`, which is built from the scope so the panel cannot offer a student the register has just excluded.
+`Subjects_Courses.assigned_course_sections` is an M2M to `Students_Courses` (enrolments, not students) and is **the per-subject roster** — students in one course legitimately take different subjects. Caveat: only one administrator form writes it, and that form `.clear()`s it on an empty submit (the `else` branch of `assign_subjects_view`, where `student_count == 0`), so it is often empty. It is unsafe for *authorization*; that is not the same as being meaningless. **Its one reader is `resolve_class_scope()`**, which uses it only to *narrow* a roster, only when non-empty, and only after re-filtering it by `course_section=course` — nothing constrains an enrolment in that M2M to belong to the course that owns the row. Everything downstream consumes the *resolved* roster (`scope.students`) rather than the M2M: the register, `class_metrics()`, and `AusenciaForm`, which is built from the scope so the panel cannot offer a student the register has just excluded.
 
 `Grade` has **no FK to `Course`, `Teachers` or `Subjects_Courses`**. Joining grades to a class goes through `Students_Courses` and is unenforced.
 
