@@ -79,10 +79,10 @@
 
 {% elif role == 'administrator' %}
 {% comment %}
-  The six administrator destinations, in the order the flows actually run: a
+  The seven administrator destinations, in the order the flows actually run: a
   school year exists before courses do, courses before subject assignments,
-  and a student is created before being moved. Every one is a real route in
-  urls.py; none is a placeholder.
+  and a student is created before being given a login or moved. Every one is a
+  real route in urls.py; none is a placeholder.
 {% endcomment %}
 <div class="pt-[18px] pb-1.5">
   <span class="lbl block px-pad pb-2.5">Administración</span>
@@ -111,6 +111,11 @@
      class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
             border-l-2 hover:text-ink hover:bg-white/[.03]
             {% if url_name == 'create_and_assign_student' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Alta de alumn@</a>
+  <a href="{% url 'create_account' %}"
+     {% if url_name == 'create_account' %}aria-current="page"{% endif %}
+     class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]
+            border-l-2 hover:text-ink hover:bg-white/[.03]
+            {% if url_name == 'create_account' %}text-ink font-semibold bg-accent-dim border-accent{% else %}text-ink-2 border-transparent{% endif %}">Alta de cuenta</a>
   <a href="{% url 'reassign_students' %}"
      {% if url_name == 'reassign_students' %}aria-current="page"{% endif %}
      class="flex items-center gap-2.5 -ml-0.5 px-pad py-[7px] text-[13px]

@@ -1,4 +1,7 @@
 from django import forms
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.urls import reverse_lazy
 from .models import Students, Profile, Course, Teachers, Subjects, Grade, Ausencias, Trimester, Subjects_Courses, School_year
 
@@ -385,3 +388,148 @@ class StudentCreationForm(forms.ModelForm):
         for name, label in self.LABELS.items():
             self.fields[name].widget.attrs.setdefault('class', 'ctl')
             self.fields[name].label = label
+
+
+# `Profile.USER_ROLES` labels are English ('professor', 'legal_tutor'), which
+# is what `get_role_display()` renders app-wide. Changing them is a model
+# concern with a migration attached; nothing here needs that, only to keep
+# English out of a select on a Spanish page.
+SPANISH_ROLE_LABELS = {
+    'professor': 'Profesor@',
+    'student': 'Estudiante',
+    'tutor': 'Tutor legal',
+    'administrator': 'Administrador@',
+}
+
+
+class AccountCreationForm(forms.Form):
+    """An administrator creating a login for a professor, student or tutor.
+
+    **`administrator` is deliberately not among the choices**, and that is a
+    security boundary rather than an oversight. `ProfileAdmin.get_readonly_fields`
+    makes `role` writable only to a superuser (see the
+    `profile-admin-privilege-escalation` finding), so an in-app form that could
+    mint administrators would hand every administrator session the escalation
+    that constraint exists to withhold. The second administrator is created by
+    `manage.py create_administrator`, where the gate is shell access on the
+    server rather than a cookie.
+
+    One POST form with no cascade, for the same reason
+    `create_and_assign_student` has none: a GET round trip to narrow the
+    identity control by role would either discard the password already typed
+    or put it in the query string. All three identity controls therefore
+    render at once and `clean()` enforces the one the chosen role needs,
+    ignoring the others. It works with JavaScript off because there is nothing
+    to degrade.
+    """
+
+    # Read from the module-level dict rather than a sibling class attribute:
+    # a comprehension body gets its own scope and **skips the enclosing class
+    # namespace**, so `ROLE_LABELS.get(...)` inside one raises NameError at
+    # import time. `ROLE_LABELS` below is the public spelling of the same
+    # mapping, which `views.create_account_view` reads for its message.
+    ROLE_LABELS = SPANISH_ROLE_LABELS
+
+    # Profile.USER_ROLES minus 'administrator'. Derived from the model's own
+    # list rather than retyped, so a role added there appears here — with its
+    # English label if nobody translates it, which is visible rather than
+    # silent. The one value that must *not* leak through is named explicitly,
+    # and `AccountCreationTests` asserts on its absence from the markup.
+    ASSIGNABLE_ROLES = [(value, SPANISH_ROLE_LABELS.get(value, label))
+                        for value, label in Profile.USER_ROLES
+                        if value != 'administrator']
+
+    username = forms.CharField(
+        max_length=150, label='Usuario',
+        help_text='Con esto entrará en la aplicación.',
+        widget=forms.TextInput(attrs={'autocomplete': 'off'}))
+    password1 = forms.CharField(
+        label='Contraseña', widget=forms.PasswordInput(
+            attrs={'autocomplete': 'new-password'}))
+    password2 = forms.CharField(
+        label='Repite la contraseña', widget=forms.PasswordInput(
+            attrs={'autocomplete': 'new-password'}))
+    role = forms.ChoiceField(
+        choices=ASSIGNABLE_ROLES, label='Rol',
+        help_text='Los administradores no se crean aquí; se crean con '
+                  '«manage.py create_administrator».')
+
+    teacher = forms.ModelChoiceField(
+        queryset=Teachers.objects.none(), required=False,
+        label='Ficha de profesor@',
+        help_text='Solo para el rol profesor. Sin ficha, la cuenta entra '
+                  'pero no ve ninguna clase.')
+    student = forms.ModelChoiceField(
+        queryset=Students.objects.none(), required=False,
+        label='Ficha de alumn@',
+        help_text='Solo para el rol estudiante.')
+    children = forms.ModelMultipleChoiceField(
+        queryset=Students.objects.none(), required=False,
+        label='Alumn@s a su cargo',
+        help_text='Solo para el rol tutor legal. Mantén pulsada la tecla '
+                  'Ctrl/Cmd para seleccionar varios.')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # `Profile.teacher` and `Profile.student` are OneToOne, so a row
+        # already linked to an account cannot be offered again — the form
+        # would validate and the save would raise IntegrityError. Excluding
+        # them here is what makes the select state the truth.
+        self.fields['teacher'].queryset = Teachers.objects.filter(
+            profile__isnull=True).order_by('Name')
+        self.fields['student'].queryset = Students.objects.filter(
+            profile__isnull=True).order_by('Name')
+        # A child may have several tutors: `children` is M2M, not OneToOne,
+        # so this one is *not* filtered.
+        self.fields['children'].queryset = Students.objects.order_by('Name')
+
+        for name, field in self.fields.items():
+            css = 'ctl'
+            field.widget.attrs.setdefault('class', css)
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        if User.objects.filter(username__iexact=username).exists():
+            raise forms.ValidationError('Ya existe una cuenta con ese usuario.')
+        return username
+
+    def clean_role(self):
+        role = self.cleaned_data['role']
+        # Belt and braces against a hand-built POST: ChoiceField already
+        # rejects a value outside `choices`, and this says why in Spanish
+        # rather than with Django's generic "Escoja una opción válida".
+        if role == 'administrator':
+            raise forms.ValidationError(
+                'Los administradores no se crean desde la aplicación.')
+        return role
+
+    def clean(self):
+        cleaned = super().clean()
+        role = cleaned.get('role')
+
+        password1 = cleaned.get('password1')
+        password2 = cleaned.get('password2')
+        if password1 and password2 and password1 != password2:
+            self.add_error('password2', 'Las dos contraseñas no coinciden.')
+        elif password1:
+            try:
+                validate_password(password1)
+            except DjangoValidationError as error:
+                self.add_error('password1', list(error.messages))
+
+        # The identity link the chosen role needs. A student account with no
+        # `student` FK is a state the app already has a name for: `loginPage`
+        # renders forbidden.html for it, so creating one here would be
+        # manufacturing an account that cannot log in.
+        if role == 'student' and not cleaned.get('student'):
+            self.add_error(
+                'student', 'Un estudiante necesita una ficha de alumn@.')
+        if role == 'tutor' and not cleaned.get('children'):
+            self.add_error(
+                'children', 'Un tutor necesita al menos un alumn@ a su cargo.')
+        # `teacher` is deliberately optional: `teacher_required` renders
+        # forbidden.html with `unlinked_teacher`, which names the fix, so an
+        # unlinked professor is a recoverable state rather than a broken one.
+
+        return cleaned

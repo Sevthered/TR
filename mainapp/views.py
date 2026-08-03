@@ -22,9 +22,9 @@ from django.views.decorators.http import require_http_methods
 from django_ratelimit.decorators import ratelimit
 
 from .forms import (
-    AusenciaEditForm, AusenciaForm, CourseCreationForm, CourseSectionForm,
-    GradeForm, MAIN_COURSES, SchoolYearForm, StudentCreationForm,
-    SubjectAssignmentForm,
+    AccountCreationForm, AusenciaEditForm, AusenciaForm, CourseCreationForm,
+    CourseSectionForm, GradeForm, MAIN_COURSES, SchoolYearForm,
+    StudentCreationForm, SubjectAssignmentForm,
 )
 from .models import (
     Ausencias, Course, Grade, Profile, School_year, Students,
@@ -459,7 +459,34 @@ def loginPage(request):
         if user is not None:
             # Login successful.
             login(request, user)
-            profile = request.user.profile
+            try:
+                profile = request.user.profile
+            except Profile.DoesNotExist:
+                # A correct password used to return **HTTP 500** here, on a
+                # bare `request.user.profile`. The already-authenticated
+                # branch forty lines above has always guarded the same read,
+                # so the app knew the answer and applied it on one path only.
+                #
+                # This stayed open by decision rather than neglect until
+                # 2026-08-04: a guard alone turns the crash into a *silent*
+                # dead end, and the finding was that the app had no way to
+                # create a privileged account at all, which made "a User with
+                # no Profile" the normal intermediate state of the only
+                # onboarding path there was. Now that `create_account`
+                # exists, the message can name a real fix — and it names it
+                # rather than only apologising, because the person reading it
+                # cannot see what is missing.
+                #
+                # Signed out again on the way past: an authenticated session
+                # with no profile would otherwise reach every @role_required
+                # view in the app carrying a state none of them model.
+                audit(request, 'login.no_profile', username=user.username)
+                logout(request)
+                return render(request, "mainapp/login.html", {
+                    "error": "Tu cuenta existe pero todavía no tiene un rol "
+                             "asignado, así que no puede entrar. Pide a un "
+                             "administrador que la dé de alta.",
+                })
             audit(request, 'login.success', role=profile.role)
 
             # Redirect based on role.
@@ -2772,6 +2799,86 @@ def create_and_assign_student_view(request):
         'selected_course_id': request.POST.get('course_id', ''),
     }
     return render(request, "adminage/create_and_assign_student.html", context)
+
+
+# =======================================================
+# --- SINGLE VIEW: CREATE A LOGIN AND ASSIGN ITS ROLE ---
+# =======================================================
+@role_required('administrator')
+def create_account_view(request):
+    """The in-app half of the answer to *who assigns a role, and where*.
+
+    Before this, onboarding **any** privileged user meant
+    `manage.py createsuperuser`, logging into `/admin/`, creating the Profile
+    by hand and setting `role` — so the application had no way to create a
+    professor at all, and "a `User` with no `Profile`" was the normal
+    intermediate state of the only path that existed rather than an edge case.
+    That is why `loginPage`'s 500 was left open by decision until now: a guard
+    on its own turns the crash into a silent dead end.
+
+    **This view cannot create an administrator**, and the omission is the
+    design. `ProfileAdmin` keeps `role` writable only by a superuser, so a
+    form here that could mint administrators would hand every administrator
+    session exactly the escalation that constraint withholds. The second
+    administrator comes from `manage.py create_administrator`, gated on shell
+    access rather than on a cookie. `AccountCreationForm.ASSIGNABLE_ROLES`
+    states the exclusion and `clean_role` refuses it a second time, because
+    the first is a choices list and a hand-built POST does not read it.
+
+    The write is one transaction: a `User` with no `Profile` is precisely the
+    broken state this whole finding is about, so it must not be possible to
+    leave one behind by failing halfway.
+    """
+    if request.method == 'POST':
+        form = AccountCreationForm(request.POST)
+        if form.is_valid():
+            data = form.cleaned_data
+            try:
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        username=data['username'], password=data['password1'])
+                    profile = Profile.objects.create(
+                        user=user,
+                        role=data['role'],
+                        student=data['student'] if data['role'] == 'student' else None,
+                        teacher=data['teacher'] if data['role'] == 'professor' else None,
+                    )
+                    if data['role'] == 'tutor':
+                        profile.children.set(data['children'])
+            except IntegrityError:
+                # The uniqueness the form checked can still be lost between
+                # its query and this write — two administrators filing the
+                # same person, or the OneToOne on `teacher`/`student` taken in
+                # between. Nothing is left behind: the atomic block rolls the
+                # User back with the Profile.
+                messages.error(
+                    request,
+                    "No se pudo crear la cuenta: el usuario o la ficha "
+                    "seleccionada ya están en uso. Vuelve a intentarlo.")
+            else:
+                # Never the password, not even its length.
+                audit(request, 'account.create', new_user=user.username,
+                      new_role=profile.role)
+                # Not `get_role_display()`: the model's labels are English,
+                # which is fine for the audit log and wrong in a message to a
+                # person. Same mapping the select renders.
+                messages.success(
+                    request,
+                    f"Cuenta «{user.username}» creada con el rol "
+                    f"{AccountCreationForm.ROLE_LABELS.get(profile.role, profile.role)}.")
+                return redirect('create_account')
+        else:
+            messages.error(request, "Revisa los datos de la cuenta.")
+    else:
+        form = AccountCreationForm()
+
+    return render(request, "adminage/create_account.html", {
+        'form': form,
+        # Counted rather than listed: the page says whether there is anything
+        # to link *before* someone fills in a password and finds out.
+        'free_teachers': form.fields['teacher'].queryset.count(),
+        'free_students': form.fields['student'].queryset.count(),
+    })
 
 
 def _destination_groups():

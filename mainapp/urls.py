@@ -2,7 +2,7 @@ from django.conf import settings
 from django.urls import path, include
 from django.views.generic import TemplateView
 from . import views
-from .views import create_school_year_view, create_courses_sections_view, adminage_dashboard_view, assign_subjects_view, load_course_sections, create_and_assign_student_view
+from .views import create_school_year_view, create_courses_sections_view, adminage_dashboard_view, assign_subjects_view, load_course_sections, create_and_assign_student_view, create_account_view
 
 urlpatterns = [
     path('reassign-students/', views.reassign_students, name='reassign_students'),
@@ -14,6 +14,10 @@ urlpatterns = [
     # `ajax/get-students/` in particular answered names and e-mail addresses.
     path('adminage/create-student-class/', create_and_assign_student_view,
          name='create_and_assign_student'),
+    # Creating a *login*, not a student record. `create_and_assign_student`
+    # above files a person in the school; this one gives someone a way in.
+    path('adminage/create-account/', create_account_view,
+         name='create_account'),
 
     # Mantén la URL de AJAX
     path('ajax/load-sections/', views.load_course_sections,

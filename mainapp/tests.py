@@ -43,6 +43,7 @@ ADMIN_ONLY = [
     '/adminage/assign-subjects/',
     '/adminage/create-student-class/',
     '/adminage/create-school-year/',
+    '/adminage/create-account/',
     '/ajax/load-sections/?school_year_id=1&course_type=Eso',
 ]
 
@@ -5604,6 +5605,277 @@ class LogoutReachabilityTests(AccessControlTestCase):
         ).read_text(encoding='utf-8')
 
         self.assertIn('hidden md:flex items-center gap-2.5 mt-auto', source)
+
+
+class AccountCreationTests(AccessControlTestCase):
+    """Onboarding a professor, student or tutor without touching `/admin/`.
+
+    Before this flow the sequence for **any** privileged user was
+    `createsuperuser` → Django admin → create the Profile by hand → set
+    `role`. So the app could not make a professor at all, and "a `User` with
+    no `Profile`" was the normal intermediate state of the only path there
+    was — which is why `loginPage`'s HTTP 500 on a correct password was left
+    open by decision rather than patched.
+
+    The tests that matter most here are the ones about the role that is
+    *absent*. See `test_the_form_cannot_mint_an_administrator`.
+    """
+
+    URL = '/adminage/create-account/'
+    STRONG = 'Kv7-quiet-ledger'
+
+    def _post(self, **overrides):
+        data = {'username': 'nuevo', 'password1': self.STRONG,
+                'password2': self.STRONG, 'role': 'professor'}
+        data.update(overrides)
+        return self.as_(self.admin).post(self.URL, data)
+
+    # --- the boundary ------------------------------------------------------
+
+    def test_the_form_cannot_mint_an_administrator(self):
+        """The security assertion, and it is on the **effect**.
+
+        `ProfileAdmin.get_readonly_fields` makes `role` writable only by a
+        superuser, so an in-app form that could create administrators would
+        hand every administrator session the escalation that constraint
+        exists to withhold. A form error is not the claim — the claim is that
+        no administrator row appears — so that is what is asserted, and the
+        error message only afterwards.
+        """
+        before = Profile.objects.filter(role='administrator').count()
+
+        response = self._post(role='administrator')
+
+        self.assertEqual(
+            Profile.objects.filter(role='administrator').count(), before,
+            'the in-app form created an administrator')
+        self.assertFalse(User.objects.filter(username='nuevo').exists())
+        self.assertEqual(response.status_code, 200)
+
+    def test_the_page_does_not_offer_administrator_anywhere(self):
+        """A refused submit is the backstop; not offering it is the design.
+        Asserted on the rendered `<option value=...>` rather than on the
+        word, which also appears in the help text explaining the absence."""
+        html = self.as_(self.admin).get(self.URL).content.decode()
+
+        self.assertIn('value="professor"', html)
+        self.assertNotIn('value="administrator"', html)
+        self.assertIn('create_administrator', html,
+                      'the page does not say where administrators come from')
+
+    # --- the happy paths ---------------------------------------------------
+
+    def test_it_creates_a_professor_who_can_then_log_in(self):
+        """End to end, because the point of the flow is a working login and
+        every intermediate assertion can be true of an account that cannot
+        sign in."""
+        free_teacher = Teachers.objects.create(Name='Profesora Nueva')
+
+        self._post(role='professor', teacher=free_teacher.pk)
+
+        user = User.objects.get(username='nuevo')
+        self.assertEqual(user.profile.role, 'professor')
+        self.assertEqual(user.profile.teacher, free_teacher)
+        self.assertFalse(user.is_staff, 'an app role is not Django admin')
+
+        self.client.logout()
+        response = self.client.post(
+            '/', {'username': 'nuevo', 'password': self.STRONG})
+        self.assertRedirects(response, '/teacher/')
+
+    def test_it_creates_a_tutor_with_children(self):
+        self._post(role='tutor', children=[self.student.pk])
+
+        profile = User.objects.get(username='nuevo').profile
+        self.assertEqual(profile.role, 'tutor')
+        self.assertEqual(list(profile.children.all()), [self.student])
+
+    def test_a_professor_may_be_created_with_no_teacher_record(self):
+        """Deliberately allowed: `teacher_required` renders forbidden.html
+        with `unlinked_teacher`, which names the fix, so this is a recoverable
+        state rather than a broken one."""
+        self._post(role='professor')
+
+        self.assertIsNone(User.objects.get(username='nuevo').profile.teacher)
+
+    # --- the states that must not be creatable -----------------------------
+
+    def test_a_student_account_needs_a_student_record(self):
+        """`loginPage` renders forbidden.html for a student Profile whose
+        `student` FK is NULL, so creating one would be manufacturing an
+        account that cannot log in."""
+        response = self._post(role='student')
+
+        self.assertFalse(User.objects.filter(username='nuevo').exists())
+        self.assertContains(response, 'ficha de alumn@')
+
+    def test_a_tutor_needs_at_least_one_child(self):
+        response = self._post(role='tutor')
+
+        self.assertFalse(User.objects.filter(username='nuevo').exists())
+        self.assertEqual(response.status_code, 200)
+
+    def test_an_already_linked_record_is_not_offered(self):
+        """`Profile.teacher` and `Profile.student` are OneToOne, so offering a
+        taken row would validate and then raise IntegrityError on save.
+
+        Scoped to the one `<select>`, because a bare `value="1"` also matches
+        an unrelated student in the `children` list — the first draft of this
+        test passed the wrong element and failed for the right reason.
+        """
+        html = self.as_(self.admin).get(self.URL).content.decode()
+        teacher_select = re.search(
+            r'<select name="teacher".*?</select>', html, re.S).group(0)
+        student_select = re.search(
+            r'<select name="student".*?</select>', html, re.S).group(0)
+
+        # teacher_a belongs to prof1, teacher_b to prof2; both are taken.
+        self.assertNotIn(f'value="{self.teacher_a.pk}"', teacher_select)
+        self.assertNotIn(f'value="{self.teacher_b.pk}"', teacher_select)
+        # self.student is linked to alum1; other_student is free.
+        self.assertNotIn(f'value="{self.student.pk}"', student_select)
+        self.assertIn(f'value="{self.other_student.pk}"', student_select)
+
+    def test_the_role_select_is_in_spanish(self):
+        """`Profile.USER_ROLES` labels are English and `get_role_display()`
+        renders them app-wide; that is a model concern with a migration
+        attached. This form relabels for display and stores the same values."""
+        html = self.as_(self.admin).get(self.URL).content.decode()
+        role_select = re.search(
+            r'<select name="role".*?</select>', html, re.S).group(0)
+
+        self.assertIn('>Tutor legal<', role_select)
+        self.assertIn('value="tutor"', role_select)
+        self.assertNotIn('>legal_tutor<', role_select)
+
+    def test_a_duplicate_username_is_refused_case_insensitively(self):
+        response = self._post(username='ADMIN1')
+
+        self.assertContains(response, 'Ya existe una cuenta')
+        self.assertEqual(User.objects.filter(username='ADMIN1').count(), 0)
+
+    def test_mismatched_passwords_create_nothing(self):
+        response = self._post(password2='otra-cosa-distinta')
+
+        self.assertFalse(User.objects.filter(username='nuevo').exists())
+        self.assertContains(response, 'no coinciden')
+
+    def test_a_weak_password_is_refused_by_django_own_validators(self):
+        """The command runs the same validators, so neither door is the soft
+        one."""
+        response = self._post(password1='1234', password2='1234')
+
+        self.assertFalse(User.objects.filter(username='nuevo').exists())
+        self.assertEqual(response.status_code, 200)
+
+    def test_no_half_written_account_survives_a_failure(self):
+        """A `User` with no `Profile` is the exact state this whole finding is
+        about; the write is one transaction so that a failure cannot leave
+        one behind."""
+        self._post(role='student')  # rejected: no student record chosen
+
+        self.assertEqual(
+            User.objects.filter(profile__isnull=True)
+            .exclude(pk=self.profileless.pk).count(), 0)
+
+
+class ProfilelessLoginTests(AccessControlTestCase):
+    """A correct password with no `Profile` returned **HTTP 500**.
+
+    `loginPage`'s POST branch read `request.user.profile` bare while the
+    already-authenticated branch forty lines above guarded the same call, so
+    the app knew the answer and applied it on one path only. Deferred until
+    2026-08-04 on purpose: a guard alone turns the crash into a silent dead
+    end, and until `create_account` existed there was no fix to name.
+    """
+
+    def test_a_correct_password_with_no_profile_does_not_500(self):
+        response = self.client.post(
+            '/', {'username': 'sinperfil', 'password': PW})
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_it_says_what_is_missing_and_who_fixes_it(self):
+        """The half a bare `except` would not have done. A silent login page
+        is the same dead end, only quieter."""
+        response = self.client.post(
+            '/', {'username': 'sinperfil', 'password': PW})
+
+        self.assertContains(response, 'rol')
+        self.assertContains(response, 'administrador')
+
+    def test_the_session_does_not_survive(self):
+        """An authenticated session with no profile would otherwise reach
+        every @role_required view carrying a state none of them model."""
+        self.client.post('/', {'username': 'sinperfil', 'password': PW})
+
+        self.assertNotIn('_auth_user_id', self.client.session)
+        self.assertEqual(self.client.get('/adminage/').status_code, 302)
+
+
+class CreateAdministratorCommandTests(AccessControlTestCase):
+    """The other half of *who assigns a role, and where*.
+
+    Administrators are created here and not in the app, so that a stolen
+    administrator cookie cannot mint more of them. The gate is shell access,
+    the same one `createsuperuser` uses.
+    """
+
+    STRONG = 'Kv7-quiet-ledger'
+
+    def _run(self, *args, **kwargs):
+        from django.core.management import call_command
+        out = io.StringIO()
+        call_command('create_administrator', *args, stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_it_creates_an_administrator_who_can_log_in(self):
+        self._run('jefa', password=self.STRONG)
+
+        user = User.objects.get(username='jefa')
+        self.assertEqual(user.profile.role, 'administrator')
+
+        response = self.client.post(
+            '/', {'username': 'jefa', 'password': self.STRONG})
+        self.assertRedirects(response, '/adminage/')
+
+    def test_the_administrator_it_makes_is_not_a_django_superuser(self):
+        """An administrator `Profile` is not `is_staff`: Django admin is a
+        separate door and is correctly closed to it. A command that quietly
+        made superusers would erase that distinction."""
+        self._run('jefa', password=self.STRONG)
+        user = User.objects.get(username='jefa')
+
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+        self.client.force_login(user)
+        self.assertEqual(self.client.get('/admin/').status_code, 302)
+
+    def test_it_refuses_a_duplicate_username_and_writes_nothing(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._run('admin1', password=self.STRONG)
+
+        self.assertEqual(User.objects.filter(username='admin1').count(), 1)
+
+    def test_it_runs_the_same_password_validators_as_the_form(self):
+        """Otherwise the shell becomes the soft way in."""
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._run('jefa', password='1234')
+
+        self.assertFalse(User.objects.filter(username='jefa').exists())
+
+    def test_it_never_leaves_a_user_without_a_profile(self):
+        """Which is the crash this whole finding is about."""
+        self._run('jefa', password=self.STRONG)
+
+        self.assertEqual(
+            User.objects.filter(profile__isnull=True)
+            .exclude(pk=self.profileless.pk).count(), 0)
 
 
 class NavDrawerTests(AccessControlTestCase):

@@ -17,14 +17,18 @@ python manage.py createcachetable # REQUIRED — see the rate-limiting section b
 python manage.py runserver        # http://127.0.0.1:8000/
 
 python manage.py makemigrations mainapp
-python manage.py createsuperuser
+python manage.py createsuperuser        # a *Django admin* superuser, not an app administrator
 python manage.py shell
+
+# The first (or a replacement) application administrator. Deliberately a
+# command and not a page — see the role-assignment section below.
+python manage.py create_administrator <usuario>             # prompts for the password
 
 # Seed data
 python manage.py create_students_eso4a --year "2026-2027"   # 30 Faker students into Eso 4A
 python manage.py import_grades path/to/file.csv             # bulk grade import (CLI variant)
 
-# Tests — 375 tests in mainapp/tests.py
+# Tests — 437 tests in mainapp/tests.py
 # POSTGRES_TEST_DB overrides the test database name, so a second worktree
 # can run the suite against the same Postgres without colliding.
 python manage.py test mainapp
@@ -52,7 +56,20 @@ Single Django app `mainapp` + project config `tr_webpage`. All URLs live in `mai
 @teacher_required                    # views.py:97-113 — the above PLUS profile.teacher is not None
 ```
 
-Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:116-118`) and `teacher_students(profile.teacher)` (`views.py:121-131`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`.
+Object scoping goes through `teacher_courses(profile.teacher)` (`views.py:116-118`) and `teacher_students(profile.teacher)` (`views.py:121-131`). New professor views must use both — a decorator alone does not stop a teacher reading another teacher's students. `loginPage` routes by role: student/tutor → `student_dashboard`, professor → `teacher_dashboard`, administrator → `adminage_dashboard`. A `User` with **no** `Profile` is signed straight back out with a message naming the fix — it used to be an HTTP 500 on a correct password.
+
+**Who assigns a role, and where — the answer is deliberately split in two, and the split is a security boundary.**
+
+| | Creates | Gate |
+|---|---|---|
+| `create_account` (`/adminage/create-account/`) | professor, student, tutor | `@role_required('administrator')` |
+| `manage.py create_administrator` | administrator | shell access on the server |
+
+`ProfileAdmin.get_readonly_fields` makes `Profile.role` writable only by a superuser (`wiki/findings/profile-admin-privilege-escalation.md`). An in-app form able to mint administrators would hand every administrator session precisely that escalation, and a stolen administrator cookie would become a permanent foothold. So `AccountCreationForm.ASSIGNABLE_ROLES` excludes `administrator` and `clean_role` refuses it a second time — the choices list is not a control against a hand-built POST. **Do not add the option**; `AccountCreationTests.test_the_form_cannot_mint_an_administrator` asserts on the absence of the row, not on the error message.
+
+An administrator `Profile` is still **not** `is_staff`: `create_administrator` does not create a superuser, so the account it makes runs the school and cannot reach `/admin/`. The account write is one `transaction.atomic()` in both doors — a `User` with no `Profile` is the exact broken state this closes, so half-writing one would answer the finding with itself.
+
+Two states are refused at creation because the app already has a name for them: a `student` Profile with a null `student` FK (`loginPage` renders `forbidden.html`), and a tutor with no `children`. A professor with no `Teachers` row **is** allowed — `teacher_required` renders `forbidden.html` with `unlinked_teacher`, which names the fix, so it is recoverable rather than broken.
 
 ### Data model chain
 
@@ -237,7 +254,7 @@ Read in this order — stop as soon as you have enough:
 
 Do **not** read the wiki for general Django or Python questions, or for anything already visible in the files you have open.
 
-`wiki/findings/` holds 17 pages from a security and correctness review dated 2026-08-02. **All 17 are now fixed** — read them for the reasoning behind the current shape of the auth decorators, the CSP, the rate limits and the audit log, and to avoid undoing a deliberate decision.
+`wiki/findings/` holds 21 pages from the security and correctness reviews of 2026-08-02 and 2026-08-03. **All 21 are now fixed**, the last on 2026-08-04 — read them for the reasoning behind the current shape of the auth decorators, the CSP, the rate limits and the audit log, and to avoid undoing a deliberate decision.
 
 A **full UI overhaul is in progress** — `wiki/decisions/ui-overhaul.md` is the live task, and `wiki/hot.md` carries the resume point. Read both before touching any template, `static/`, or `class_dashboard`.
 

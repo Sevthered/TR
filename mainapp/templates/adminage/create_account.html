@@ -1,0 +1,104 @@
+{% extends "base_shell_v2.html" %}
+
+{% comment %}
+  Direction C · Registro.
+
+  The in-app half of *who assigns a role, and where*. Until this page existed,
+  onboarding any privileged user meant `manage.py createsuperuser`, the Django
+  admin, and creating the Profile by hand — so the application could not make
+  a professor at all, and `loginPage` answered a correct password with HTTP
+  500 for the account you had just half-created.
+
+  **There is no administrator option and there must not be one.** `ProfileAdmin`
+  keeps `role` writable only by a superuser, so a form here that could mint
+  administrators would hand every administrator session the escalation that
+  constraint exists to withhold. The second administrator comes from
+  `manage.py create_administrator`, where the gate is shell access rather than
+  a cookie. The «Rol» help text says so on the page, because someone looking
+  for the missing option deserves to be told where it went rather than left to
+  conclude the app is broken.
+
+  One POST form, no cascade — the same reasoning as
+  `create_and_assign_student`, and for a sharper reason: a GET round trip to
+  narrow the identity control by role would put a password in the query
+  string. All three identity controls render at once and the form's `clean()`
+  enforces the one the chosen role needs. Nothing here depends on JavaScript,
+  so nothing degrades without it.
+
+  The two counts above the form are the page stating what it can actually do
+  before anyone types a password — the same argument as `no_other_destination`
+  on `reassign_students`. A control that cannot do anything must say which of
+  the two it is.
+{% endcomment %}
+
+{% block page_title %}Alta de cuenta{% endblock page_title %}
+
+{% block breadcrumb %}Administración / <b class="text-ink-2 font-medium">Alta de cuenta</b>{% endblock breadcrumb %}
+
+{% block main %}
+<div class="flex flex-col flex-1 min-h-0">
+
+  <div class="flex flex-wrap items-baseline gap-3.5 shrink-0 px-pad pt-[26px] pb-[22px]">
+    <h1 class="text-[31px] font-[650] leading-none tracking-[-.035em]">Alta de cuenta</h1>
+    <span class="text-[13px] text-ink-3">Da acceso a la aplicación a alguien que ya está en el centro</span>
+  </div>
+
+  <dl class="grid grid-cols-1 sm:grid-cols-2 border-y border-line shrink-0">
+    <div class="flex flex-col gap-[5px] px-pad py-3.5">
+      <dt class="lbl">Fichas de profesor@ sin cuenta</dt>
+      <dd class="fig text-[13px] {% if not free_teachers %}text-ink-3{% endif %}">{{ free_teachers }}</dd>
+    </div>
+    <div class="flex flex-col gap-[5px] px-pad py-3.5 border-t sm:border-t-0 sm:border-l border-line">
+      <dt class="lbl">Fichas de alumn@ sin cuenta</dt>
+      <dd class="fig text-[13px] {% if not free_students %}text-ink-3{% endif %}">{{ free_students }}</dd>
+    </div>
+  </dl>
+
+  {% if not free_students %}
+  <div class="shrink-0 px-pad py-3.5 border-b border-line">
+    <p class="max-w-[62ch] text-[13px] text-ink-2">
+      No queda ninguna ficha de alumn@ sin cuenta, así que ahora mismo no se
+      pueden crear cuentas de estudiante.
+      <a href="{% url 'create_and_assign_student' %}"
+         class="text-accent-lift hover:text-ink">Dar de alta a un alumn@ primero</a>.
+    </p>
+  </div>
+  {% endif %}
+
+  <form method="post" novalidate class="flex flex-col gap-[15px] max-w-[420px] px-pad pt-[22px] pb-8">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+    <div class="text-[12px] text-bad">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% comment %}
+      Rendered field by field, never `form.as_p`: `as_p` emits <p> wrappers
+      this cascade has no styles for. The `id="{{ field.auto_id }}_helptext"`
+      is not decoration — Django emits `aria-describedby="id_<field>_helptext"`
+      on any widget whose field has help text, and every field on this form
+      has some, so without it every control here would point at nothing.
+    {% endcomment %}
+    {% for field in form.visible_fields %}
+    <div class="flex flex-col gap-[7px]">
+      <label class="lbl" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}
+      <span id="{{ field.auto_id }}_helptext"
+            class="text-[11.5px] text-ink-3">{{ field.help_text }}</span>
+      {% endif %}
+      {% if field.errors %}
+      <span class="text-[11.5px] text-bad">{{ field.errors|striptags }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <button type="submit"
+            class="mt-1 py-2.5 px-5 self-start rounded-[5px] bg-accent hover:bg-accent-lift
+                   text-[#0C1017] text-[12.5px] font-[650] tracking-[.01em]">
+      Crear cuenta</button>
+  </form>
+
+  <div class="flex-1 min-h-[80px] ruled" aria-hidden="true"></div>
+</div>
+{% endblock main %}
