@@ -1,4 +1,8 @@
-Django>=5.0
+# Runtime dependencies. Dev-only tooling lives in requirements-dev.txt.
+Django~=5.2.0
 psycopg2-binary
-podman-compose
-Faker
+python-dotenv
+django-axes
+django-ratelimit
+django-csp
+gunicorn

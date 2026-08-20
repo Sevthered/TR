@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Local container orchestration for the Postgres service.
+podman-compose
+# Seed data for mainapp/management/commands/create_students_eso4a.py.
+# Kept out of the runtime manifest so the seed command, which deletes course
+# assignments, is not installable in production by accident.
+Faker
