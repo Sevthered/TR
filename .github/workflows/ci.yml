@@ -55,6 +55,11 @@ jobs:
       # The access-control suite. Catches the class of bug that shipped here:
       # endpoints with no authorization, and denials returned as HTTP 200.
       - name: Tests
+        # The test client speaks plain HTTP, so the DEBUG=False redirect would
+        # 301 every request before it reached a view. Overridden here only --
+        # the deployment check below still sees the redirect enabled.
+        env:
+          SECURE_SSL_REDIRECT: 'False'
         run: python manage.py test mainapp -v 2
 
       # Independently re-checks DEBUG, ALLOWED_HOSTS, secure cookies, HSTS and

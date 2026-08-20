@@ -216,7 +216,14 @@ LOGIN_URL = 'login'
 # them is required the moment the app is served over a network.
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
-SECURE_SSL_REDIRECT = not DEBUG
+# Overridable so the test suite can run under DEBUG=False -- the Django test
+# client speaks plain HTTP, so leaving the redirect on makes every request a
+# 301 before it reaches a view. Defaults to `not DEBUG`, so nothing changes
+# for development or for a real deployment.
+SECURE_SSL_REDIRECT = os.environ.get(
+    'SECURE_SSL_REDIRECT',
+    'False' if DEBUG else 'True',
+) == 'True'
 
 # Explicit rather than relying on the default, which is what tip 2 of the
 # OWASP REST guidance asks for. HttpOnly and Secure are separate controls:
