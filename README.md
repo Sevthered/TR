@@ -1,5 +1,23 @@
 # TR Project
 
+> ### ⚠️ Scope of the assessed work
+>
+> **TR** here means *Treball de Recerca* — the individual research project each student in
+> Catalonia carries out for school. The work that was handed in and assessed is this repository
+> **up to and including commit `93b73e0` (15 December 2025)**.
+>
+> **Every commit after `93b73e0` was made later and is outside the original project.** That later
+> work — a security remediation, a UI rebuild, an automated test suite and CI — was written months
+> after the hand-in, with AI assistance, and formed no part of what was graded. The
+> `ai-assisted-ui-overhaul` branch is later work in its entirety: it was cut from `93b73e0` and is
+> not merged into `main`.
+>
+> To read the project exactly as it was submitted:
+>
+> ```bash
+> git checkout 93b73e0
+> ```
+
 ## Overview
 My **TR** consists in a comprehensive school management web application built with **Django**. It provides a digital platform for managing the academic lifecycle, including student enrollment, course management, grading, and attendance tracking. The system is designed to serve multiple user roles: Administrators, Professors, Tutors (Parents), and Students.
 
