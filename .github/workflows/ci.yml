@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, ai-assisted-ui-overhaul]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
