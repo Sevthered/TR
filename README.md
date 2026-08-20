@@ -12,6 +12,12 @@
 > `ai-assisted-ui-overhaul` branch is later work in its entirety: it was cut from `93b73e0` and is
 > not merged into `main`.
 >
+> **From commit `43a3d11` onward, work done outside school is brought onto `main`.** Until then
+> `main` held only the assessed project plus documentation about it. `43a3d11` and `8f8950e` are
+> the first commits to carry later *application* code here — a security remediation written months
+> after the hand-in, on a personal branch, with AI assistance. They arrived by cherry-pick, not by
+> merging the branch, which is why `8f8950e` records the commit it came from.
+>
 > To read the project exactly as it was submitted:
 >
 > ```bash
@@ -89,6 +95,18 @@ TR/
     ```bash
     pip install -r requirements.txt
     ```
+    Use `requirements-dev.txt` instead if you want `podman-compose` and the
+    `Faker`-based seed command as well.
+
+4.  **Create your `.env`:**
+    The application no longer carries a `SECRET_KEY` or a database password in
+    source. Both are read from the environment, and **it will not start without
+    them**.
+    ```bash
+    cp .env.example .env
+    ```
+    Then fill in `SECRET_KEY` and `POSTGRES_PASSWORD`. `.env.example` documents
+    every variable and includes the command for generating a key.
 
 ### Running the Application
 
@@ -140,4 +158,15 @@ Access the application at `http://127.0.0.1:8000/`.
 
 ## Development Notes
 -   **AJAX**: The application uses jQuery for dynamic form interactions (e.g., selecting a course type loads the available levels).
--   **Security**: Ensure `DEBUG` is set to `False` and `SECRET_KEY` is secured before deploying to a production environment.
+-   **Security**: `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS` and the database credentials all come from
+    the environment (see `.env.example`). A remediation round in `8f8950e` added a Content Security
+    Policy, login throttling and rate limiting, secure cookie and transport flags, an audit log, and
+    fixes for a DOM XSS and a Django-admin privilege escalation.
+
+    > ⚠️ **The remediation is partial, and this branch is not hardened.** Two findings rated
+    > *critical* are still open here: there is no object-level authorization (any authenticated user
+    > can reach another user's records by changing an id in the URL), and several endpoints check
+    > only that you are logged in, not who you are. Both were fixed on `ai-assisted-ui-overhaul`,
+    > but only as part of the UI rewrite, so neither could be cherry-picked on its own. `GradeForm`
+    > is also still declared twice, the second shadowing the first, and denials still render with
+    > HTTP 200. **Do not deploy this branch to a public network.**
