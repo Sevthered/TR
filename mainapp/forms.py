@@ -514,7 +514,15 @@ class AccountCreationForm(forms.Form):
             self.add_error('password2', 'Las dos contraseñas no coinciden.')
         elif password1:
             try:
-                validate_password(password1)
+                # The `user` argument is not optional in practice. Without it
+                # UserAttributeSimilarityValidator returns immediately
+                # (`if not user: return`), so the validator configured in
+                # settings silently accepts password == username -- the single
+                # highest-yield guess against a school where usernames follow a
+                # scheme. There is no instance to pass here, so build the
+                # unsaved User the validator needs to compare against.
+                validate_password(
+                    password1, User(username=cleaned.get('username') or ''))
             except DjangoValidationError as error:
                 self.add_error('password1', list(error.messages))
 

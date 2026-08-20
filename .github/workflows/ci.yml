@@ -63,11 +63,20 @@ jobs:
         run: python manage.py test mainapp -v 2
 
       # Independently re-checks DEBUG, ALLOWED_HOSTS, secure cookies, HSTS and
-      # the SECRET_KEY prefix. The two remaining warnings (HSTS
-      # includeSubDomains and preload) are deliberate, so this does not fail
-      # on WARNING -- raise the level once a real domain is in place.
+      # the SECRET_KEY prefix.
+      #
+      # --fail-level WARNING, not ERROR. Every Django deployment security check
+      # is a Warning; only two checks about malformed *values* are Errors. At
+      # ERROR this step printed W004/W008/W009/W012/W016/W018 and still exited
+      # 0 -- verified with DEBUG=True and a five-character SECRET_KEY. It has
+      # never been able to fail, and no test in the suite asserts on any
+      # security setting, so nothing else covered settings.py.
+      #
+      # The two warnings that really are deliberate (HSTS includeSubDomains and
+      # preload) are now named in SILENCED_SYSTEM_CHECKS, where they document
+      # themselves, instead of being waived wholesale by the fail level.
       - name: Deployment checks
-        run: python manage.py check --deploy --fail-level ERROR
+        run: python manage.py check --deploy --fail-level WARNING
 
       - name: Static files build
         run: python manage.py collectstatic --noinput

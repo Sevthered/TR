@@ -59,8 +59,12 @@ class Command(BaseCommand):
 
         # The same validators the in-app form runs. A command that skipped
         # them would make the shell the way to get a weak password in.
+        #
+        # The user argument matters: without it
+        # UserAttributeSimilarityValidator returns without validating, so
+        # password == username would pass here while stock Django refuses it.
         try:
-            validate_password(password)
+            validate_password(password, User(username=username))
         except ValidationError as error:
             raise CommandError('\n'.join(error.messages))
 

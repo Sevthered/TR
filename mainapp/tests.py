@@ -10,6 +10,7 @@ requires a `request` argument that `client.login()` does not supply.
 
 import csv
 import io
+import os
 import pathlib
 import re
 from datetime import timedelta
@@ -30,6 +31,7 @@ from .views import (
     MAX_IMPORT_BYTES, class_metrics, resolve_class_scope, teacher_subjects,
     teaches_subject_to,
 )
+from .forms import AccountCreationForm
 from .models import (
     Ausencias, Course, Grade, Profile, School_year, Students,
     Students_Courses, Subjects, Subjects_Courses, Teachers, Trimester,
@@ -6121,3 +6123,98 @@ class RateLimitPageTests(AccessControlTestCase):
 
         self.assertIn('AnonymousUser', template)
         self.assertIn('base_v2', template)
+
+
+class SecuritySettingsTests(TestCase):
+    """Assertions on settings.py itself.
+
+    A review found that nothing in this suite touched a single security
+    setting, and that the CI step meant to cover them
+    (`check --deploy --fail-level ERROR`) could never fail, because every
+    Django deployment security check is a Warning and only two checks about
+    malformed *values* are Errors. CI runs at WARNING now; these pin the
+    settings whose defaults are wrong for this project, so a regression fails
+    here as well as there.
+    """
+
+    def test_a_failed_attempt_during_lockout_does_not_restart_the_cooloff(self):
+        # axes defaults this to True, which makes the username axis a denial
+        # of service: ten wrong passwords, then one poke an hour, holds a
+        # named account locked indefinitely from any IP with no credential.
+        self.assertIs(
+            settings.AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT, False)
+
+    def test_the_axes_client_ip_source_cannot_be_chosen_by_the_client(self):
+        # axes switches to django-ipware the moment it is importable, and
+        # ipware's default precedence starts with HTTP_X_FORWARDED_FOR -- a
+        # header the client sets. That would let an attacker pick their own
+        # lockout bucket, and it would arrive via an unrelated `pip install`
+        # rather than any edit here.
+        self.assertEqual(
+            settings.AXES_IPWARE_META_PRECEDENCE_ORDER, ('REMOTE_ADDR',))
+
+    def test_only_the_two_deliberate_hsts_warnings_are_silenced(self):
+        # CI fails on WARNING now, so anything waived has to be named here
+        # rather than waved through by the fail level.
+        self.assertEqual(
+            sorted(settings.SILENCED_SYSTEM_CHECKS),
+            ['security.W005', 'security.W021'],
+        )
+
+    def test_the_proxy_ssl_header_is_not_trusted_by_default(self):
+        # Only correct behind a proxy that strips the header from client
+        # input. Set unconditionally it makes request.is_secure() spoofable.
+        self.assertFalse(hasattr(settings, 'SECURE_PROXY_SSL_HEADER')
+                         and settings.SECURE_PROXY_SSL_HEADER
+                         and os.environ.get('TRUST_PROXY_SSL_HEADER') != 'True')
+
+    def test_the_cookie_flags_that_do_not_depend_on_debug(self):
+        # Deliberately not asserting SESSION_COOKIE_SECURE == `not DEBUG`.
+        # The test runner forces settings.DEBUG to False at runtime, while
+        # that flag was computed from the *environment* DEBUG at import, so
+        # such an assertion compares the runner against the setting and passes
+        # or fails for the wrong reason. `check --deploy` in CI is what covers
+        # the DEBUG-derived flags; these are the ones that are unconditional.
+        self.assertTrue(settings.SESSION_COOKIE_HTTPONLY)
+        self.assertTrue(settings.SESSION_EXPIRE_AT_BROWSER_CLOSE)
+
+
+class PasswordValidationTests(TestCase):
+    """`validate_password` needs its `user` argument to do half its job.
+
+    Django's docs: "if it's not provided, some validators may not be able to
+    perform any validation and will accept any password."
+    `UserAttributeSimilarityValidator.validate` opens with `if not user:
+    return`, so both password paths in this app were configured with a
+    validator that never ran.
+    """
+
+    def test_a_password_equal_to_the_username_is_refused(self):
+        # The highest-yield guess against a school whose usernames follow a
+        # scheme. It passes MinimumLength, is not a common password, and is
+        # not numeric -- similarity is the only validator that catches it.
+        form = AccountCreationForm(data={
+            'username': 'maria.lopez',
+            'password1': 'maria.lopez',
+            'password2': 'maria.lopez',
+            'role': 'professor',
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('password1', form.errors)
+        self.assertTrue(
+            any('similar' in m.lower() for m in form.errors['password1']),
+            form.errors['password1'],
+        )
+
+    def test_an_unrelated_strong_password_is_still_accepted(self):
+        # Guards against the fix over-rejecting: this must not become a form
+        # that refuses everything.
+        form = AccountCreationForm(data={
+            'username': 'maria.lopez',
+            'password1': 'Trucha-Verde-91-Roble',
+            'password2': 'Trucha-Verde-91-Roble',
+            'role': 'professor',
+        })
+
+        self.assertNotIn('password1', form.errors)

@@ -105,8 +105,33 @@ AXES_LOCKOUT_PARAMETERS = [['ip_address'], ['username']]
 AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = 1          # hours
 AXES_RESET_ON_SUCCESS = True
-# Same generic message as a wrong password: a distinct "locked" response would
-# re-introduce the user-enumeration oracle this phase just removed.
+
+# The username axis is a denial-of-service primitive without this. The axes
+# default is True, which means a failed attempt *during* a lockout restarts
+# the cool-off: ten wrong passwords against a known username, then one poke an
+# hour, holds that account locked forever from any IP with no credential. With
+# False the hour actually elapses.
+AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
+
+# Pin the client-IP source. axes uses django-ipware when it is importable and
+# falls back to REMOTE_ADDR otherwise; ipware's default precedence begins with
+# HTTP_X_FORWARDED_FOR, which a client sets freely. That would turn the IP axis
+# from a control into a bucket the attacker chooses, and it would happen on an
+# unrelated `pip install` rather than on any edit here.
+AXES_IPWARE_META_PRECEDENCE_ORDER = ('REMOTE_ADDR',)
+
+# ⚠ Deployment note. Behind a reverse proxy REMOTE_ADDR is the *proxy* on every
+# request, so the whole site shares one IP bucket and ten mistyped passwords
+# anywhere in the building lock everyone out. Before deploying behind nginx or
+# similar, configure a trusted-proxy resolver (AXES_CLIENT_IP_CALLABLE) so the
+# axis sees real client addresses -- or drop the ip_address axis entirely.
+# The username axis above keeps working either way.
+
+# Renders the login page with axes' own context (failure_limit, cooloff). The
+# page states plainly that the account is locked and why. That is not a
+# user-enumeration oracle: axes records attempts for usernames that do not
+# exist too, so what leaks is lockout state, not account existence. It must
+# never echo a submitted password or any other credential.
 AXES_LOCKOUT_TEMPLATE = 'mainapp/login.html'
 
 ROOT_URLCONF = 'tr_webpage.urls'
@@ -244,9 +269,39 @@ SESSION_COOKIE_AGE = 8 * 60 * 60
 SECURE_HSTS_SECONDS = 0 if DEBUG else 3600
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
 
-# Not set: SECURE_PROXY_SSL_HEADER. It is only correct behind a proxy that
-# strips the header from client input; setting it without that makes
-# request.is_secure() trivially spoofable.
+# SECURE_PROXY_SSL_HEADER is opt-in through the environment, because it is only
+# correct behind a proxy that strips the header from client input -- set blindly
+# it makes request.is_secure() trivially spoofable.
+#
+# It is opt-in rather than absent because *without* it, a TLS-terminating proxy
+# breaks the site two ways: SECURE_SSL_REDIRECT loops forever (Django sees
+# scheme http), and every POST 403s, because CSRF origin verification compares
+# the browser's `https://host` Origin against a `http://host` it built from the
+# unsecured request. The tempting fix is SECURE_SSL_REDIRECT=False, which turns
+# transport enforcement off and, before the CI gate was raised to WARNING,
+# nothing would have caught that.
+if os.environ.get('TRUST_PROXY_SSL_HEADER') == 'True':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Required alongside the above once a real domain exists: CSRF checks Origin
+# against this list for any host Django does not otherwise know is itself.
+CSRF_TRUSTED_ORIGINS = [
+    o for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if o
+]
+
+# C3: `check --deploy` reports every security finding at WARNING level -- only
+# two checks about malformed *values* are ERROR. So --fail-level ERROR could
+# never fail, and CI passed with DEBUG=True and a five-character SECRET_KEY.
+# CI now runs --fail-level WARNING, which means the two warnings that are
+# genuinely deliberate have to be named here rather than in a comment.
+SILENCED_SYSTEM_CHECKS = [
+    # HSTS includeSubDomains: cannot be enabled until every subdomain is
+    # confirmed HTTPS-only. Browsers honour the longest max-age they have seen.
+    'security.W005',
+    # HSTS preload: submitting to the browser preload list is irreversible on a
+    # useful timescale, and there is no domain yet.
+    'security.W021',
+]
 
 
 # Rate-limit counters live here. The default LocMemCache is per-process, so

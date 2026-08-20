@@ -1,8 +1,16 @@
 # Runtime dependencies. Dev-only tooling lives in requirements-dev.txt.
+#
+# The security packages are pinned to a major line on purpose. Their behaviour
+# is configuration-dependent in ways a silent upgrade changes: django-csp < 4
+# ignores CONTENT_SECURITY_POLICY entirely in favour of the older CSP_*
+# settings, and django-axes changes its client-IP resolution the moment
+# django-ipware becomes importable. CI installs fresh on every run, so an
+# unpinned range means the control that ships is whatever resolved that
+# morning.
 Django~=5.2.0
 psycopg2-binary
-python-dotenv
-django-axes
-django-ratelimit
-django-csp
-gunicorn
+python-dotenv~=1.1
+django-axes~=8.3
+django-ratelimit~=4.1
+django-csp~=4.0
+gunicorn~=26.1
